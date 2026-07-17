@@ -30,3 +30,16 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# macOS
+.DS_Store
+
+# Tier 3 — local-only working material (session/agent handover, scratch, logs).
+# Committed dev material lives in .abcd/development/ (durable record) and
+# .abcd/work/ (shared CONTEXT.md + DECISIONS.md); only Tier 3 is local.
+.abcd/.work.local/
+
+# BEGIN ABCD
+# abcd-managed block — do not hand-edit. Run /abcd:ahoy to refresh.
+.work/
+# END ABCD
