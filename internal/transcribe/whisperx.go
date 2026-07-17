@@ -68,8 +68,8 @@ func runWhisperX(bin, wav string, opts Options) ([]segment, error) {
 // resolveCompute resolves the -device and -compute_type "auto" values to
 // concrete whisperx arguments. whisperx's own CLI defaults (cuda + float16)
 // abort at startup on machines without CUDA — notably macOS, the primary
-// target (docs/architecture.md §5) — so they are never relied upon: "auto"
-// picks cuda only when an NVIDIA GPU is plausibly present (never on darwin),
+// target — so they are never relied upon: "auto" picks cuda only when an
+// NVIDIA GPU is plausibly present (never on darwin),
 // and the compute type follows the device (float16 needs a GPU; CTranslate2
 // rejects it on CPU, where int8 is the sensible default).
 func resolveCompute(devicePref, computePref, goos string, hasCUDA bool) (device, compute string) {

@@ -1,7 +1,7 @@
 // Package session defines the on-disk layout of a testimony session and
 // helpers for reading and writing its artefacts.
 //
-// A session directory contains (see docs/architecture.md §11):
+// A session directory contains (see docs/reference/session-directory.md):
 //
 //	manifest.json       session metadata, including t0_epoch_ms
 //	audio.wav           16 kHz mono ASR input (local only)

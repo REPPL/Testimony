@@ -5,36 +5,17 @@ Usability evidence, on the record.
 **Testimony** captures manual test sessions the way usability research does it — a
 screen recording plus concurrent *think-aloud* narration — and turns them into
 machine-readable, time-aligned records: a word-timestamped transcript merged with a
-timestamped interaction stream. From there, an analysis layer derives findings
-(bugs, friction, inconsistencies, preferences) and maps them back to the codebase.
+timestamped interaction stream, rendered as a report that shows what was said next
+to what was done.
 
 ```
  voice ──► local Whisper ──► transcript.jsonl ─┐
-                                               ├─► timeline.jsonl ─► report.md ─► findings ─► code
+                                               ├─► timeline.jsonl ─► report.md
  clicks ──► rrweb / hooks ──► interactions.jsonl ┘
 ```
 
-The full design is in [docs/architecture.md](docs/architecture.md). Raw audio and
-video never leave your machine; only derived text is analysed.
-
-## Status: walking skeleton
-
-What works today:
-
-- `testimony demo` — serves a small instrumented settings app; your clicks and inputs
-  stream to a fresh session directory (normalised interactions + raw rrweb archive)
-  while you talk into a recorder of your choice.
-- `testimony transcribe` — turns your voice recording (.m4a, .mov, or .wav) into a
-  time-aligned `transcript.jsonl` with local Whisper: it extracts 16 kHz mono
-  `audio.wav` via ffmpeg, runs WhisperX (word-level timestamps, preferred) or
-  whisper.cpp, and anchors the result to the session clock.
-- `testimony merge` — merges `transcript.jsonl` + `interactions.jsonl` into a single
-  session-relative `timeline.jsonl`.
-- `testimony report` — renders the timeline as a Markdown report, joining each
-  utterance to the interface events around it (±2.5 s window by default).
-
-What is stubbed: `record` (managed screen/audio capture). Until then you record
-voice with QuickTime and let `transcribe` do the rest.
+Raw audio and video never leave your machine; only derived text is analysed. See
+[privacy](docs/explanation/privacy.md).
 
 ## Install
 
@@ -57,48 +38,24 @@ curl -fsSL .../install.sh | sh -s -- --no-deps   # binary only
 curl -fsSL .../install.sh | sh -s -- --yes       # non-interactive, with dependencies
 ```
 
-Or build from source:
+Or build from source (requires Go): `git clone` this repository, then
+`go install ./cmd/testimony`. Engine options and setup:
+[transcribe a recording](docs/how-to/transcribe-a-recording.md).
 
 ## Quickstart
 
-```sh
-go build -o testimony ./cmd/testimony
+Try the pipeline on the bundled synthetic session:
 
-# 1. Try the pipeline on the bundled synthetic session:
-./testimony merge  -session examples/sample-session
-./testimony report -session examples/sample-session
+```sh
+testimony merge  -session examples/sample-session
+testimony report -session examples/sample-session
 open examples/sample-session/report.md
-
-# 2. Capture a real one, end to end:
-./testimony demo          # then follow the printed instructions
 ```
 
-For a real session: start `testimony demo`, begin an audio recording in QuickTime
-(File → New Audio Recording), say **“session start”** aloud, and click through the
-demo app while thinking aloud. When you are done, stop QuickTime and note where it
-saved the `.m4a`. Then:
-
-```sh
-./testimony transcribe -session sessions/<dir> -audio ~/Desktop/recording.m4a
-./testimony merge      -session sessions/<dir>
-./testimony report     -session sessions/<dir>
-open sessions/<dir>/report.md
-```
-
-`transcribe` needs two things installed:
-
-- ffmpeg — `brew install ffmpeg`
-- an ASR engine — WhisperX (`uv tool install whisperx`, word-level timestamps,
-  preferred) *or* whisper.cpp (`brew install whisper-cpp`, plus a ggml model file
-  via `-model`)
-
-It aligns the audio clock to the session clock automatically (the recording's
-creation time vs the manifest's `t0_epoch_ms`) and prints the offset it used. If
-that looks wrong, the spoken “session start” marker is your calibration aid:
-find it in the transcript, work out the true offset, and pass `-offset SECONDS`
-explicitly.
-
-The report interleaves what was said with what was done:
+Then capture a real one: `testimony demo` starts a capture session and prints
+every step. The [getting-started tutorial](docs/tutorials/getting-started.md)
+walks the whole path — record, think aloud, transcribe, merge, report — in about
+five minutes. The result interleaves speech with interface events:
 
 ```
 **[00:22] P1:** “Hm. I clicked save and nothing happened. No message, no
@@ -108,31 +65,51 @@ spinner. I can't actually tell if it saved.”
 
 The demo app contains at least one intentional usability flaw. Find it by talking.
 
+## Documentation
+
+- [Tutorials](docs/tutorials/getting-started.md) — your first session, end to end.
+- [How-to guides](docs/how-to/) — [transcribe a recording](docs/how-to/transcribe-a-recording.md)
+  (engines, languages, offsets), [instrument your own app](docs/how-to/instrument-your-own-app.md).
+- [Reference](docs/reference/) — the [command line](docs/reference/cli.md) and the
+  [session directory](docs/reference/session-directory.md).
+- [Explanation](docs/explanation/) — [how alignment works](docs/explanation/how-alignment-works.md),
+  [privacy](docs/explanation/privacy.md).
+
 ## Session directory
+
+Each session is one folder of small, inspectable files:
 
 ```
 sessions/<timestamp>/
   manifest.json        # app, participant, tasks, t0_epoch_ms (the shared clock anchor)
-  audio.wav            # 16 kHz mono extract written by transcribe (local only)
-  events.rrweb.jsonl   # raw rrweb stream (archival; full replay later)
-  interactions.jsonl   # normalised events: {"t":<epoch_ms>,"kind","selector","text","value","route"}
-  transcript.jsonl     # utterances: {"id","t0","t1","speaker","text"} (session-relative seconds)
-  timeline.jsonl       # merged: {"t","src":"speech|event","id","payload"}
+  audio.wav            # 16 kHz mono extract (local only)
+  events.rrweb.jsonl   # raw rrweb stream (archival)
+  interactions.jsonl   # normalised interaction events
+  transcript.jsonl     # time-aligned utterances
+  timeline.jsonl       # merged, session-relative timeline
   report.md            # human-readable aligned record
 ```
 
-Synchronisation rests on one wall clock: interaction timestamps are epoch ms,
-`t0_epoch_ms` anchors them, and the transcript is audio-relative — start your
-voice recording when the session starts (say “session start” aloud as a belt-and-
-braces marker).
+Exact schemas: [session directory reference](docs/reference/session-directory.md).
 
-## Roadmap
+## Status and roadmap
 
-Phases from the [architecture note](docs/architecture.md#12-phased-implementation):
-managed capture (`record`) → analysis layer with structured, human-verified
-findings → codebase mapping via `data-testid` anchors → reference-capture mode
-for third-party apps. A macOS 26 app layer will wrap this CLI core; Linux stays
-CLI-only.
+Working today: `demo` (instrumented capture), `transcribe` (local WhisperX or
+whisper.cpp), `merge`, and `report`. `record` (managed screen/audio capture) is
+stubbed — for now you record voice with QuickTime and `transcribe` does the rest.
+
+Coming next, in user terms:
+
+- **One-command capture** — `testimony record` starts every recorder and stamps
+  the session for you.
+- **Automated first-pass analysis** — findings (bugs, friction, inconsistencies,
+  preferences) derived from the timeline, each staying *unverified* until you
+  confirm or reject it.
+- **Codebase mapping** — findings anchored to your code through the
+  `data-testid` selectors they were captured against.
+- **Reference capture** — narrated sessions over third-party apps, building a
+  tagged corpus of design preferences.
+- **A macOS app** wrapping the CLI core; Linux stays CLI-only.
 
 ## License
 

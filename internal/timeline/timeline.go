@@ -23,7 +23,7 @@ type Utterance struct {
 }
 
 // Word is one aligned word inside an utterance: its text and start time in
-// session-relative seconds (docs/architecture.md §5).
+// session-relative seconds (docs/reference/session-directory.md).
 type Word struct {
 	W string  `json:"w"`
 	T float64 `json:"t"`
