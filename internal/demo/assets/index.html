@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prototype Settings — testimony demo</title>
+<style>
+  :root {
+    --bg: #f5f5f7; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
+    --accent: #0071e3; --border: #d2d2d7;
+  }
+  .dark {
+    --bg: #1c1c1e; --panel: #2c2c2e; --text: #f5f5f7; --muted: #98989d;
+    --accent: #0a84ff; --border: #3a3a3c;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+    display: grid; place-items: start center; min-height: 100vh; padding: 2rem 1rem;
+    transition: background .25s, color .25s;
+  }
+  .banner {
+    width: min(560px, 100%); margin-bottom: 1rem; padding: .6rem 1rem;
+    border-radius: 10px; background: #b45309; color: #fff; font-size: 13px;
+  }
+  .app {
+    width: min(560px, 100%); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; overflow: hidden; box-shadow: 0 1px 10px rgba(0,0,0,.06);
+  }
+  nav { display: flex; border-bottom: 1px solid var(--border); }
+  nav button {
+    flex: 1; padding: .8rem; background: none; border: none; cursor: pointer;
+    color: var(--muted); font: inherit; border-bottom: 2px solid transparent;
+  }
+  nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  section { padding: 1.4rem; display: none; }
+  section.active { display: block; }
+  h1 { font-size: 1.15rem; margin-bottom: 1rem; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .7rem 0; border-bottom: 1px solid var(--border); }
+  .row:last-of-type { border-bottom: none; }
+  label { color: var(--text); }
+  .hint { color: var(--muted); font-size: 13px; }
+  input[type=text] {
+    padding: .45rem .6rem; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font: inherit; width: 200px;
+  }
+  .btn {
+    padding: .5rem 1.1rem; border: none; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: #fff; font: inherit;
+  }
+  .switch { position: relative; width: 44px; height: 26px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; inset: 0; border-radius: 26px; background: var(--border);
+    transition: .2s; cursor: pointer;
+  }
+  .slider::before {
+    content: ""; position: absolute; width: 22px; height: 22px; border-radius: 50%;
+    background: #fff; top: 2px; left: 2px; transition: .2s; box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  }
+  .switch input:checked + .slider { background: #34c759; }
+  .switch input:checked + .slider::before { transform: translateX(18px); }
+  footer { padding: .8rem 1.4rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
+</style>
+</head>
+<body>
+  <div class="banner">
+    🎙 <strong>Capturing clicks.</strong> Make sure your voice/screen recorder is running,
+    and keep thinking aloud. Elapsed: <span id="elapsed">00:00</span>
+  </div>
+
+  <div class="app">
+    <nav>
+      <button data-testid="tab-general" data-tab="general" class="active">General</button>
+      <button data-testid="tab-appearance" data-tab="appearance">Appearance</button>
+      <button data-testid="tab-about" data-tab="about">About</button>
+    </nav>
+
+    <section id="general" class="active">
+      <h1>General</h1>
+      <div class="row">
+        <div><label for="display-name">Display name</label><div class="hint">Shown on your reports</div></div>
+        <input type="text" id="display-name" data-testid="display-name" value="Alex">
+      </div>
+      <div class="row">
+        <div><label>Weekly summary email</label><div class="hint">Sent on Mondays</div></div>
+        <span class="switch"><input type="checkbox" id="notify" data-testid="notify-toggle" checked><span class="slider" onclick="document.getElementById('notify').click()"></span></span>
+      </div>
+    </section>
+
+    <section id="appearance">
+      <h1>Appearance</h1>
+      <div class="row">
+        <div><label>Dark mode</label><div class="hint">Applies immediately</div></div>
+        <span class="switch"><input type="checkbox" id="theme" data-testid="theme-toggle"><span class="slider" onclick="document.getElementById('theme').click()"></span></span>
+      </div>
+    </section>
+
+    <section id="about">
+      <h1>About</h1>
+      <p class="hint">Prototype Settings v0.1 — a deliberately small app for testimony capture sessions.
+      It contains at least one intentional usability flaw. You'll know it when you feel it —
+      say so out loud when you do.</p>
+    </section>
+
+    <footer>
+      <button class="btn" data-testid="save-btn">Save</button>
+    </footer>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/rrweb@1.1.3/dist/rrweb.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- fake app behaviour ---------- */
+  document.querySelectorAll("nav button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("nav button").forEach(function (x) { x.classList.remove("active"); });
+      document.querySelectorAll("section").forEach(function (x) { x.classList.remove("active"); });
+      b.classList.add("active");
+      document.getElementById(b.dataset.tab).classList.add("active");
+      location.hash = b.dataset.tab;
+    });
+  });
+  document.getElementById("theme").addEventListener("change", function (e) {
+    document.body.classList.toggle("dark", e.target.checked);
+  });
+  // The intentional flaw: Save "works" (state kept in memory) but gives no
+  // feedback whatsoever — no toast, no disabled state, nothing.
+  var saved = {};
+  document.querySelector("[data-testid=save-btn]").addEventListener("click", function () {
+    saved.name = document.getElementById("display-name").value;
+    saved.notify = document.getElementById("notify").checked;
+  });
+
+  /* ---------- capture: normalised interactions ---------- */
+  function selectorFor(el) {
+    if (!(el instanceof Element)) return "";
+    var t = el.closest("[data-testid]");
+    if (t) return "[data-testid=" + t.getAttribute("data-testid") + "]";
+    if (el.id) return el.tagName.toLowerCase() + "#" + el.id;
+    var s = el.tagName.toLowerCase();
+    if (el.classList.length) s += "." + Array.prototype.slice.call(el.classList, 0, 2).join(".");
+    return s;
+  }
+  function labelFor(el) {
+    var t = (el.closest("[data-testid]") || el).textContent || "";
+    return t.trim().replace(/\s+/g, " ").slice(0, 40);
+  }
+  function post(url, body) {
+    try {
+      navigator.sendBeacon
+        ? navigator.sendBeacon(url, new Blob([JSON.stringify(body)], { type: "application/json" }))
+        : fetch(url, { method: "POST", body: JSON.stringify(body), keepalive: true });
+    } catch (e) { /* capture must never break the app under test */ }
+  }
+  function interaction(kind, el, extra) {
+    var payload = { t: Date.now(), kind: kind, selector: selectorFor(el), text: labelFor(el), route: location.hash || "#general" };
+    if (extra) for (var k in extra) payload[k] = extra[k];
+    post("/api/interactions", payload);
+  }
+  document.addEventListener("click", function (e) { interaction("click", e.target); }, true);
+  document.addEventListener("change", function (e) {
+    var el = e.target;
+    var value = el.type === "checkbox" ? String(el.checked) : String(el.value).slice(0, 80);
+    interaction("input", el, { value: value });
+  }, true);
+
+  /* ---------- capture: raw rrweb stream (archival) ---------- */
+  var buf = [];
+  if (window.rrweb) {
+    rrweb.record({ emit: function (ev) { buf.push(ev); } });
+  }
+  setInterval(function () {
+    if (buf.length) post("/api/events", buf.splice(0, buf.length));
+  }, 2000);
+  window.addEventListener("beforeunload", function () {
+    if (buf.length) post("/api/events", buf.splice(0, buf.length));
+  });
+
+  /* ---------- elapsed timer ---------- */
+  var start = Date.now();
+  setInterval(function () {
+    var s = Math.floor((Date.now() - start) / 1000);
+    var mm = String(Math.floor(s / 60)).padStart(2, "0");
+    var ss = String(s % 60).padStart(2, "0");
+    document.getElementById("elapsed").textContent = mm + ":" + ss;
+  }, 1000);
+})();
+</script>
+</body>
+</html>

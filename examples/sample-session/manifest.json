@@ -1,0 +1,12 @@
+{
+  "session": "sample-session",
+  "app": "testimony demo",
+  "commit": "walking-skeleton",
+  "participant": "P1",
+  "t0_epoch_ms": 1784300400000,
+  "tasks": [
+    "Change your display name and save it",
+    "Try the appearance settings"
+  ],
+  "notes": "Synthetic example bundled with the repo; mirrors the demo app's intentional save-feedback flaw."
+}

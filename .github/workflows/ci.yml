@@ -1,0 +1,63 @@
+name: ci
+
+# Lightweight checks on every push and pull request: format, build, vet, and
+# test, plus a smoke test of the merge → report pipeline on the bundled sample.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# Cancel superseded runs of the same ref (PRs and branch pushes); a merged
+# default-branch push is never cancelled mid-run because each ref has its own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+
+      # Any file gofmt lists needs `gofmt -w` and fails the job.
+      - name: Format (gofmt)
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt: these files are not formatted (run gofmt -w .):" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: go build -o testimony ./cmd/testimony
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      # The full pipeline against the bundled sample session: merge must produce
+      # a timeline, report must render it, and both outputs must be non-empty.
+      - name: Pipeline smoke test
+        run: |
+          set -euo pipefail
+          ./testimony merge -session examples/sample-session
+          ./testimony report -session examples/sample-session
+          test -s examples/sample-session/timeline.jsonl
+          test -s examples/sample-session/report.md
+          grep -q "## Timeline" examples/sample-session/report.md
+          grep -q "save button" examples/sample-session/report.md

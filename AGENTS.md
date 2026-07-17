@@ -50,13 +50,29 @@ Testimony captures usability evidence, on the record.
 
 ## Current state
 
-Foundations. The working conventions and record layout are in place; the
-initial codebase is being implemented. There are no build, test, or lint
-commands yet — **when the first code lands, record the exact commands here**
-(including how to run a single test). A fresh agent session must be able to
-build and test this repository from this file alone.
+Walking skeleton. A Go CLI (`testimony`) with the capture → merge → report
+pipeline working end-to-end on the bundled sample; `record` and `transcribe`
+are honest stubs. See [`docs/architecture.md`](docs/architecture.md).
 
 Orientation lives in [`.abcd/work/CONTEXT.md`](.abcd/work/CONTEXT.md).
+
+## Build, test, and checks
+
+Run from the repo root. Requires Go (version per `go.mod`).
+
+```bash
+go build -o testimony ./cmd/testimony   # build the CLI
+gofmt -l .                              # format gate: any output needs gofmt -w
+go vet ./...                            # static checks
+go test ./...                           # unit tests
+go test -race ./...                     # race-enabled
+go test -run TestEventsNearWindow ./internal/timeline/   # a single test
+./testimony merge  -session examples/sample-session   # pipeline smoke:
+./testimony report -session examples/sample-session   #   writes timeline.jsonl + report.md
+```
+
+CI (`.github/workflows/ci.yml`) runs the same gates plus the pipeline smoke
+test on every push and pull request.
 
 <!-- working-conventions 2026-07-17 -->
 
