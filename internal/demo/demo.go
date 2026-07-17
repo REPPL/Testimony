@@ -5,14 +5,18 @@
 package demo
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/REPPL/Testimony/internal/session"
@@ -27,46 +31,28 @@ type server struct {
 	rawEvents    *os.File
 }
 
+// DefaultApp is the app-under-test name a demo session records.
+const DefaultApp = "testimony demo"
+
+// DefaultTask is the seeded task for a demo session.
+const DefaultTask = "Explore the settings prototype and think aloud"
+
 // Run starts the demo capture server on addr, creating a new session
 // directory under outRoot. It blocks until the process is interrupted.
 func Run(addr, outRoot string) error {
-	now := time.Now()
-	dir := filepath.Join(outRoot, now.Format("2006-01-02_150405"))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	man := session.Manifest{
-		Session:     filepath.Base(dir),
-		App:         "testimony demo",
+	dir, err := session.Create(outRoot, time.Now(), session.Manifest{
+		App:         DefaultApp,
 		Participant: "P1",
-		T0EpochMS:   now.UnixMilli(),
-		Tasks:       []string{"Explore the settings prototype and think aloud"},
-	}
-	if err := session.SaveManifest(dir, man); err != nil {
-		return err
-	}
-
-	open := func(name string) (*os.File, error) {
-		return os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	}
-	inter, err := open(session.InteractionsFile)
-	if err != nil {
-		return err
-	}
-	raw, err := open(session.RawEventsFile)
-	if err != nil {
-		return err
-	}
-	s := &server{interactions: inter, rawEvents: raw}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := assets.ReadFile("assets/index.html")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(b)
+		Tasks:       []string{DefaultTask},
 	})
-	mux.HandleFunc("/api/interactions", s.handleInteraction)
-	mux.HandleFunc("/api/events", s.handleRawEvents)
+	if err != nil {
+		return err
+	}
+
+	srv, err := Serve(addr, dir)
+	if err != nil {
+		return err
+	}
 
 	fmt.Printf(`testimony demo — capture session started
 
@@ -83,7 +69,54 @@ func Run(addr, outRoot string) error {
 
 `, dir, addr, dir, dir, dir)
 
-	return http.ListenAndServe(addr, mux)
+	// Block until interrupted, then shut the server down cleanly.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+	return srv.Shutdown(context.Background())
+}
+
+// Serve starts the demo capture server on addr, appending its two interaction
+// streams into the existing session directory dir. It binds synchronously (so
+// a bind failure is returned) and then serves in the background, returning the
+// running *http.Server for the caller to Shutdown. record reuses this to run
+// the demo app into the same directory as the recorders.
+func Serve(addr, dir string) (*http.Server, error) {
+	open := func(name string) (*os.File, error) {
+		return os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	}
+	inter, err := open(session.InteractionsFile)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := open(session.RawEventsFile)
+	if err != nil {
+		inter.Close()
+		return nil, err
+	}
+	s := &server{interactions: inter, rawEvents: raw}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := assets.ReadFile("assets/index.html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(b)
+	})
+	mux.HandleFunc("/api/interactions", s.handleInteraction)
+	mux.HandleFunc("/api/events", s.handleRawEvents)
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		inter.Close()
+		raw.Close()
+		return nil, err
+	}
+	// The two stream files use direct O_APPEND writes (no buffering), so their
+	// data is durable without an explicit Close; the OS reclaims them on exit,
+	// as before. Not closing them on Shutdown avoids racing an in-flight write.
+	srv := &http.Server{Handler: mux}
+	go srv.Serve(ln)
+	return srv, nil
 }
 
 // handleInteraction appends one normalised interaction (a single JSON object)

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -62,12 +63,23 @@ func Run(opts Options) (int, error) {
 		return 0, err
 	}
 
+	// -audio is optional. When omitted — or when it points at the session's own
+	// audio.wav — the canonical 16 kHz mono capture already in the session is
+	// used in place (record writes exactly this), so no conversion runs and
+	// ffmpeg never rewrites a file onto itself. Otherwise the external recording
+	// is converted into audio.wav.
 	wav := filepath.Join(opts.SessionDir, session.AudioFile)
-	if err := convertAudio(opts.Audio, wav); err != nil {
-		return 0, err
+	external := opts.Audio != "" && !sameFile(opts.Audio, wav)
+	if external {
+		if err := convertAudio(opts.Audio, wav); err != nil {
+			return 0, err
+		}
+	} else if _, err := os.Stat(wav); err != nil {
+		return 0, fmt.Errorf("no %s in session %s and no -audio given: run `testimony record` first, or pass -audio FILE",
+			session.AudioFile, opts.SessionDir)
 	}
 
-	offset, provenance := resolveOffset(opts, man.T0EpochMS)
+	offset, provenance := resolveOffset(opts, man.T0EpochMS, external)
 	fmt.Fprintf(opts.Log, "offset: %+.2fs (%s)\n", offset, provenance)
 
 	var segs []segment
@@ -90,18 +102,23 @@ func Run(opts Options) (int, error) {
 }
 
 // resolveOffset picks the audio→session offset: the explicit -offset flag
-// wins; otherwise the offset is derived from the original recording's
+// wins; otherwise, for an external recording, the offset is derived from its
 // creation time vs manifest t0 when ffprobe makes that cheap; otherwise 0.
+// For an in-place session audio.wav there is no creation_time to derive from
+// and none is needed — capture starts at t0, so 0 is correct by construction.
 // Derivation failure is never fatal. The second return value is the
 // provenance, for the mandatory stdout report.
-func resolveOffset(opts Options, t0EpochMS int64) (float64, string) {
+func resolveOffset(opts Options, t0EpochMS int64, external bool) (float64, string) {
 	if opts.OffsetSet {
 		return opts.Offset, "from -offset flag"
 	}
-	if off, ok := deriveOffset(opts.Audio, t0EpochMS); ok {
-		return off, "derived: audio creation_time − manifest t0"
+	if external {
+		if off, ok := deriveOffset(opts.Audio, t0EpochMS); ok {
+			return off, "derived: audio creation_time − manifest t0"
+		}
+		return 0, "default 0: audio creation time unavailable"
 	}
-	return 0, "default 0: audio creation time unavailable"
+	return 0, "default 0: session audio.wav captured at t0"
 }
 
 // mapSegments converts engine segments to the Utterance schema of
@@ -139,6 +156,21 @@ func mapSegments(segs []segment, offset float64) []timeline.Utterance {
 }
 
 func round2(x float64) float64 { return math.Round(x*100) / 100 }
+
+// sameFile reports whether a and b resolve to the same on-disk file, so a
+// -audio flag pointing at the session's own audio.wav is treated as the
+// in-place case rather than converting the file onto itself.
+func sameFile(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(fa, fb)
+}
 
 // tail returns the trailing portion of subprocess output for error messages.
 func tail(b []byte) string {

@@ -5,6 +5,7 @@
 //
 //	manifest.json       session metadata, including t0_epoch_ms
 //	audio.wav           16 kHz mono ASR input (local only)
+//	screen.mp4          screen recording (local only; -video capture)
 //	events.rrweb.jsonl  raw rrweb events (archival; web sessions only)
 //	interactions.jsonl  normalised interaction events (epoch ms)
 //	transcript.jsonl    word-aligned utterances (session-relative seconds)
@@ -18,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Manifest describes a capture session. t0_epoch_ms anchors all
@@ -36,12 +38,36 @@ type Manifest struct {
 const (
 	ManifestFile     = "manifest.json"
 	AudioFile        = "audio.wav"
+	ScreenFile       = "screen.mp4"
 	RawEventsFile    = "events.rrweb.jsonl"
 	InteractionsFile = "interactions.jsonl"
 	TranscriptFile   = "transcript.jsonl"
 	TimelineFile     = "timeline.jsonl"
 	ReportFile       = "report.md"
 )
+
+// dirLayout is the timestamped session-directory name format, derived from
+// the capture start instant so the directory name and t0_epoch_ms agree.
+const dirLayout = "2006-01-02_150405"
+
+// Create makes a fresh, timestamped session directory under outRoot and
+// writes its manifest. The directory name and m.T0EpochMS are both derived
+// from the single now instant, so t0 is a recorded fact rather than a
+// recollection; m.Session is set to the directory's base name. It returns the
+// created directory path. Both demo and record call this so the manifest is
+// written once, by one code path.
+func Create(outRoot string, now time.Time, m Manifest) (dir string, err error) {
+	dir = filepath.Join(outRoot, now.Format(dirLayout))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	m.Session = filepath.Base(dir)
+	m.T0EpochMS = now.UnixMilli()
+	if err := SaveManifest(dir, m); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
 
 // LoadManifest reads manifest.json from dir.
 func LoadManifest(dir string) (Manifest, error) {

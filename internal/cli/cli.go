@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/REPPL/Testimony/internal/demo"
+	"github.com/REPPL/Testimony/internal/record"
 	"github.com/REPPL/Testimony/internal/report"
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
@@ -20,13 +21,14 @@ var Version = "dev"
 const usage = `testimony — usability evidence, on the record
 
 Usage:
+  testimony record      [-out sessions] [-app NAME] [-participant P1] [-task ...]   managed capture: session dir + manifest, start recorders, run until Ctrl+C
+                        [-video|-no-video] [-demo [-addr :8737]]
   testimony demo        [-addr :8737] [-out sessions]   serve the instrumented demo app, capture a session
-  testimony transcribe   -session DIR -audio FILE       transcribe a voice recording into transcript.jsonl
+  testimony transcribe   -session DIR [-audio FILE]     transcribe a voice recording into transcript.jsonl (reuses the session's audio.wav when -audio is omitted)
                         [-engine auto|whisperx|whispercpp] [-model large-v3-turbo] [-language en] [-offset SECONDS]
                         [-device auto|cpu|cuda] [-compute_type auto|int8|float16] [-vad auto|silero|pyannote]   (whisperx only)
   testimony merge        -session DIR                   merge transcript + interactions into timeline.jsonl
   testimony report       -session DIR [-window 2.5]     render timeline.jsonl as a Markdown report
-  testimony record                                      (stub — see docs/reference/cli.md)
   testimony version
 
 A session directory is described in docs/reference/session-directory.md.
@@ -86,14 +88,37 @@ func Run(args []string) int {
 		return 0
 
 	case "record":
-		fmt.Fprintln(os.Stderr, "record: not implemented yet — Phase 1 wraps screen/audio capture + manifest here.")
-		fmt.Fprintln(os.Stderr, "For now, `testimony demo` captures web sessions, with QuickTime for voice.")
-		return 2
+		fs := flag.NewFlagSet("record", flag.ExitOnError)
+		out := fs.String("out", "sessions", "root directory for new session folders")
+		app := fs.String("app", "", "application under test")
+		participant := fs.String("participant", "P1", "participant pseudonym")
+		commit := fs.String("commit", "", "build/commit hash under test")
+		var tasks record.StringSlice
+		fs.Var(&tasks, "task", "a task the participant will attempt (repeatable)")
+		video := fs.Bool("video", false, "also capture the screen to screen.mp4 (needs Screen Recording permission)")
+		noVideo := fs.Bool("no-video", false, "explicitly disable screen capture (the default)")
+		demoFlag := fs.Bool("demo", false, "also serve the instrumented demo app into the session")
+		addr := fs.String("addr", ":8737", "demo server listen address (with -demo)")
+		fs.Parse(rest)
+		if err := record.Run(record.Options{
+			Out:         *out,
+			App:         *app,
+			Participant: *participant,
+			Tasks:       tasks,
+			Commit:      *commit,
+			Video:       record.ResolveVideo(*video, *noVideo),
+			Demo:        *demoFlag,
+			Addr:        *addr,
+			Log:         os.Stdout,
+		}); err != nil {
+			return fail(err)
+		}
+		return 0
 
 	case "transcribe":
 		fs := flag.NewFlagSet("transcribe", flag.ExitOnError)
 		dir := fs.String("session", "", "session directory")
-		audio := fs.String("audio", "", "voice recording (.m4a, .mov, or .wav)")
+		audio := fs.String("audio", "", "voice recording (.m4a, .mov, or .wav); omit to reuse the session's audio.wav")
 		engine := fs.String("engine", "auto", "ASR engine: auto, whisperx, or whispercpp")
 		model := fs.String("model", "large-v3-turbo", "Whisper model name, or (whispercpp) a ggml model file path")
 		language := fs.String("language", "en", "spoken language code")
@@ -104,9 +129,6 @@ func Run(args []string) int {
 		fs.Parse(rest)
 		if *dir == "" {
 			return fail(fmt.Errorf("transcribe: -session is required"))
-		}
-		if *audio == "" {
-			return fail(fmt.Errorf("transcribe: -audio is required"))
 		}
 		offsetSet := false
 		fs.Visit(func(f *flag.Flag) {

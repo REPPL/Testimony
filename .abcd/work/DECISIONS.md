@@ -25,3 +25,18 @@ Architecture-shaping decisions graduate to an ADR under
 - 2026-07-17 — WhisperX VAD defaults to silero (`-vad` overrides): pyannote's
   checkpoint trips newer torch's `weights_only` load and aborts every run;
   found in the first live end-to-end session on the target Mac.
+- 2026-07-17 — `record` uses ffmpeg avfoundation for both screen and microphone
+  capture, not `screencapture -v`: ffmpeg is already a hard dependency (mic +
+  transcribe), its SIGINT→finalise-container behaviour is battle-tested and
+  identical for audio and video (the clean-stop the acceptance criteria need),
+  and one argv shape gives one pure, uniformly testable builder;
+  `screencapture -v` stays a documented future quality-upgrade path. Microphone
+  writes canonical 16 kHz mono `audio.wav`, so `transcribe -audio` becomes
+  optional and reuses it in place; default capture is audio-only with `-video`
+  opt-in (screen video is retained evidence, not yet consumed downstream).
+- 2026-07-17 — Session creation and the demo server are extracted into shared,
+  reusable pieces (`session.Create` derives the dir name + `t0_epoch_ms` from one
+  `now`; `demo.Serve` binds and serves non-blocking) so `record` and `demo` write
+  a session by one code path rather than duplicating it. `demo` now blocks on
+  SIGINT/SIGTERM and shuts the server down gracefully (exit 0) instead of being
+  hard-killed; its printed output and on-disk artefacts are unchanged.

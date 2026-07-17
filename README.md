@@ -52,10 +52,10 @@ testimony report -session examples/sample-session
 open examples/sample-session/report.md
 ```
 
-Then capture a real one: `testimony demo` starts a capture session and prints
-every step. The [getting-started tutorial](docs/tutorials/getting-started.md)
-walks the whole path — record, think aloud, transcribe, merge, report — in about
-five minutes. The result interleaves speech with interface events:
+Then capture a real one: `testimony record -demo` starts a capture session —
+recording your voice and clicks in one command — and prints every step. The
+[getting-started tutorial](docs/tutorials/getting-started.md) walks the whole
+path — record, think aloud, transcribe, merge, report — in about five minutes. The result interleaves speech with interface events:
 
 ```
 **[00:22] P1:** “Hm. I clicked save and nothing happened. No message, no
@@ -94,14 +94,13 @@ Exact schemas: [session directory reference](docs/reference/session-directory.md
 
 ## Status and roadmap
 
-Working today: `demo` (instrumented capture), `transcribe` (local WhisperX or
-whisper.cpp), `merge`, and `report`. `record` (managed screen/audio capture) is
-stubbed — for now you record voice with QuickTime and `transcribe` does the rest.
+Working today: `record` (managed capture — one command starts the recorders and
+stamps the session), `demo` (instrumented capture), `transcribe` (local WhisperX
+or whisper.cpp), `merge`, and `report`. `record` captures the microphone by
+default; screen video is opt-in with `-video`.
 
 Coming next, in user terms:
 
-- **One-command capture** — `testimony record` starts every recorder and stamps
-  the session for you.
 - **Automated first-pass analysis** — findings (bugs, friction, inconsistencies,
   preferences) derived from the timeline, each staying *unverified* until you
   confirm or reject it.

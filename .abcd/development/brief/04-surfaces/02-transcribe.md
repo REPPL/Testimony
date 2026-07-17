@@ -9,7 +9,7 @@ subprocess. Nothing touches the network.
 | Flag | Default | Meaning |
 |---|---|---|
 | `-session` | (required) | session directory |
-| `-audio` | (required) | voice recording (`.m4a`, `.mov`, or `.wav`) |
+| `-audio` | (optional) | voice recording (`.m4a`, `.mov`, or `.wav`); omit to reuse an `audio.wav` already in the session |
 | `-engine` | `auto` | `auto` \| `whisperx` \| `whispercpp` — auto prefers WhisperX (word-level timestamps) over `whisper-cli` |
 | `-model` | `large-v3-turbo` | Whisper model name, or (whispercpp) a ggml model file path |
 | `-language` | `en` | spoken language code |
@@ -20,8 +20,11 @@ subprocess. Nothing touches the network.
 
 ## Behaviour
 
-- Converts the recording to canonical 16 kHz mono PCM `audio.wav` via
-  ffmpeg; unsupported extensions and missing tools fail with guidance.
+- With `-audio`, converts the recording to canonical 16 kHz mono PCM
+  `audio.wav` via ffmpeg; unsupported extensions and missing tools fail with
+  guidance. Omitting `-audio` (or pointing it at the session's own `audio.wav`,
+  as a `record` session has) reuses that file in place and skips the
+  conversion.
 - Resolves the audio→session offset: an explicit `-offset` wins; otherwise
   it is derived from the recording's `creation_time` (ffprobe) minus the
   manifest's `t0_epoch_ms`; otherwise 0. The offset and its provenance are
