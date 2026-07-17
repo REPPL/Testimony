@@ -1,0 +1,47 @@
+{
+  "segments": [
+    {
+      "start": 1.234,
+      "end": 4.017,
+      "text": " Session start. Alice opens the settings page.",
+      "speaker": "SPEAKER_00",
+      "words": [
+        {"word": "Session", "start": 1.234, "end": 1.52, "score": 0.98, "speaker": "SPEAKER_00"},
+        {"word": "start.", "start": 1.561, "end": 1.9, "score": 0.95, "speaker": "SPEAKER_00"},
+        {"word": "Alice", "score": 0.41},
+        {"word": "opens", "start": 2.402, "end": 2.71, "score": 0.97, "speaker": "SPEAKER_00"},
+        {"word": "the", "start": 2.76, "end": 2.81, "score": 0.99, "speaker": "SPEAKER_00"},
+        {"word": "settings", "start": 2.86, "end": 3.29, "score": 0.96, "speaker": "SPEAKER_00"},
+        {"word": "page.", "start": 3.33, "end": 4.017, "score": 0.93, "speaker": "SPEAKER_00"}
+      ]
+    },
+    {
+      "start": 4.8,
+      "end": 5.2,
+      "text": "   ",
+      "speaker": "SPEAKER_00",
+      "words": []
+    },
+    {
+      "start": 6.505,
+      "end": 9.128,
+      "text": " I expected the save button to confirm. ",
+      "speaker": "SPEAKER_01",
+      "words": [
+        {"word": "I", "start": 6.505, "end": 6.58, "score": 0.99, "speaker": "SPEAKER_01"},
+        {"word": "expected", "start": 6.63, "end": 7.02, "score": 0.98, "speaker": "SPEAKER_01"},
+        {"word": "the", "start": 7.06, "end": 7.12, "score": 0.99, "speaker": "SPEAKER_01"},
+        {"word": "save", "start": 7.18, "end": 7.44, "score": 0.97, "speaker": "SPEAKER_01"},
+        {"word": "button", "start": 7.5, "end": 7.83, "score": 0.98, "speaker": "SPEAKER_01"},
+        {"word": "to", "start": 7.88, "end": 7.95, "score": 0.99, "speaker": "SPEAKER_01"},
+        {"word": "confirm.", "start": 8.01, "end": 9.128, "score": 0.95, "speaker": "SPEAKER_01"}
+      ]
+    },
+    {
+      "start": 10.5,
+      "end": 12.0,
+      "text": " Bob has no diarisation label or word list on this segment."
+    }
+  ],
+  "language": "en"
+}

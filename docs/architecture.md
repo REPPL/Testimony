@@ -160,10 +160,11 @@ For sessions with external participants: informed consent covering recording, tr
 
 ```
 sessions/2026-07-17_p1_webapp/
-  manifest.yaml         # app, commit, participant, tasks, consent ref, t0
+  manifest.json         # app, commit, participant, tasks, consent ref, t0_epoch_ms
   screen.mp4            # evidence of record (local only)
-  audio.wav             # 16 kHz mono extract (local only)
-  events.jsonl          # raw rrweb events / .cast file
+  audio.wav             # 16 kHz mono extract, written by `testimony transcribe` (local only)
+  events.rrweb.jsonl    # raw rrweb stream (archival) / .cast file
+  interactions.jsonl    # normalised interaction events (epoch ms)
   transcript.jsonl      # word-aligned utterances
   timeline.jsonl        # merged, session-relative
   findings.jsonl        # analysis output + verification verdicts
@@ -173,7 +174,7 @@ sessions/2026-07-17_p1_webapp/
 ## 12. Phased implementation
 
 1. **Phase 0 — manual pilot (hours).** One 15-minute self-session on an existing web app: QuickTime + rrweb snippet in the dev build, WhisperX run by hand, merge eyeballed in a notebook. Purpose: validate sync quality and the join window before writing any tooling.
-2. **Phase 1 — `testimony` CLI (Go).** `testimony record` (launcher + manifest + t0), `testimony transcribe` (wraps faster-whisper/WhisperX), `testimony merge`, `testimony report`. Single static binary; sessions become one-command. The macOS 26 Liquid Glass app layer wraps this same core later; Linux remains CLI-only.
+2. **Phase 1 — `testimony` CLI (Go).** `testimony record` (launcher + manifest + t0), `testimony transcribe` (wraps WhisperX/whisper.cpp), `testimony merge`, `testimony report`. Single static binary; sessions become one-command. The macOS 26 Liquid Glass app layer wraps this same core later; Linux remains CLI-only. *Status: `demo`, `transcribe`, `merge`, and `report` working; `record` is the remaining stub.*
 3. **Phase 2 — analysis skill.** Rubric, finding schema, chunking, report generator; verification pass workflow.
 4. **Phase 3 — codebase mapping.** `data-testid` convention in own apps; agentic mapping step; issue drafting.
 5. **Phase 4 — Mode B.** Keyframe extraction + multimodal identification; pattern-library format; optional rrweb browser extension for reference websites.

@@ -1,6 +1,6 @@
 {"id":"utt-001","t0":2.0,"t1":5.5,"speaker":"P1","text":"Session start. I'm looking at the settings prototype for the first time."}
 {"id":"utt-002","t0":8.0,"t1":12.5,"speaker":"P1","text":"Okay, three tabs, General is open. I'll change my display name first."}
-{"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow."}
+{"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16.0},{"w":"feels","t":16.42},{"w":"fine.","t":16.8},{"w":"Now","t":17.6},{"w":"I","t":17.92},{"w":"expect","t":18.08},{"w":"this","t":18.52},{"w":"save","t":18.78},{"w":"button","t":19.05},{"w":"to","t":19.5},{"w":"confirm","t":19.66},{"w":"somehow.","t":20.24}]}
 {"id":"utt-004","t0":22.0,"t1":28.0,"speaker":"P1","text":"Hm. I clicked save and nothing happened. No message, no spinner. I can't actually tell if it saved."}
 {"id":"utt-005","t0":31.0,"t1":36.0,"speaker":"P1","text":"I'll switch to Appearance. The tab switch is instant, that's nice."}
 {"id":"utt-006","t0":38.0,"t1":45.0,"speaker":"P1","text":"Oh, I like this dark mode toggle. Immediate feedback, the whole page changes. This is how the save button should feel."}

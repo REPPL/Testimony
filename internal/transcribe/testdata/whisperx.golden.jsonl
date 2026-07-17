@@ -1,0 +1,3 @@
+{"id":"utt-001","t0":1.23,"t1":4.02,"speaker":"SPEAKER_00","text":"Session start. Alice opens the settings page.","words":[{"w":"Session","t":1.23},{"w":"start.","t":1.56},{"w":"opens","t":2.4},{"w":"the","t":2.76},{"w":"settings","t":2.86},{"w":"page.","t":3.33}]}
+{"id":"utt-002","t0":6.51,"t1":9.13,"speaker":"SPEAKER_01","text":"I expected the save button to confirm.","words":[{"w":"I","t":6.51},{"w":"expected","t":6.63},{"w":"the","t":7.06},{"w":"save","t":7.18},{"w":"button","t":7.5},{"w":"to","t":7.88},{"w":"confirm.","t":8.01}]}
+{"id":"utt-003","t0":10.5,"t1":12,"speaker":"P1","text":"Bob has no diarisation label or word list on this segment."}

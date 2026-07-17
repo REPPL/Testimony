@@ -4,6 +4,7 @@
 // A session directory contains (see docs/architecture.md §11):
 //
 //	manifest.json       session metadata, including t0_epoch_ms
+//	audio.wav           16 kHz mono ASR input (local only)
 //	events.rrweb.jsonl  raw rrweb events (archival; web sessions only)
 //	interactions.jsonl  normalised interaction events (epoch ms)
 //	transcript.jsonl    word-aligned utterances (session-relative seconds)
@@ -34,6 +35,7 @@ type Manifest struct {
 // Well-known file names inside a session directory.
 const (
 	ManifestFile     = "manifest.json"
+	AudioFile        = "audio.wav"
 	RawEventsFile    = "events.rrweb.jsonl"
 	InteractionsFile = "interactions.jsonl"
 	TranscriptFile   = "transcript.jsonl"

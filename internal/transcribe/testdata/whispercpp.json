@@ -1,0 +1,22 @@
+{
+  "result": {
+    "language": "en"
+  },
+  "transcription": [
+    {
+      "timestamps": {"from": "00:00:01,000", "to": "00:00:03,540"},
+      "offsets": {"from": 1000, "to": 3540},
+      "text": " Bob tries the dark mode toggle."
+    },
+    {
+      "timestamps": {"from": "00:00:03,540", "to": "00:00:03,900"},
+      "offsets": {"from": 3540, "to": 3900},
+      "text": ""
+    },
+    {
+      "timestamps": {"from": "00:00:04,210", "to": "00:00:07,860"},
+      "offsets": {"from": 4210, "to": 7860},
+      "text": " Carol says the page feels fast."
+    }
+  ]
+}
