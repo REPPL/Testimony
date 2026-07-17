@@ -27,16 +27,16 @@ testimony version
 ## 2. Start a capture session
 
 ```sh
-testimony demo
+testimony record -demo
 ```
 
-The command creates a fresh session directory (for example `sessions/2026-07-17_174858`), starts a small instrumented settings app, and prints the URL and the exact commands you need later. Keep this terminal open — it captures your clicks for the whole session.
+One command creates a fresh session directory (for example `sessions/2026-07-17_174858`), starts recording your microphone into that directory, serves a small instrumented settings app, and prints the URL and the exact commands you need later. The first run asks for **Microphone** permission — grant it in System Settings and run the command again. Keep this terminal open: it records your voice and captures your clicks for the whole session.
 
-## 3. Start recording your voice
+> If you would rather not capture the microphone, run `testimony demo` instead, record your voice separately in QuickTime Player, save the file, and pass it to `transcribe` in step 6 with `-audio ~/Desktop/session.m4a`. Everything else is the same.
 
-1. Open QuickTime Player and choose **File → New Audio Recording**.
-2. Click the record button.
-3. Say **"session start"** aloud. This spoken marker lands in the transcript and helps verify the clocks line up.
+## 3. Say the start marker
+
+Say **"session start"** aloud. Recording is already running, so this spoken marker lands in the transcript and helps verify the clocks line up.
 
 ## 4. Explore and think aloud
 
@@ -44,17 +44,16 @@ Open the printed URL (http://localhost:8737) in your browser and work through th
 
 Alice changes the display name to "Alice", clicks **Save**, and says what she observes. The demo app contains at least one intentional usability flaw; find it by talking.
 
-## 5. Stop both recorders
+## 5. Stop the session
 
-1. Stop the QuickTime recording and save the file — Alice saves hers as `~/Desktop/session.m4a`.
-2. In the terminal, press `Ctrl+C` to stop the capture server.
+In the terminal, press `Ctrl+C`. The recorder finalises `audio.wav`, the capture server stops, and the exact next commands are printed with the real session directory.
 
 ## 6. Transcribe the recording
 
-Point `transcribe` at the session directory the demo printed and at your audio file:
+Point `transcribe` at the session directory — no audio file to name, because the recording is already in the session as `audio.wav`:
 
 ```sh
-testimony transcribe -session sessions/2026-07-17_174858 -audio ~/Desktop/session.m4a
+testimony transcribe -session sessions/2026-07-17_174858
 ```
 
 This runs speech recognition locally on your machine — using the WhisperX engine you installed in step 1 — and writes `transcript.jsonl` into the session directory. It also prints the clock offset it uses to align the recording with the session — note it, and see [how alignment works](../explanation/how-alignment-works.md) if it ever looks wrong.

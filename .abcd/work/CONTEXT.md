@@ -8,9 +8,10 @@ useful. Short and pointer-heavy; durable design truth lives in
 ## What this repo is
 
 Testimony captures usability evidence, on the record. A Go CLI
-(`testimony`, standard library only) with `demo`, `transcribe`, `merge`,
-and `report` working end-to-end; `record` (managed screen/audio capture)
-is the remaining Phase 1 stub. Design in `docs/architecture.md`.
+(`testimony`, standard library only) with `record` (managed capture),
+`demo`, `transcribe`, `merge`, and `report` working end-to-end; the Phase 1
+capture surface is complete. Next is automated first-pass analysis
+(`analyze` + `review`). Design in `docs/architecture.md`.
 
 ## Live constraints / sharp edges
 

@@ -128,9 +128,37 @@ func TestMapSegmentsNegativeOffset(t *testing.T) {
 }
 
 func TestResolveOffsetFlagWins(t *testing.T) {
-	off, prov := resolveOffset(Options{Offset: 4.25, OffsetSet: true}, 0)
+	off, prov := resolveOffset(Options{Offset: 4.25, OffsetSet: true}, 0, true)
 	if off != 4.25 || prov != "from -offset flag" {
 		t.Fatalf("explicit -offset must win: got %v (%s)", off, prov)
+	}
+}
+
+// TestResolveOffsetInPlace covers a record session: no external -audio, so the
+// offset is 0 by construction (capture starts at t0) with no ffprobe involved.
+func TestResolveOffsetInPlace(t *testing.T) {
+	off, prov := resolveOffset(Options{}, 1_700_000_000_000, false)
+	if off != 0 {
+		t.Fatalf("in-place audio.wav offset must be 0, got %v", off)
+	}
+	if prov != "default 0: session audio.wav captured at t0" {
+		t.Fatalf("unexpected provenance: %q", prov)
+	}
+}
+
+// TestSameFileTreatedInPlace proves -audio pointing at the session's own
+// audio.wav is recognised as the in-place case (no self-conversion).
+func TestSameFileTreatedInPlace(t *testing.T) {
+	dir := t.TempDir()
+	wav := filepath.Join(dir, session.AudioFile)
+	if err := os.WriteFile(wav, []byte("RIFF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !sameFile(wav, wav) {
+		t.Fatal("a file must be the same file as itself")
+	}
+	if sameFile(filepath.Join(dir, "other.wav"), wav) {
+		t.Fatal("distinct paths must not be reported as the same file")
 	}
 }
 

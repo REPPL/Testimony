@@ -1,0 +1,565 @@
+package record
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/REPPL/Testimony/internal/session"
+)
+
+// --- flags ---
+
+func TestStringSliceRepeatable(t *testing.T) {
+	var s StringSlice
+	for _, v := range []string{"Find the save button", "Change the theme"} {
+		if err := s.Set(v); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	if len(s) != 2 || s[0] != "Find the save button" || s[1] != "Change the theme" {
+		t.Fatalf("repeatable -task not accumulated: %+v", s)
+	}
+}
+
+func TestResolveVideo(t *testing.T) {
+	cases := []struct {
+		video, noVideo, want bool
+	}{
+		{false, false, false}, // default: audio-only
+		{true, false, true},   // -video opts in
+		{false, true, false},  // -no-video explicit off
+		{true, true, false},   // -no-video wins when both given
+	}
+	for _, c := range cases {
+		if got := ResolveVideo(c.video, c.noVideo); got != c.want {
+			t.Errorf("ResolveVideo(%v,%v)=%v, want %v", c.video, c.noVideo, got, c.want)
+		}
+	}
+}
+
+// --- argv builders ---
+
+func TestMicArgs(t *testing.T) {
+	got := micArgs(0, "sessions/s1/audio.wav")
+	want := []string{
+		"-f", "avfoundation",
+		"-i", ":0",
+		"-ac", "1",
+		"-ar", "16000",
+		"-c:a", "pcm_s16le",
+		"-y", "sessions/s1/audio.wav",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("micArgs mismatch:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestScreenArgs(t *testing.T) {
+	got := screenArgs(1, "sessions/s1/screen.mp4")
+	want := []string{
+		"-f", "avfoundation",
+		"-framerate", "30",
+		"-capture_cursor", "1",
+		"-i", "1",
+		"-c:v", "libx264",
+		"-preset", "ultrafast",
+		"-pix_fmt", "yuv420p",
+		"-y", "sessions/s1/screen.mp4",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("screenArgs mismatch:\n got %q\nwant %q", got, want)
+	}
+}
+
+// --- device parsing/selection ---
+
+const sampleDevices = `[AVFoundation indev @ 0x12a604710] AVFoundation video devices:
+[AVFoundation indev @ 0x12a604710] [0] Studio Display Camera
+[AVFoundation indev @ 0x12a604710] [1] Capture screen 0
+[AVFoundation indev @ 0x12a604710] AVFoundation audio devices:
+[AVFoundation indev @ 0x12a604710] [0] Studio Display Microphone
+[AVFoundation indev @ 0x12a604710] [1] USB audio CODEC`
+
+func TestParseAVDevices(t *testing.T) {
+	video, audio := parseAVDevices(sampleDevices)
+	if len(video) != 2 || video[1].index != 1 || video[1].name != "Capture screen 0" {
+		t.Fatalf("video devices parsed wrong: %+v", video)
+	}
+	if len(audio) != 2 || audio[0].index != 0 || audio[0].name != "Studio Display Microphone" {
+		t.Fatalf("audio devices parsed wrong: %+v", audio)
+	}
+}
+
+func TestSelectDevices(t *testing.T) {
+	video, audio := parseAVDevices(sampleDevices)
+
+	mic, screen, err := selectDevices(video, audio, true)
+	if err != nil {
+		t.Fatalf("selectDevices: %v", err)
+	}
+	if mic != 0 {
+		t.Fatalf("mic index: got %d, want 0 (system default input)", mic)
+	}
+	if screen != 1 {
+		t.Fatalf("screen index: got %d, want 1 (Capture screen)", screen)
+	}
+
+	// Audio-only: screen index is not resolved and no error.
+	if _, _, err := selectDevices(video, audio, false); err != nil {
+		t.Fatalf("audio-only selection must not require a screen device: %v", err)
+	}
+
+	// No screen device but screen requested → actionable error.
+	if _, _, err := selectDevices([]avDevice{{0, "Studio Display Camera"}}, audio, true); err == nil {
+		t.Fatal("missing Capture screen device must error when screen requested")
+	}
+
+	// No audio device at all → error.
+	if _, _, err := selectDevices(video, nil, false); err == nil {
+		t.Fatal("no audio device must error")
+	}
+}
+
+// --- platform plan ---
+
+func TestPlan(t *testing.T) {
+	if rec, skips := plan("darwin", false); !reflect.DeepEqual(rec, []string{"microphone"}) || len(skips) != 0 {
+		t.Fatalf("darwin audio-only: got %v skips %v", rec, skips)
+	}
+	if rec, skips := plan("darwin", true); !reflect.DeepEqual(rec, []string{"microphone", "screen"}) || len(skips) != 0 {
+		t.Fatalf("darwin video: got %v skips %v", rec, skips)
+	}
+	rec, skips := plan("linux", true)
+	if len(rec) != 0 {
+		t.Fatalf("linux must record nothing, got %v", rec)
+	}
+	if len(skips) == 0 {
+		t.Fatal("linux must explain what was skipped")
+	}
+	joined := strings.Join(skips, "\n")
+	if !strings.Contains(joined, "transcribe") || !strings.Contains(joined, "-audio") {
+		t.Fatalf("linux skip must point at external-audio transcribe: %q", joined)
+	}
+}
+
+// --- TCC classifier ---
+
+func TestClassifyRecorderExit(t *testing.T) {
+	// Start-up exit with an avfoundation signature → permissions guidance naming
+	// the Microphone pane.
+	micStderr := "[AVFoundation indev @ 0x0] Failed to open device.\nInput/output error"
+	msg := classifyRecorderExit(streamMicrophone, errors.New("exit status 1"), micStderr, true)
+	if !strings.Contains(msg, "Microphone") || strings.Contains(msg, "Screen Recording") {
+		t.Fatalf("mic failure must name the Microphone pane: %q", msg)
+	}
+	if !strings.Contains(msg, "permissions") {
+		t.Fatalf("message must phrase the likely cause as permissions: %q", msg)
+	}
+	if !strings.Contains(msg, "Input/output error") {
+		t.Fatalf("message must append the raw ffmpeg tail: %q", msg)
+	}
+	if strings.Contains(msg, "goroutine") || strings.Contains(msg, ".go:") {
+		t.Fatalf("message must not be a stack trace: %q", msg)
+	}
+
+	scr := classifyRecorderExit(streamScreen, nil, "avfoundation: not authorized", true)
+	if !strings.Contains(scr, "Screen Recording") || strings.Contains(scr, "→ Privacy & Security → Microphone") {
+		t.Fatalf("screen failure must name the Screen Recording pane: %q", scr)
+	}
+
+	// Start-up exit WITHOUT an avfoundation signature → must not claim
+	// permissions or name a pane; the ffmpeg tail carries the real cause.
+	benign := classifyRecorderExit(streamMicrophone, errors.New("exit status 1"), "Conversion failed: invalid output format", true)
+	if strings.Contains(benign, "permissions") || strings.Contains(benign, "Privacy & Security") {
+		t.Fatalf("a start-up exit without an AV signature must not claim permissions: %q", benign)
+	}
+	if !strings.Contains(benign, "Conversion failed") {
+		t.Fatalf("message must still append the raw ffmpeg tail: %q", benign)
+	}
+
+	// Mid-session exit (past the startup window) even WITH an AV signature
+	// ("Input/output error" from a device unplug) must be reported as an
+	// unexpected stop, never as a start-up permissions denial.
+	midSession := classifyRecorderExit(streamMicrophone, errors.New("exit status 1"), "Input/output error", false)
+	if strings.Contains(midSession, "permissions") || strings.Contains(midSession, "Privacy & Security") {
+		t.Fatalf("a mid-session drop must not be mislabelled as a permissions denial: %q", midSession)
+	}
+	if strings.Contains(midSession, "failed to start") {
+		t.Fatalf("a mid-session drop must not be labelled a start failure: %q", midSession)
+	}
+	if !strings.Contains(midSession, "Input/output error") {
+		t.Fatalf("mid-session message must still append the raw ffmpeg tail: %q", midSession)
+	}
+
+	if !looksLikeAVFailure("Failed to open the device") {
+		t.Fatal("avfoundation signature should be detected")
+	}
+	if looksLikeAVFailure("all good here") {
+		t.Fatal("benign output must not look like a failure")
+	}
+}
+
+func TestClassifyMissingOutput(t *testing.T) {
+	// A microphone recorder stopped at finalise with no audio.wav must name the
+	// missing artefact, point at the Microphone permission pane, phrase the cause
+	// as most likely, and append the raw ffmpeg tail — never a stack trace.
+	msg := classifyMissingOutput(streamMicrophone, session.AudioFile, "[AVFoundation indev @ 0x0] Failed to open device")
+	if !strings.Contains(msg, session.AudioFile) {
+		t.Fatalf("message must name the missing artefact: %q", msg)
+	}
+	if !strings.Contains(msg, "Microphone") || strings.Contains(msg, "Screen Recording") {
+		t.Fatalf("microphone artefact must name the Microphone pane: %q", msg)
+	}
+	if !strings.Contains(msg, "Privacy & Security") || !strings.Contains(msg, "most likely") {
+		t.Fatalf("message must name the settings pane and hedge the cause: %q", msg)
+	}
+	if !strings.Contains(msg, "Failed to open device") {
+		t.Fatalf("message must append the ffmpeg tail: %q", msg)
+	}
+	if strings.Contains(msg, "goroutine") || strings.Contains(msg, ".go:") {
+		t.Fatalf("message must not be a stack trace: %q", msg)
+	}
+
+	// A screen recorder that left no screen.mp4 must name the Screen Recording
+	// pane instead, and tolerate an empty tail.
+	scr := classifyMissingOutput(streamScreen, session.ScreenFile, "")
+	if !strings.Contains(scr, "Screen Recording") || strings.Contains(scr, "→ Privacy & Security → Microphone") {
+		t.Fatalf("screen artefact must name the Screen Recording pane: %q", scr)
+	}
+	if strings.Contains(scr, "ffmpeg output:") {
+		t.Fatalf("an empty tail must not print an empty ffmpeg section: %q", scr)
+	}
+}
+
+// TestFinaliseOutputs proves the per-recorder artefact validation: a present,
+// non-empty audio.wav is accepted (audioReady, no problem); a missing or empty
+// file yields a problem and withholds audioReady.
+func TestFinaliseOutputs(t *testing.T) {
+	dir := t.TempDir()
+
+	// Microphone wrote a real audio.wav; screen wrote nothing.
+	if err := os.WriteFile(filepath.Join(dir, session.AudioFile), []byte("RIFF...."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+	scr := newLiveChild(streamScreen, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+
+	audioReady, problems := finaliseOutputs(dir, []*liveChild{mic, scr})
+	if !audioReady {
+		t.Fatalf("a present non-empty audio.wav must be accepted")
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], session.ScreenFile) {
+		t.Fatalf("the missing screen.mp4 must be the only problem reported: %v", problems)
+	}
+
+	// An empty audio.wav must be treated as no output.
+	empty := t.TempDir()
+	if err := os.WriteFile(filepath.Join(empty, session.AudioFile), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mic2 := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+	ready, probs := finaliseOutputs(empty, []*liveChild{mic2})
+	if ready || len(probs) != 1 {
+		t.Fatalf("an empty audio.wav must count as no output: ready=%v problems=%v", ready, probs)
+	}
+
+	// Reap the still-live fakes so no goroutine lingers.
+	for _, c := range []*liveChild{mic, scr, mic2} {
+		stopChild(c, time.Second)
+	}
+}
+
+// TestRunInstallsSignalHandlerBeforeSpawning proves the interrupt handler is
+// installed before any recorder subprocess is spawned. Each recorder runs in
+// its own process group, so the terminal's Ctrl+C never reaches ffmpeg — only
+// record's stopAll does. If the handler were installed after the spawn (the
+// original defect), a Ctrl+C in the startup window would kill record under
+// Go's default handler and orphan the already-started ffmpeg children.
+// Hermetic: no real signal handler, no ffmpeg — the notify and spawn seams are
+// stubbed and their order recorded.
+func TestRunInstallsSignalHandlerBeforeSpawning(t *testing.T) {
+	var mu sync.Mutex
+	var order []string
+	note := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
+
+	origNotify, origStart := notifyContext, startRecordersFn
+	t.Cleanup(func() { notifyContext = origNotify; startRecordersFn = origStart })
+
+	var cancel context.CancelFunc
+	notifyContext = func() (context.Context, context.CancelFunc) {
+		note("notify")
+		ctx, c := context.WithCancel(context.Background())
+		cancel = c
+		return ctx, c
+	}
+	startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+		note("spawn")
+		// A well-behaved recorder that finalises a real audio.wav and is reaped on
+		// SIGINT, so the lifecycle stops cleanly. cancel is non-nil only if notify
+		// already ran — which is exactly the ordering under test — so unblock the
+		// wait here.
+		if err := os.WriteFile(filepath.Join(dir, session.AudioFile), []byte("RIFF...."), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		child := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+		cancel()
+		return []*liveChild{child}, nil
+	}
+
+	if err := Run(Options{Out: t.TempDir(), GOOS: "darwin", Log: io.Discard}); err != nil {
+		t.Fatalf("Run must stop cleanly on interrupt: %v", err)
+	}
+
+	mu.Lock()
+	got := append([]string(nil), order...)
+	mu.Unlock()
+	want := []string{"notify", "spawn"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("signal handler must be installed before recorders spawn: got %v, want %v", got, want)
+	}
+}
+
+// --- next commands ---
+
+func TestNextCommands(t *testing.T) {
+	dir := "sessions/2026-07-17_153045"
+
+	withAudio := nextCommands(dir, true)
+	if !strings.Contains(withAudio, dir) {
+		t.Fatalf("next commands must carry the real dir: %q", withAudio)
+	}
+	if strings.Contains(withAudio, "-audio") {
+		t.Fatalf("with in-place audio there must be no -audio flag: %q", withAudio)
+	}
+	for _, verb := range []string{"transcribe", "merge", "report"} {
+		if !strings.Contains(withAudio, verb) {
+			t.Fatalf("missing %s command: %q", verb, withAudio)
+		}
+	}
+
+	// Without audio.wav, transcribe cannot reuse a session recording, so the
+	// bare `transcribe -session DIR` command must NOT be offered as a next step.
+	// The merge/report commands still stand (interactions may be captured), plus
+	// a line explaining transcribe needs audio and pointing at the two ways to
+	// get it: re-run record after granting the permission, or bring an external
+	// recording via `transcribe -audio FILE`.
+	noAudio := nextCommands(dir, false)
+	if strings.Contains(noAudio, "  testimony transcribe -session "+dir+"\n") {
+		t.Fatalf("without audio.wav the bare transcribe reuse line must not be offered: %q", noAudio)
+	}
+	for _, verb := range []string{"merge", "report"} {
+		if !strings.Contains(noAudio, "testimony "+verb) || !strings.Contains(noAudio, "-session "+dir) {
+			t.Fatalf("without audio the %s command must still be offered: %q", verb, noAudio)
+		}
+	}
+	if !strings.Contains(noAudio, "-audio") || !strings.Contains(noAudio, "transcribe") {
+		t.Fatalf("without audio the operator needs guidance mentioning transcribe -audio: %q", noAudio)
+	}
+	if !strings.Contains(strings.ToLower(noAudio), "re-run record") {
+		t.Fatalf("without audio the guidance must suggest re-running record: %q", noAudio)
+	}
+}
+
+// TestRunReportsRecorderStoppedWithNoOutput proves the finalise-time validation:
+// a recorder that blocked on the TCC permission prompt for the whole session
+// (so it wrote no audio.wav) and was reaped only when we SIGINT'd it at stop
+// must NOT be silently exited — Run must print an actionable explanation naming
+// the missing artefact, the likely permission cause, and the recorder's stderr
+// tail, adjust the Next block to drop the transcribe reuse line, and exit
+// non-zero. This is exactly the case the mid-session classifier misses: the
+// recorder never exited on its own, so anyExit never fired. Hermetic: no
+// ffmpeg, no TTY, no real signal — the notify and spawn seams are stubbed.
+func TestRunReportsRecorderStoppedWithNoOutput(t *testing.T) {
+	origNotify, origStart := notifyContext, startRecordersFn
+	t.Cleanup(func() { notifyContext = origNotify; startRecordersFn = origStart })
+
+	var cancel context.CancelFunc
+	notifyContext = func() (context.Context, context.CancelFunc) {
+		ctx, c := context.WithCancel(context.Background())
+		cancel = c
+		return ctx, c
+	}
+	startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+		buf := &lockedBuffer{}
+		_, _ = buf.Write([]byte("[AVFoundation indev @ 0x0] Failed to open device\nInput/output error"))
+		// A recorder that blocked on the TCC prompt all session: it never wrote
+		// audio.wav and exits only when SIGINT'd at stop.
+		child := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), buf)
+		cancel() // drive the stop path
+		return []*liveChild{child}, nil
+	}
+
+	var log bytes.Buffer
+	root := t.TempDir()
+	err := Run(Options{Out: root, GOOS: "darwin", Log: &log})
+	if err == nil {
+		t.Fatal("a recorder that produced no output must make Run exit non-zero")
+	}
+
+	out := log.String()
+	if !strings.Contains(out, "audio.wav") {
+		t.Fatalf("explanation must name the missing artefact audio.wav: %q", out)
+	}
+	if !strings.Contains(out, "Microphone") || !strings.Contains(out, "Privacy & Security") {
+		t.Fatalf("explanation must point at the Microphone permission pane: %q", out)
+	}
+	if !strings.Contains(out, "Failed to open device") {
+		t.Fatalf("explanation must include the recorder's stderr tail: %q", out)
+	}
+
+	entries, _ := os.ReadDir(root)
+	if len(entries) != 1 {
+		t.Fatalf("expected one session dir, got %d", len(entries))
+	}
+	dir := filepath.Join(root, entries[0].Name())
+	if strings.Contains(out, "  testimony transcribe -session "+dir+"\n") {
+		t.Fatalf("with no audio.wav the transcribe reuse line must not be offered: %q", out)
+	}
+	for _, verb := range []string{"merge", "report"} {
+		if !strings.Contains(out, "testimony "+verb) {
+			t.Fatalf("the %s command must still be offered when interactions may be captured: %q", verb, out)
+		}
+	}
+}
+
+// --- honest degradation ---
+
+// TestRunDegradesHonestly proves that on a platform without capture support and
+// with no demo server, record still writes a valid session (dir + manifest),
+// states what was skipped, prints the external-audio next step, and exits
+// cleanly without blocking. Hermetic: no ffmpeg, no TTY, no signal.
+func TestRunDegradesHonestly(t *testing.T) {
+	var log bytes.Buffer
+	root := t.TempDir()
+
+	err := Run(Options{
+		Out:   root,
+		App:   "settings prototype",
+		Tasks: []string{"Find the save button"},
+		GOOS:  "linux",
+		Log:   &log,
+	})
+	if err != nil {
+		t.Fatalf("degraded Run must exit cleanly: %v", err)
+	}
+
+	entries, _ := os.ReadDir(root)
+	if len(entries) != 1 {
+		t.Fatalf("expected one session dir, got %d", len(entries))
+	}
+	dir := filepath.Join(root, entries[0].Name())
+	m, err := session.LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("valid manifest must still be written: %v", err)
+	}
+	if m.T0EpochMS == 0 || m.App != "settings prototype" {
+		t.Fatalf("manifest not populated: %+v", m)
+	}
+
+	out := log.String()
+	if !strings.Contains(out, "unavailable") {
+		t.Fatalf("must state what was skipped: %q", out)
+	}
+	if !strings.Contains(out, "-audio") {
+		t.Fatalf("must point at the external-audio transcribe step: %q", out)
+	}
+}
+
+// --- lifecycle state machine over a fake proc ---
+
+// fakeProc records the signals it receives and exits Wait only when it receives
+// its designated exit signal.
+type fakeProc struct {
+	mu       sync.Mutex
+	signals  []os.Signal
+	exitOn   os.Signal
+	exit     chan struct{}
+	exitOnce sync.Once
+}
+
+func newFakeProc(exitOn os.Signal) *fakeProc {
+	return &fakeProc{exitOn: exitOn, exit: make(chan struct{})}
+}
+
+func (f *fakeProc) Start() error { return nil }
+
+func (f *fakeProc) Signal(s os.Signal) error {
+	f.mu.Lock()
+	f.signals = append(f.signals, s)
+	f.mu.Unlock()
+	if s == f.exitOn {
+		f.exitOnce.Do(func() { close(f.exit) })
+	}
+	return nil
+}
+
+func (f *fakeProc) Wait() error {
+	<-f.exit
+	return nil
+}
+
+func (f *fakeProc) sent() []os.Signal {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]os.Signal, len(f.signals))
+	copy(out, f.signals)
+	return out
+}
+
+func TestStopChildCleanSIGINT(t *testing.T) {
+	fp := newFakeProc(syscall.SIGINT)
+	c := newLiveChild(streamMicrophone, fp, &lockedBuffer{})
+
+	stopChild(c, time.Second)
+
+	if got := fp.sent(); len(got) != 1 || got[0] != syscall.SIGINT {
+		t.Fatalf("a well-behaved child must be reaped on SIGINT alone, got %v", got)
+	}
+}
+
+func TestStopChildEscalatesToSIGKILL(t *testing.T) {
+	// A child that ignores SIGINT must be escalated to SIGKILL after the grace.
+	fp := newFakeProc(syscall.SIGKILL)
+	c := newLiveChild(streamScreen, fp, &lockedBuffer{})
+
+	start := time.Now()
+	stopChild(c, 30*time.Millisecond)
+	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
+		t.Fatalf("must wait the grace before escalating, only waited %v", elapsed)
+	}
+
+	got := fp.sent()
+	if len(got) != 2 || got[0] != syscall.SIGINT || got[1] != syscall.SIGKILL {
+		t.Fatalf("expected SIGINT then SIGKILL, got %v", got)
+	}
+}
+
+func TestAnyExitReportsDeadChild(t *testing.T) {
+	live := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+	dead := newLiveChild(streamScreen, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+
+	// Kill the "dead" child by delivering its exit signal out of band.
+	_ = dead.p.Signal(syscall.SIGINT)
+
+	select {
+	case c := <-anyExit([]*liveChild{live, dead}):
+		if c.stream != streamScreen {
+			t.Fatalf("anyExit reported %q, want the exited screen child", c.stream)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("anyExit did not report the exited child")
+	}
+
+	// Clean up the still-live child so no goroutine lingers.
+	stopChild(live, time.Second)
+}
