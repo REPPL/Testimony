@@ -1,0 +1,20 @@
+{
+  "docs": {
+    "target": "agents_md"
+  },
+  "meta": {
+    "project_name": "Testimony",
+    "schema_version": 1,
+    "setup_date": "2026-07-17",
+    "setup_version": "dev"
+  },
+  "oracle": {
+    "backend": "host-delegated"
+  },
+  "repo": {
+    "visibility": "private"
+  },
+  "scan": {
+    "deep": false
+  }
+}
