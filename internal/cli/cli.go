@@ -23,7 +23,7 @@ Usage:
   testimony demo        [-addr :8737] [-out sessions]   serve the instrumented demo app, capture a session
   testimony transcribe   -session DIR -audio FILE       transcribe a voice recording into transcript.jsonl
                         [-engine auto|whisperx|whispercpp] [-model large-v3-turbo] [-language en] [-offset SECONDS]
-                        [-device auto|cpu|cuda] [-compute_type auto|int8|float16]   (whisperx only)
+                        [-device auto|cpu|cuda] [-compute_type auto|int8|float16] [-vad auto|silero|pyannote]   (whisperx only)
   testimony merge        -session DIR                   merge transcript + interactions into timeline.jsonl
   testimony report       -session DIR [-window 2.5]     render timeline.jsonl as a Markdown report
   testimony record                                      (stub — see docs/architecture.md §12, Phase 1)
@@ -99,6 +99,7 @@ func Run(args []string) int {
 		language := fs.String("language", "en", "spoken language code")
 		device := fs.String("device", "auto", "(whisperx) inference device: auto, cpu, or cuda")
 		compute := fs.String("compute_type", "auto", "(whisperx) compute type: auto, int8, float16, ...")
+		vad := fs.String("vad", "auto", "(whisperx) VAD method: auto, silero, or pyannote (auto picks silero; pyannote trips newer torch's weights_only load)")
 		offset := fs.Float64("offset", 0, "audio→session clock offset in seconds (default: derived from the recording's creation time)")
 		fs.Parse(rest)
 		if *dir == "" {
@@ -121,6 +122,7 @@ func Run(args []string) int {
 			Language:   *language,
 			Device:     *device,
 			Compute:    *compute,
+			VAD:        *vad,
 			Offset:     *offset,
 			OffsetSet:  offsetSet,
 			Log:        os.Stdout,

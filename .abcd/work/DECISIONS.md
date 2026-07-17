@@ -22,3 +22,6 @@ Architecture-shaping decisions graduate to an ADR under
   release checksums and defaults to a user-local install (`~/.local/bin`, no
   admin rights), with dependency installs offered via Homebrew or verified
   admin-free downloads (evermeet.cx GPG-verified ffmpeg; whisperx via uv).
+- 2026-07-17 — WhisperX VAD defaults to silero (`-vad` overrides): pyannote's
+  checkpoint trips newer torch's `weights_only` load and aborts every run;
+  found in the first live end-to-end session on the target Mac.

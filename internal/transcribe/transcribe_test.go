@@ -210,3 +210,17 @@ func TestConvertAudioIntegration(t *testing.T) {
 		t.Fatal("unsupported extension must error")
 	}
 }
+
+func TestResolveVAD(t *testing.T) {
+	cases := []struct{ pref, want string }{
+		{"", "silero"},
+		{"auto", "silero"},
+		{"silero", "silero"},
+		{"pyannote", "pyannote"},
+	}
+	for _, c := range cases {
+		if got := resolveVAD(c.pref); got != c.want {
+			t.Errorf("resolveVAD(%q) = %q, want %q", c.pref, got, c.want)
+		}
+	}
+}
