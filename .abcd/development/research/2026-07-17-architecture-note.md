@@ -1,3 +1,5 @@
+Preserved as drafted; the living brief is ../brief/.
+
 # Architecture Note: Think-Aloud Capture & Analysis Pipeline
 
 | | |

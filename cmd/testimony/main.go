@@ -1,5 +1,5 @@
 // Command testimony captures think-aloud test sessions and turns them into
-// aligned, analysable records. See docs/architecture.md for the design.
+// aligned, analysable records. See docs/ for the documentation.
 package main
 
 import (

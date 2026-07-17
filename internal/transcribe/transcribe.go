@@ -1,6 +1,6 @@
 // Package transcribe wraps a local ASR engine (WhisperX or whisper.cpp) to
 // turn a session's voice recording into transcript.jsonl — time-aligned
-// utterances on the session clock (docs/architecture.md §5).
+// utterances on the session clock (docs/reference/session-directory.md).
 //
 // The pipeline: convert the recording to 16 kHz mono audio.wav (ffmpeg),
 // run the engine so it writes a machine-readable JSON file, parse that file
@@ -29,7 +29,7 @@ const (
 
 // Options configures one transcription run.
 type Options struct {
-	SessionDir string  // session directory (docs/architecture.md §11)
+	SessionDir string  // session directory (docs/reference/session-directory.md)
 	Audio      string  // original voice recording (.m4a, .mov, or .wav)
 	Engine     string  // auto | whisperx | whispercpp
 	Model      string  // Whisper model name, or (whispercpp) a ggml file path
@@ -105,7 +105,7 @@ func resolveOffset(opts Options, t0EpochMS int64) (float64, string) {
 }
 
 // mapSegments converts engine segments to the Utterance schema of
-// docs/architecture.md §5: sequential utt-NNN IDs, offset applied, times
+// docs/reference/session-directory.md: sequential utt-NNN IDs, offset applied, times
 // rounded to 2 decimal places, whitespace trimmed, empty segments skipped,
 // speaker defaulting to "P1" when the engine supplies no diarisation label.
 func mapSegments(segs []segment, offset float64) []timeline.Utterance {

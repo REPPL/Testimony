@@ -26,10 +26,10 @@ Usage:
                         [-device auto|cpu|cuda] [-compute_type auto|int8|float16] [-vad auto|silero|pyannote]   (whisperx only)
   testimony merge        -session DIR                   merge transcript + interactions into timeline.jsonl
   testimony report       -session DIR [-window 2.5]     render timeline.jsonl as a Markdown report
-  testimony record                                      (stub — see docs/architecture.md §12, Phase 1)
+  testimony record                                      (stub — see docs/reference/cli.md)
   testimony version
 
-A session directory is described in docs/architecture.md §11.
+A session directory is described in docs/reference/session-directory.md.
 `
 
 // Run executes the CLI and returns a process exit code.

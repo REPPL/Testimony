@@ -1,0 +1,21 @@
+{
+  "roots": ["docs", "README.md"],
+  "banned_tokens": [
+    {"id":"present_tense/previously","pattern":"(?i)\\bpreviously\\b","severity":"blocker","allow_context":["(?i)<!--\\s*docs-lint:\\s*allow\\b"],"message":"change-narration in a doc body; user-facing docs describe the present state only (version control holds the history). Rephrase, or add <!-- docs-lint: allow --> if this genuinely describes something external."},
+    {"id":"present_tense/formerly","pattern":"(?i)\\bformerly\\b","severity":"blocker","allow_context":["(?i)<!--\\s*docs-lint:\\s*allow\\b"],"message":"change-narration in a doc body; user-facing docs describe the present state only (version control holds the history). Rephrase, or add <!-- docs-lint: allow --> if this genuinely describes something external."},
+    {"id":"present_tense/to-be-implemented","pattern":"(?i)\\bto be implemented\\b","severity":"blocker","allow_context":["(?i)<!--\\s*docs-lint:\\s*allow\\b"],"message":"future-facing phrasing in a doc body; user-facing docs describe the present state only. Rephrase, or add <!-- docs-lint: allow --> if this genuinely describes something external."},
+    {"id":"present_tense/will-be-added","pattern":"(?i)\\bwill be (added|implemented|introduced)\\b","severity":"blocker","allow_context":["(?i)<!--\\s*docs-lint:\\s*allow\\b"],"message":"future-facing phrasing in a doc body; user-facing docs describe the present state only. Rephrase, or add <!-- docs-lint: allow --> if this genuinely describes something external."},
+    {"id":"present_tense/has-been-replaced","pattern":"(?i)\\b(has|have|had)\\s+been\\s+replaced\\b","severity":"blocker","allow_context":["(?i)<!--\\s*docs-lint:\\s*allow\\b"],"message":"change-narration in a doc body; user-facing docs describe the present state only (version control holds the history). Rephrase, or add <!-- docs-lint: allow --> if this genuinely describes something external."},
+    {"id":"present_tense/renamed-from","pattern":"(?i)\\brenamed from\\b","severity":"blocker","allow_context":["(?i)<!--\\s*docs-lint:\\s*allow\\b"],"message":"change-narration in a doc body; user-facing docs describe the present state only (version control holds the history). Rephrase, or add <!-- docs-lint: allow --> if this genuinely describes something external."},
+    {"id":"present_tense/no-longer","pattern":"(?i)\\bno longer\\b","severity":"warn","allow_context":["(?i)<!--\\s*docs-lint:\\s*allow\\b"],"message":"possible change-narration; if this states present reality (e.g. 'wait no longer than'), ignore, otherwise rephrase to present tense. Advisory because it collides with legitimate present-state prose."},
+    {"id":"present_tense/deprecated","pattern":"(?i)\\bdeprecated\\b","severity":"warn","allow_context":["(?i)<!--\\s*docs-lint:\\s*allow\\b"],"message":"possible change-narration; documenting a currently-deprecated external interface is present reality, so this is advisory. Rephrase if it narrates a change to Testimony itself."},
+    {"id":"paths/absolute-home","pattern":"/Users/[A-Za-z0-9_.-]+/","severity":"blocker","allow_context":["(?i)<!--\\s*docs-lint:\\s*allow\\b"],"message":"an absolute local path in user-facing content; use a relative path or ~ instead."}
+  ],
+  "rules": {
+    "links_resolve": {"enabled": true, "severity": "blocker"},
+    "stray_root_docs": {"enabled": true, "severity": "blocker",
+      "allowlist": ["README","AGENTS","CLAUDE","CHANGELOG","CONTRIBUTING","SECURITY","LICENSE"]}
+  },
+  "exempt_paths": [],
+  "exempt_if_status": []
+}
