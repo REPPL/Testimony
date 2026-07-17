@@ -36,6 +36,29 @@ What works today:
 What is stubbed: `record` (managed screen/audio capture). Until then you record
 voice with QuickTime and let `transcribe` do the rest.
 
+## Install
+
+One line, no admin rights required (binary goes to `~/.local/bin`; the SHA-256 of
+the release artefact is pinned in the script):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | sh
+```
+
+The installer then offers to set up what `transcribe` needs — ffmpeg and a local
+ASR engine (WhisperX or whisper.cpp) — via Homebrew where available, or as
+user-local installs for machines without admin rights. Prefer to read before you
+run (sensible), or pass flags:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh
+less install.sh && sh install.sh                 # inspect first
+curl -fsSL .../install.sh | sh -s -- --no-deps   # binary only
+curl -fsSL .../install.sh | sh -s -- --yes       # non-interactive, with dependencies
+```
+
+Or build from source:
+
 ## Quickstart
 
 ```sh

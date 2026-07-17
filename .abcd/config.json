@@ -12,7 +12,7 @@
     "backend": "host-delegated"
   },
   "repo": {
-    "visibility": "private"
+    "visibility": "public"
   },
   "scan": {
     "deep": false
