@@ -77,9 +77,9 @@ func Run(addr, outRoot string) error {
   2. Say “session start” aloud, open the URL, and think aloud while you explore.
   3. When done: stop the recorder, press Ctrl+C here, then:
 
-       testimony transcribe --session %s   (stub for now — drop transcript.jsonl in manually)
-       testimony merge      --session %s
-       testimony report     --session %s
+       testimony transcribe -session %s -audio <your-recording.m4a>
+       testimony merge      -session %s
+       testimony report     -session %s
 
 `, dir, addr, dir, dir, dir)
 

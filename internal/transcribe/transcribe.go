@@ -36,6 +36,7 @@ type Options struct {
 	Language   string  // spoken language code, e.g. "en"
 	Device     string  // (whisperx) auto | cpu | cuda
 	Compute    string  // (whisperx) auto | int8 | float16 | float32 | ...
+	VAD        string  // (whisperx) auto | silero | pyannote
 	Offset     float64 // audio→session clock offset in seconds
 	OffsetSet  bool    // true when -offset was given explicitly
 	Log        io.Writer

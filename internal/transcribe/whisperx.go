@@ -50,6 +50,7 @@ func runWhisperX(bin, wav string, opts Options) ([]segment, error) {
 		"--language", opts.Language,
 		"--device", device,
 		"--compute_type", compute,
+		"--vad_method", resolveVAD(opts.VAD),
 		"--output_format", "json",
 		"--output_dir", tmp)
 	if raw, err := cmd.CombinedOutput(); err != nil {
@@ -89,6 +90,18 @@ func resolveCompute(devicePref, computePref, goos string, hasCUDA bool) (device,
 		}
 	}
 	return device, compute
+}
+
+// resolveVAD resolves the -vad "auto" value. whisperx's default VAD (pyannote)
+// loads its checkpoint through torch.load, which newer torch versions refuse
+// under the weights_only default (omegaconf globals in the pickle) — the run
+// aborts before transcribing. silero avoids that path entirely, so "auto"
+// picks it; pyannote remains selectable for environments where it works.
+func resolveVAD(pref string) string {
+	if pref == "" || pref == "auto" {
+		return "silero"
+	}
+	return pref
 }
 
 // cudaVisible reports whether an NVIDIA GPU is plausibly available, using

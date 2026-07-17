@@ -17,3 +17,6 @@ Architecture-shaping decisions graduate to an ADR under
   overrides.
 - 2026-07-17 — Architecture §11 aligned to code: `manifest.json` and
   `events.rrweb.jsonl` + `interactions.jsonl` (divergence flagged in PR #2).
+- 2026-07-17 — WhisperX VAD defaults to silero (`-vad` overrides): pyannote's
+  checkpoint trips newer torch's `weights_only` load and aborts every run;
+  found in the first live end-to-end session on the target Mac.
