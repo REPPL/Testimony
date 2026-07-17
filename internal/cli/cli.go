@@ -9,7 +9,9 @@ import (
 
 	"github.com/REPPL/Testimony/internal/demo"
 	"github.com/REPPL/Testimony/internal/report"
+	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
+	"github.com/REPPL/Testimony/internal/transcribe"
 )
 
 // Version is stamped by the release process; "dev" otherwise.
@@ -19,10 +21,12 @@ const usage = `testimony — usability evidence, on the record
 
 Usage:
   testimony demo        [-addr :8737] [-out sessions]   serve the instrumented demo app, capture a session
+  testimony transcribe   -session DIR -audio FILE       transcribe a voice recording into transcript.jsonl
+                        [-engine auto|whisperx|whispercpp] [-model large-v3-turbo] [-language en] [-offset SECONDS]
+                        [-device auto|cpu|cuda] [-compute_type auto|int8|float16]   (whisperx only)
   testimony merge        -session DIR                   merge transcript + interactions into timeline.jsonl
   testimony report       -session DIR [-window 2.5]     render timeline.jsonl as a Markdown report
   testimony record                                      (stub — see docs/architecture.md §12, Phase 1)
-  testimony transcribe                                  (stub — WhisperX wrapper lands here)
   testimony version
 
 A session directory is described in docs/architecture.md §11.
@@ -87,9 +91,45 @@ func Run(args []string) int {
 		return 2
 
 	case "transcribe":
-		fmt.Fprintln(os.Stderr, "transcribe: not implemented yet — this will wrap faster-whisper/WhisperX (word timestamps).")
-		fmt.Fprintln(os.Stderr, "For now, place a transcript.jsonl in the session dir; format: docs/architecture.md §5.")
-		return 2
+		fs := flag.NewFlagSet("transcribe", flag.ExitOnError)
+		dir := fs.String("session", "", "session directory")
+		audio := fs.String("audio", "", "voice recording (.m4a, .mov, or .wav)")
+		engine := fs.String("engine", "auto", "ASR engine: auto, whisperx, or whispercpp")
+		model := fs.String("model", "large-v3-turbo", "Whisper model name, or (whispercpp) a ggml model file path")
+		language := fs.String("language", "en", "spoken language code")
+		device := fs.String("device", "auto", "(whisperx) inference device: auto, cpu, or cuda")
+		compute := fs.String("compute_type", "auto", "(whisperx) compute type: auto, int8, float16, ...")
+		offset := fs.Float64("offset", 0, "audio→session clock offset in seconds (default: derived from the recording's creation time)")
+		fs.Parse(rest)
+		if *dir == "" {
+			return fail(fmt.Errorf("transcribe: -session is required"))
+		}
+		if *audio == "" {
+			return fail(fmt.Errorf("transcribe: -audio is required"))
+		}
+		offsetSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "offset" {
+				offsetSet = true
+			}
+		})
+		n, err := transcribe.Run(transcribe.Options{
+			SessionDir: *dir,
+			Audio:      *audio,
+			Engine:     *engine,
+			Model:      *model,
+			Language:   *language,
+			Device:     *device,
+			Compute:    *compute,
+			Offset:     *offset,
+			OffsetSet:  offsetSet,
+			Log:        os.Stdout,
+		})
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Printf("transcribed %d utterances → %s\n", n, filepath.Join(*dir, session.TranscriptFile))
+		return 0
 
 	case "version":
 		fmt.Println("testimony", Version)

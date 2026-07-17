@@ -19,6 +19,14 @@ type Utterance struct {
 	T1      float64 `json:"t1"`
 	Speaker string  `json:"speaker,omitempty"`
 	Text    string  `json:"text"`
+	Words   []Word  `json:"words,omitempty"`
+}
+
+// Word is one aligned word inside an utterance: its text and start time in
+// session-relative seconds (docs/architecture.md §5).
+type Word struct {
+	W string  `json:"w"`
+	T float64 `json:"t"`
 }
 
 // Interaction is one line of interactions.jsonl as captured in the browser
@@ -47,15 +55,19 @@ func BuildEntries(t0EpochMS int64, utts []Utterance, ints []Interaction) []Entry
 	entries := make([]Entry, 0, len(utts)+len(ints))
 
 	for _, u := range utts {
+		p := map[string]any{
+			"t1":      u.T1,
+			"speaker": u.Speaker,
+			"text":    u.Text,
+		}
+		if len(u.Words) > 0 {
+			p["words"] = u.Words
+		}
 		entries = append(entries, Entry{
-			T:   u.T0,
-			Src: "speech",
-			ID:  u.ID,
-			Payload: map[string]any{
-				"t1":      u.T1,
-				"speaker": u.Speaker,
-				"text":    u.Text,
-			},
+			T:       u.T0,
+			Src:     "speech",
+			ID:      u.ID,
+			Payload: p,
 		})
 	}
 	for i, ev := range ints {

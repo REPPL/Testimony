@@ -24,15 +24,17 @@ What works today:
 - `testimony demo` — serves a small instrumented settings app; your clicks and inputs
   stream to a fresh session directory (normalised interactions + raw rrweb archive)
   while you talk into a recorder of your choice.
+- `testimony transcribe` — turns your voice recording (.m4a, .mov, or .wav) into a
+  time-aligned `transcript.jsonl` with local Whisper: it extracts 16 kHz mono
+  `audio.wav` via ffmpeg, runs WhisperX (word-level timestamps, preferred) or
+  whisper.cpp, and anchors the result to the session clock.
 - `testimony merge` — merges `transcript.jsonl` + `interactions.jsonl` into a single
   session-relative `timeline.jsonl`.
 - `testimony report` — renders the timeline as a Markdown report, joining each
   utterance to the interface events around it (±2.5 s window by default).
 
-What is stubbed: `record` (managed screen/audio capture) and `transcribe` (the
-faster-whisper/WhisperX wrapper). Until then you record voice with QuickTime and
-provide `transcript.jsonl` yourself — the format is three lines of JSON away
-(see the bundled example).
+What is stubbed: `record` (managed screen/audio capture). Until then you record
+voice with QuickTime and let `transcribe` do the rest.
 
 ## Quickstart
 
@@ -44,9 +46,34 @@ go build -o testimony ./cmd/testimony
 ./testimony report -session examples/sample-session
 open examples/sample-session/report.md
 
-# 2. Capture a real one:
+# 2. Capture a real one, end to end:
 ./testimony demo          # then follow the printed instructions
 ```
+
+For a real session: start `testimony demo`, begin an audio recording in QuickTime
+(File → New Audio Recording), say **“session start”** aloud, and click through the
+demo app while thinking aloud. When you are done, stop QuickTime and note where it
+saved the `.m4a`. Then:
+
+```sh
+./testimony transcribe -session sessions/<dir> -audio ~/Desktop/recording.m4a
+./testimony merge      -session sessions/<dir>
+./testimony report     -session sessions/<dir>
+open sessions/<dir>/report.md
+```
+
+`transcribe` needs two things installed:
+
+- ffmpeg — `brew install ffmpeg`
+- an ASR engine — WhisperX (`uv tool install whisperx`, word-level timestamps,
+  preferred) *or* whisper.cpp (`brew install whisper-cpp`, plus a ggml model file
+  via `-model`)
+
+It aligns the audio clock to the session clock automatically (the recording's
+creation time vs the manifest's `t0_epoch_ms`) and prints the offset it used. If
+that looks wrong, the spoken “session start” marker is your calibration aid:
+find it in the transcript, work out the true offset, and pass `-offset SECONDS`
+explicitly.
 
 The report interleaves what was said with what was done:
 
@@ -63,6 +90,7 @@ The demo app contains at least one intentional usability flaw. Find it by talkin
 ```
 sessions/<timestamp>/
   manifest.json        # app, participant, tasks, t0_epoch_ms (the shared clock anchor)
+  audio.wav            # 16 kHz mono extract written by transcribe (local only)
   events.rrweb.jsonl   # raw rrweb stream (archival; full replay later)
   interactions.jsonl   # normalised events: {"t":<epoch_ms>,"kind","selector","text","value","route"}
   transcript.jsonl     # utterances: {"id","t0","t1","speaker","text"} (session-relative seconds)
@@ -78,10 +106,10 @@ braces marker).
 ## Roadmap
 
 Phases from the [architecture note](docs/architecture.md#12-phased-implementation):
-transcribe wrapper (WhisperX, word-level timestamps) → analysis layer with
-structured, human-verified findings → codebase mapping via `data-testid` anchors →
-reference-capture mode for third-party apps. A macOS 26 app layer will wrap this
-CLI core; Linux stays CLI-only.
+managed capture (`record`) → analysis layer with structured, human-verified
+findings → codebase mapping via `data-testid` anchors → reference-capture mode
+for third-party apps. A macOS 26 app layer will wrap this CLI core; Linux stays
+CLI-only.
 
 ## License
 
