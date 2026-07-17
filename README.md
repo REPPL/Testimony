@@ -69,7 +69,8 @@ The demo app contains at least one intentional usability flaw. Find it by talkin
 
 - [Tutorials](docs/tutorials/getting-started.md) — your first session, end to end.
 - [How-to guides](docs/how-to/) — [transcribe a recording](docs/how-to/transcribe-a-recording.md)
-  (engines, languages, offsets), [instrument your own app](docs/how-to/instrument-your-own-app.md).
+  (engines, languages, offsets), [analyse a session](docs/how-to/analyse-a-session.md)
+  (findings and verdicts), [instrument your own app](docs/how-to/instrument-your-own-app.md).
 - [Reference](docs/reference/) — the [command line](docs/reference/cli.md) and the
   [session directory](docs/reference/session-directory.md).
 - [Explanation](docs/explanation/) — [how alignment works](docs/explanation/how-alignment-works.md),
@@ -87,6 +88,7 @@ sessions/<timestamp>/
   interactions.jsonl   # normalised interaction events
   transcript.jsonl     # time-aligned utterances
   timeline.jsonl       # merged, session-relative timeline
+  findings.jsonl       # analysis findings + verdicts
   report.md            # human-readable aligned record
 ```
 
@@ -96,14 +98,15 @@ Exact schemas: [session directory reference](docs/reference/session-directory.md
 
 Working today: `record` (managed capture — one command starts the recorders and
 stamps the session), `demo` (instrumented capture), `transcribe` (local WhisperX
-or whisper.cpp), `merge`, and `report`. `record` captures the microphone by
-default; screen video is opt-in with `-video`.
+or whisper.cpp), `merge`, `report`, and the first-pass analysis layer — `analyze`
+(emit an analysis request, then validate the answer into findings) and `review`
+(record human verdicts). `record` captures the microphone by default; screen
+video is opt-in with `-video`. Analysis is host-delegated — the CLI never calls a
+model or the network — and every finding is *unverified* by default until you
+confirm or reject it.
 
 Coming next, in user terms:
 
-- **Automated first-pass analysis** — findings (bugs, friction, inconsistencies,
-  preferences) derived from the timeline, each staying *unverified* until you
-  confirm or reject it.
 - **Codebase mapping** — findings anchored to your code through the
   `data-testid` selectors they were captured against.
 - **Reference capture** — narrated sessions over third-party apps, building a

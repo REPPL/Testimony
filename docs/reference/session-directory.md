@@ -10,6 +10,7 @@ sessions/<timestamp>/
   interactions.jsonl   # normalised interaction events (written by demo)
   transcript.jsonl     # time-aligned utterances (written by transcribe)
   timeline.jsonl       # merged, session-relative timeline (written by merge)
+  findings.jsonl       # analysis findings + appended verdicts (written by analyze/review)
   report.md            # human-readable aligned record (written by report)
 ```
 
@@ -97,10 +98,51 @@ Event payload (`src: "event"`): `kind`, plus `selector`, `text`, `value`, and `r
 {"t":16,"src":"speech","id":"utt-003","payload":{"speaker":"P1","t1":21,"text":"Now I expect this save button to confirm somehow."}}
 ```
 
+## `findings.jsonl`
+
+The analysis layer's output, written by `testimony analyze -ingest` and appended to by `testimony review`. Two record kinds share the file, one per line: a **finding** line (no `kind` field) and a **verdict** line (`kind: "verdict"`). Verdicts are appended, never written in place, so a finding's original state and the full verdict history are retained. Blank lines are ignored.
+
+Ingest validates every finding against the merged timeline and is the sole validation boundary — it never trusts the model. Unknown fields are rejected (the shape is closed), and `status` is forced to `"unverified"` on ingest regardless of the answer JSON.
+
+**Finding record**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string | yes | `F-NNN`, zero-padded (`^F-\d{3}$`); unique within the file |
+| `t` | number | yes | finding time, session-relative seconds; within `[0, sessionEnd]` |
+| `type` | string | yes | one of `bug`, `friction`, `inconsistency`, `preference`, `idea` |
+| `severity` | integer | yes | usability-severity scale `1..4`: cosmetic, minor, major, blocker |
+| `mode` | string | no | `A` or `B`, default `A`; only Mode A is produced today |
+| `quote` | string | yes | a verbatim substring of the `text` of one *cited* evidence utterance — no normalisation, never joined across utterances |
+| `evidence` | array of strings | yes | non-empty; every id exists in `timeline.jsonl`; at least one `utt-*` (a spoken anchor) |
+| `ui` | object | no | `{selector?, route?}`; when present, each must match a real timeline event's `selector`/`route` |
+| `status` | string | yes | always `"unverified"` on ingest |
+
+```json
+{"id":"F-001","t":22.0,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],"ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
+```
+
+**Verdict record**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `kind` | string | yes | literal `"verdict"` (the discriminator) |
+| `finding` | string | yes | an existing finding id in the file |
+| `verdict` | string | yes | one of `confirmed`, `rejected`, `duplicate` |
+| `of` | string | when `duplicate` | an existing finding id, different from `finding` |
+| `at` | string | yes | verdict date, ISO `YYYY-MM-DD` |
+
+```json
+{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-07-17"}
+{"kind":"verdict","finding":"F-005","verdict":"duplicate","of":"F-001","at":"2026-07-17"}
+```
+
+A finding's effective status starts `unverified`; verdict records apply in file order and the last one for that finding wins.
+
 ## `report.md`
 
-Human-readable Markdown rendered from the timeline:
+Human-readable Markdown rendered from the timeline and findings:
 
 - a header with session name, app, participant, duration (`MM:SS`, from the last entry), and utterance/event counts, plus the task list;
 - a **Timeline** section: each utterance as `**[MM:SS] <speaker>:** "<text>"`, with the events joined to it (within the report's join window) as indented bullets `[MM:SS] <kind> <selector> "<text>" value="…" (<route>)`; events matched by no utterance appear as standalone bullets in time order;
-- a **Findings** section, currently a placeholder for the analysis layer.
+- a **Findings** section rendering `findings.jsonl` grouped by effective status (Confirmed, Unverified, Duplicate, Rejected), each group headed with a count and each finding line carrying its id, type, severity, clock, quote, anchor, and any verdict and date. When there is no `findings.jsonl` the section is a short notice pointing at `analyze` and `review`.

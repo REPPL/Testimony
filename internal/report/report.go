@@ -4,10 +4,14 @@
 package report
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/REPPL/Testimony/internal/analyze"
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
 )
@@ -80,10 +84,75 @@ func Render(dir string, window float64) (string, error) {
 	flushStandaloneBefore(1e18)
 
 	b.WriteString("\n## Findings\n\n")
-	b.WriteString("_Pending: the analysis layer (architecture note §7) is not yet wired in. " +
-		"This report is the raw aligned record; findings will be derived from it " +
-		"and remain `unverified` until reviewed._\n")
+	renderFindings(&b, dir)
 	return b.String(), nil
+}
+
+// renderFindings appends the Findings section, grouping findings.jsonl by
+// effective status. When no findings file exists it leaves a short, non-fatal
+// notice. Report reads only derived text; it never touches media.
+func renderFindings(b *strings.Builder, dir string) {
+	findings, verdicts, err := analyze.Load(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			b.WriteString("_No findings yet — run `testimony analyze` then `testimony review`._\n")
+			return
+		}
+		fmt.Fprintf(b, "_Findings unavailable: %v_\n", err)
+		return
+	}
+
+	eff := analyze.EffectiveStatus(findings, verdicts)
+	byStatus := map[string][]analyze.Finding{}
+	for _, f := range findings {
+		s := eff[f.ID].Value
+		byStatus[s] = append(byStatus[s], f)
+	}
+
+	groups := []struct{ key, heading string }{
+		{"confirmed", "Confirmed"},
+		{"unverified", "Unverified"},
+		{"duplicate", "Duplicate"},
+		{"rejected", "Rejected"},
+	}
+	for _, g := range groups {
+		group := byStatus[g.key]
+		sort.Slice(group, func(i, j int) bool { return group[i].ID < group[j].ID })
+		fmt.Fprintf(b, "### %s (%d)\n\n", g.heading, len(group))
+		if len(group) == 0 {
+			b.WriteString("_None._\n\n")
+			continue
+		}
+		for _, f := range group {
+			fmt.Fprintf(b, "- **%s** %s · severity %d · [%s] — “%s” — %s",
+				f.ID, f.Type, f.Severity, clock(f.T), f.Quote, findingAnchor(f))
+			if st := eff[f.ID]; st.At != "" {
+				if st.Of != "" {
+					fmt.Fprintf(b, " · %s of %s (%s)", st.Value, st.Of, st.At)
+				} else {
+					fmt.Fprintf(b, " · %s (%s)", st.Value, st.At)
+				}
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+}
+
+// findingAnchor renders a finding's on-screen anchor: the ui selector (in
+// backticks) and route when present, else the evidence ids.
+func findingAnchor(f analyze.Finding) string {
+	if f.UI != nil && (f.UI.Selector != "" || f.UI.Route != "") {
+		var parts []string
+		if f.UI.Selector != "" {
+			parts = append(parts, "`"+f.UI.Selector+"`")
+		}
+		if f.UI.Route != "" {
+			parts = append(parts, f.UI.Route)
+		}
+		return strings.Join(parts, " ")
+	}
+	return "evidence " + strings.Join(f.Evidence, ", ")
 }
 
 func end(entries []timeline.Entry) float64 {

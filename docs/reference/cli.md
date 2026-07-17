@@ -116,6 +116,48 @@ The command blocks until interrupted (`Ctrl+C`). On SIGINT/SIGTERM it sends each
 
 If a recorder leaves no usable artefact — most often because its macOS permission was never granted, so it blocked on the prompt and captured nothing — the command names the missing file, points at the exact System Settings pane (Privacy & Security → Microphone, or → Screen Recording), appends the recorder's output, and exits with status 1. When there is no `audio.wav`, the next-command block omits the bare `transcribe` line and instead keeps `merge` and `report` (interactions may still be captured) and explains how to get audio: re-run `record` after granting the permission, or transcribe an external recording with `-audio FILE`. A recorder that instead exits on its own before it is asked to stop is reported the same way, distinguishing a start-up permissions denial from an unexpected mid-session stop. On platforms other than macOS, capture is unavailable — the command still writes a valid manifest and session directory, states what was skipped, and exits 0.
 
+## `testimony analyze`
+
+The first-pass analysis layer. `analyze` never calls a model, holds no keys, and adds no network dependency: it *emits* a self-contained analysis request that any assistant (or a human) runs, then *ingests* and validates the JSON answer into `findings.jsonl`.
+
+```
+testimony analyze -session DIR [-out FILE]        # emit the request
+testimony analyze -session DIR -ingest FILE       # validate the answer → findings.jsonl
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-session` | *(required)* | session directory |
+| `-out` | *(stdout)* | emit mode: write the request to `FILE` instead of stdout |
+| `-ingest` | *(off)* | ingest mode: validate the answer JSON at `FILE` (or `-` for stdin) into `findings.jsonl` |
+
+`analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`). Combining `-out` and `-ingest` is an error. Both modes read `manifest.json` and `timeline.jsonl`, hinting to run `merge` first when the timeline is missing.
+
+Emit behaviour: writes a single self-contained prompt — the rubric version header (`testimony-analysis/v1`), the second-coder stance, two-pass instructions (segment coding, then session synthesis), the rubric body (five `type` definitions, the `1..4` severity scale, the evidence hard-constraints), the session context (app, participant, tasks), the timeline lines inline, and the required output shape with a worked example. Nothing in the session directory is mutated. The timeline is emitted whole (v1 does not chunk by task boundary; the manifest carries no task timestamps). With `-out FILE` the prompt goes to a file and the command prints `wrote <path>`; otherwise it prints to stdout.
+
+Ingest behaviour: reads the answer from `FILE` (or stdin when `-`), accepting a top-level object with a `findings` array (optionally a `rubric`, which must be a known version) or a bare array. Ingest is the sole validation boundary and never trusts the model. Each finding is decoded with unknown fields disallowed, then checked against every schema rule (see [session directory reference](session-directory.md#findingsjsonl)): id format and uniqueness, `t` within the session, the `type` and `severity` enums, non-empty `evidence` with every id real and at least one spoken `utt-*` anchor, a `quote` that is a verbatim substring of one *cited* evidence utterance, and any `ui` selector/route matching a real event. Validation is transactional — all errors are reported at once and nothing is written on any failure. On success every finding is forced to `status: unverified`, `findings.jsonl` is written, and the command prints `validated N findings → <path> (all unverified)`. Ingest refuses to overwrite a `findings.jsonl` that already holds verdict records.
+
+## `testimony review`
+
+Records a human verdict on each candidate finding, appended to `findings.jsonl` without ever rewriting a finding in place — the finding's birth state and the full verdict history are retained as the precision measure.
+
+```
+testimony review -session DIR
+testimony review -session DIR -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-session` | *(required)* | session directory |
+| `-finding` | *(interactive)* | non-interactive: the finding to judge (`F-NNN`) |
+| `-verdict` | *(interactive)* | non-interactive: `confirmed`, `rejected`, or `duplicate-of-F-NNN` |
+
+Behaviour: loads findings and existing verdicts (hinting to run `analyze -ingest` first when there is no `findings.jsonl`) and computes each finding's effective status (every finding starts `unverified`; the last verdict for a finding wins).
+
+Interactive (`review -session DIR`): walks the `unverified` findings in id order, printing each finding's clock, type, severity, quote, and anchor, then prompting `[c]onfirm [r]eject [d]uplicate-of [s]kip [q]uit`; `d` asks for the canonical `F-NNN`. Each decision appends a verdict record stamped with today's date. Interactive mode is TTY-gated: when stdin is not a terminal it prints a one-line notice and exits 0, so CI never blocks.
+
+Non-interactive (`-finding F-003 -verdict confirmed`, or `-verdict duplicate-of-F-002`): validates that the finding exists, the verdict parses, and any duplicate target exists and differs; appends one verdict record and prints a one-line confirmation. A verdict may be appended even when one already exists (append-only correction; the latest wins). The stored verdict enum is exactly `confirmed | rejected | duplicate`; `duplicate-of-F-NNN` is stored as `verdict: "duplicate"` with `of: "F-NNN"`.
+
 ## `testimony version`
 
 Prints `testimony <version>` — the version stamped at release, or `dev`.

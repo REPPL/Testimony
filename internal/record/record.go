@@ -2,7 +2,7 @@
 // One command creates the session directory, writes manifest.json with the
 // shared t0_epoch_ms anchor (via session.Create, the same code path demo uses),
 // starts the microphone recorder — and, with -video, the screen recorder — as
-// ffmpeg subprocesses, prints status, and runs until Ctrl+C. On SIGINT/SIGTERM
+// ffmpeg subprocesses, prints status, and runs until Ctrl+C. On SIGINT/SIGTERM/SIGHUP
 // it stops each recorder cleanly (SIGINT so ffmpeg finalises its container,
 // SIGKILL only on timeout), shuts any demo server down, and prints the exact
 // downstream commands with the real session path. Audio-only is the default;
@@ -53,10 +53,12 @@ var (
 	startRecordersFn = startRecorders
 )
 
-// defaultNotifyContext returns a context cancelled on SIGINT/SIGTERM. It is the
+// defaultNotifyContext returns a context cancelled on SIGINT/SIGTERM/SIGHUP —
+// SIGHUP because closing the terminal window mid-session is an observed way
+// real sessions end, and it must finalise exactly like Ctrl+C. It is the
 // production notifyContext.
 func defaultNotifyContext() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 }
 
 // Options configures one record run. Flag parsing lives in the CLI; Run takes

@@ -61,3 +61,8 @@ jobs:
           test -s examples/sample-session/report.md
           grep -q "## Timeline" examples/sample-session/report.md
           grep -q "save button" examples/sample-session/report.md
+          # The bundled findings.jsonl renders the Findings section with the
+          # confirmed save-feedback bug (F-001).
+          grep -q "## Findings" examples/sample-session/report.md
+          grep -q "### Confirmed (1)" examples/sample-session/report.md
+          grep -q "\*\*F-001\*\* bug" examples/sample-session/report.md

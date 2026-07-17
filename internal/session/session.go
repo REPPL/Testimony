@@ -43,6 +43,7 @@ const (
 	InteractionsFile = "interactions.jsonl"
 	TranscriptFile   = "transcript.jsonl"
 	TimelineFile     = "timeline.jsonl"
+	FindingsFile     = "findings.jsonl"
 	ReportFile       = "report.md"
 )
 

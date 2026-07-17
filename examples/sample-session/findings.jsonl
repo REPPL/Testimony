@@ -1,0 +1,8 @@
+{"id":"F-001","t":22,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],"ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
+{"id":"F-002","t":38,"type":"preference","severity":2,"mode":"A","quote":"I like this dark mode toggle","evidence":["utt-006","ev-006"],"ui":{"selector":"[data-testid=theme-toggle]","route":"#appearance"},"status":"unverified"}
+{"id":"F-003","t":38,"type":"inconsistency","severity":2,"mode":"A","quote":"This is how the save button should feel","evidence":["utt-006"],"status":"unverified"}
+{"id":"F-004","t":48,"type":"friction","severity":2,"mode":"A","quote":"The label just says dark mode whether it's on or off","evidence":["utt-007","ev-008"],"ui":{"selector":"[data-testid=theme-toggle]","route":"#appearance"},"status":"unverified"}
+{"id":"F-005","t":66,"type":"idea","severity":3,"mode":"A","quote":"A toast or a brief disabled state would do","evidence":["utt-009"],"status":"unverified"}
+{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-07-17"}
+{"kind":"verdict","finding":"F-005","verdict":"duplicate","of":"F-001","at":"2026-07-17"}
+{"kind":"verdict","finding":"F-003","verdict":"rejected","at":"2026-07-17"}
