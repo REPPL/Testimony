@@ -6,26 +6,17 @@ You follow the same path Alice takes on her first session: she installs Testimon
 
 ## 1. Install Testimony
 
-Install the toolchain and the transcription dependencies with [Homebrew](https://brew.sh) — step 6 needs ffmpeg and a local speech-recognition engine:
+One command installs the `testimony` binary into `~/.local/bin` — no admin
+rights needed — and then offers to set up the transcription dependencies
+(ffmpeg and a local speech-recognition engine), which step 6 relies on:
 
 ```sh
-brew install go ffmpeg uv
-uv tool install whisperx
+curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | sh
 ```
 
-Then build Testimony from source:
-
-```sh
-git clone https://github.com/REPPL/Testimony.git
-cd Testimony
-go install ./cmd/testimony
-```
-
-`go install` puts the binary in `$(go env GOPATH)/bin` (usually `~/go/bin`); add that directory to your `PATH` if it is not already there:
-
-```sh
-export PATH="$HOME/go/bin:$PATH"
-```
+Answer **y** when it offers ffmpeg and choose **whisperx** as the engine. The
+installer verifies every download against a pinned checksum or the publisher's
+signature, and tells you if `~/.local/bin` still needs adding to your `PATH`.
 
 Check the install:
 

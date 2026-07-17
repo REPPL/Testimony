@@ -19,17 +19,28 @@ Raw audio and video never leave your machine; only derived text is analysed. See
 
 ## Install
 
-Build from source (requires Go):
+One line, no admin rights required (binary goes to `~/.local/bin`; the SHA-256 of
+the release artefact is pinned in the script):
 
 ```sh
-git clone https://github.com/REPPL/Testimony.git
-cd Testimony
-go install ./cmd/testimony
+curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | sh
 ```
 
-Transcription additionally needs ffmpeg and a local Whisper engine — see
-[transcribe a recording](docs/how-to/transcribe-a-recording.md) for the
-engine options and their setup.
+The installer then offers to set up what `transcribe` needs — ffmpeg and a local
+ASR engine (WhisperX or whisper.cpp) — via Homebrew where available, or as
+user-local installs for machines without admin rights. Prefer to read before you
+run (sensible), or pass flags:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh
+less install.sh && sh install.sh                 # inspect first
+curl -fsSL .../install.sh | sh -s -- --no-deps   # binary only
+curl -fsSL .../install.sh | sh -s -- --yes       # non-interactive, with dependencies
+```
+
+Or build from source (requires Go): `git clone` this repository, then
+`go install ./cmd/testimony`. Engine options and setup:
+[transcribe a recording](docs/how-to/transcribe-a-recording.md).
 
 ## Quickstart
 
