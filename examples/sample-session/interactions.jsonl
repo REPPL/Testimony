@@ -1,0 +1,10 @@
+{"t":1784300409500,"kind":"click","selector":"[data-testid=display-name]","text":"Display name Shown on your reports","route":"#general"}
+{"t":1784300414800,"kind":"input","selector":"[data-testid=display-name]","text":"Display name Shown on your reports","value":"Alice","route":"#general"}
+{"t":1784300419200,"kind":"click","selector":"[data-testid=save-btn]","text":"Save","route":"#general"}
+{"t":1784300424100,"kind":"click","selector":"[data-testid=save-btn]","text":"Save","route":"#general"}
+{"t":1784300432000,"kind":"click","selector":"[data-testid=tab-appearance]","text":"Appearance","route":"#appearance"}
+{"t":1784300440500,"kind":"click","selector":"[data-testid=theme-toggle]","text":"Dark mode Applies immediately","route":"#appearance"}
+{"t":1784300440520,"kind":"input","selector":"[data-testid=theme-toggle]","text":"Dark mode Applies immediately","value":"true","route":"#appearance"}
+{"t":1784300450000,"kind":"click","selector":"[data-testid=theme-toggle]","text":"Dark mode Applies immediately","route":"#appearance"}
+{"t":1784300450020,"kind":"input","selector":"[data-testid=theme-toggle]","text":"Dark mode Applies immediately","value":"false","route":"#appearance"}
+{"t":1784300458500,"kind":"click","selector":"[data-testid=tab-general]","text":"General","route":"#general"}

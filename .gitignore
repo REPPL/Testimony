@@ -39,6 +39,17 @@ go.work.sum
 # .abcd/work/ (shared CONTEXT.md + DECISIONS.md); only Tier 3 is local.
 .abcd/.work.local/
 
+# --- testimony ---
+# Built binary
+/testimony
+
+# Captured sessions (raw recordings and derived artefacts stay local)
+/sessions/
+
+# Generated outputs of the bundled example
+examples/*/timeline.jsonl
+examples/*/report.md
+
 # BEGIN ABCD
 # abcd-managed block — do not hand-edit. Run /abcd:ahoy to refresh.
 .work/
