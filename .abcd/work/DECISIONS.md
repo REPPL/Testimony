@@ -147,3 +147,11 @@ Architecture-shaping decisions graduate to an ADR under
 - 2026-07-18 — Demo/record banners derive the display URL via `demo.DisplayURL`
   instead of concatenating `-addr` after a literal "localhost", fixing the
   broken `http://localhost0.0.0.0:8737` shown for an explicit-host bind.
+- 2026-07-18 — `session.Create` uses `os.Mkdir` (after `MkdirAll(outRoot)`)
+  instead of `os.MkdirAll(dir)`, so two captures starting within the same
+  wall-clock second fail with EEXIST rather than silently sharing one directory
+  (which clobbered the first manifest's t0 and conflated append-only streams).
+- 2026-07-18 — `session.ReadJSONL` skips whitespace-only lines
+  (`bytes.TrimSpace`), matching `analyze.Load`, so an exchanged/hand-edited
+  session's blank line is skipped as documented rather than crashing merge/report
+  with "unexpected end of JSON input".

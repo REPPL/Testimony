@@ -48,6 +48,53 @@ func TestCreate(t *testing.T) {
 	}
 }
 
+// TestCreateRefusesSameSecondCollision is the conflated-session regression: two
+// captures starting within the same wall-clock second derive the same
+// second-granularity directory name. Create must not silently reuse the first
+// session's directory (pre-fix os.MkdirAll returned it, clobbering the first
+// manifest and conflating the two sessions' append-only streams).
+func TestCreateRefusesSameSecondCollision(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 17, 15, 30, 45, 0, time.UTC)
+
+	if _, err := Create(root, now, Manifest{App: "first"}); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+	dir2, err := Create(root, now, Manifest{App: "second"})
+	if err == nil {
+		t.Fatalf("second Create reused existing dir %q; want refusal", dir2)
+	}
+
+	// The first session's manifest must be intact, not overwritten by the second
+	// run's metadata.
+	m, err := LoadManifest(filepath.Join(root, now.Format(dirLayout)))
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if m.App != "first" {
+		t.Fatalf("first manifest clobbered: App=%q, want %q", m.App, "first")
+	}
+}
+
+// TestReadJSONLSkipsWhitespaceOnlyLine is the blank-line regression: ReadJSONL
+// documents that blank lines are skipped, so a whitespace-only line (as may
+// appear in a hand-edited or exchanged session) must be skipped rather than fed
+// to json.Unmarshal (pre-fix it crashed with "unexpected end of JSON input").
+func TestReadJSONLSkipsWhitespaceOnlyLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	content := "{\"a\":1}\n   \n\t\n{\"a\":2}\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := ReadJSONL[map[string]any](path)
+	if err != nil {
+		t.Fatalf("ReadJSONL: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d records, want 2 (whitespace lines skipped): %v", len(got), got)
+	}
+}
+
 // TestWriteJSONLRefusesSymlink is the arbitrary-file-overwrite regression: a
 // session artefact planted as a symlink (e.g. in a downloaded session) must not
 // be followed, so the write cannot escape the session directory. Pre-fix
