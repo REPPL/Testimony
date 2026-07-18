@@ -30,6 +30,12 @@ Architecture-shaping decisions graduate to an ADR under
   shared session's `findings.jsonl` is not revalidated by `analyze.Load`, so
   those channels could still inject forged report structure / ANSI. Residual of
   the earlier control-byte hardening, caught by a confirmation hunt.
+- 2026-07-18 — Third hardening pass (confirmation hunt): `review.describe`'s
+  verdict echo now `SafeText`s the id/verdict fields (the sibling of the fix
+  above, on the record path); `SafeText` also strips the Unicode BiDi/isolate
+  and line-separator controls (Trojan-Source, CVE-2021-42574); and `validate`
+  caps a finding's evidence at 64 ids, so a hostile answer cannot write a single
+  findings.jsonl line larger than the JSONL reader's buffer and brick the file.
 - 2026-07-17 — `record` uses ffmpeg avfoundation for both screen and microphone
   capture, not `screencapture -v`: ffmpeg is already a hard dependency (mic +
   transcribe), its SIGINT→finalise-container behaviour is battle-tested and

@@ -8,6 +8,14 @@ import (
 	"github.com/REPPL/Testimony/internal/timeline"
 )
 
+// maxEvidence caps how many ids one finding may cite. A genuine finding anchors
+// to a handful of utterances and events; the cap stops a hostile answer from
+// smuggling a giant evidence array that (while every id is individually valid)
+// serialises to a single findings.jsonl line larger than the downstream JSONL
+// reader's per-line buffer, which would make the file — and re-ingest —
+// permanently unreadable.
+const maxEvidence = 64
+
 // timelineIndex holds the derived facts a finding is validated against: the id
 // set, the text of each spoken utterance (for verbatim quote matching), the
 // event selector/route sets, and the session's end time.
@@ -87,6 +95,9 @@ func validate(findings []Finding, idx timelineIndex) []error {
 		var uttTexts []string
 		if len(f.Evidence) == 0 {
 			errs = append(errs, fmt.Errorf("%s: evidence must be non-empty", label))
+		}
+		if len(f.Evidence) > maxEvidence {
+			errs = append(errs, fmt.Errorf("%s: evidence lists %d ids, exceeding the limit of %d", label, len(f.Evidence), maxEvidence))
 		}
 		for _, id := range f.Evidence {
 			if !idx.ids[id] {

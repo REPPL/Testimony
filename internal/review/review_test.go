@@ -214,6 +214,22 @@ func TestPrintFindingSanitisesANSI(t *testing.T) {
 	}
 }
 
+// TestDescribeSanitisesID is the verdict-echo regression: after the analyst
+// confirms/rejects a finding, describe() prints the recorded verdict — whose
+// Finding id comes from the (unvalidated) loaded findings.jsonl — to the
+// terminal. Pre-fix those fields were formatted raw, so an ESC in the id
+// reached the terminal even though printFinding had sanitised the same id.
+func TestDescribeSanitisesID(t *testing.T) {
+	v := analyze.Verdict{Finding: "F-001\x1b[2Jspoofed", Verdict: "confirmed", At: "2026-01-01"}
+	if strings.ContainsRune(describe(v), 0x1b) {
+		t.Fatalf("ESC byte from the verdict id reached the echo: %q", describe(v))
+	}
+	d := analyze.Verdict{Finding: "F-002\x1b[31m", Verdict: "duplicate", Of: "F-001\x1b[0m", At: "2026-01-01"}
+	if strings.ContainsRune(describe(d), 0x1b) {
+		t.Fatalf("ESC byte from a duplicate verdict reached the echo: %q", describe(d))
+	}
+}
+
 // TestPrintFindingSanitisesID is the id-channel terminal-injection regression:
 // analyze.Load does not validate a finding's id (only ingest does), so a
 // downloaded session can carry an ESC in the id itself. Pre-fix f.ID was
