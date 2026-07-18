@@ -24,6 +24,7 @@ type timelineIndex struct {
 	uttText   map[string]string
 	selectors map[string]bool
 	routes    map[string]bool
+	start     float64
 	end       float64
 }
 
@@ -35,7 +36,7 @@ func indexTimeline(entries []timeline.Entry) timelineIndex {
 		selectors: map[string]bool{},
 		routes:    map[string]bool{},
 	}
-	for _, e := range entries {
+	for i, e := range entries {
 		idx.ids[e.ID] = true
 		end := e.T
 		switch e.Src {
@@ -54,6 +55,15 @@ func indexTimeline(entries []timeline.Entry) timelineIndex {
 		}
 		if end > idx.end {
 			idx.end = end
+		}
+		// Track the earliest entry start so the finding-time lower bound matches
+		// what the timeline can actually hold: an external recording whose
+		// creation_time predates the manifest t0 yields a negative offset
+		// (deriveOffset), so transcript.jsonl and the merged timeline legitimately
+		// carry negative session-relative times. Hard-coding 0 as the floor would
+		// reject a faithful finding anchored to such an utterance.
+		if i == 0 || e.T < idx.start {
+			idx.start = e.T
 		}
 	}
 	return idx
@@ -77,8 +87,15 @@ func validate(findings []Finding, idx timelineIndex) []error {
 			seen[f.ID] = i + 1
 		}
 
-		if f.T < 0 || f.T > idx.end {
-			errs = append(errs, fmt.Errorf("%s: t %g is outside the session [0, %g]", label, f.T, idx.end))
+		// The floor is the earlier of 0 and the earliest entry start: a normal
+		// session keeps 0 as the lower bound, while a session with negative-time
+		// utterances (a recording predating t0) admits a finding anchored there.
+		lo := 0.0
+		if idx.start < lo {
+			lo = idx.start
+		}
+		if f.T < lo || f.T > idx.end {
+			errs = append(errs, fmt.Errorf("%s: t %g is outside the session [%g, %g]", label, f.T, lo, idx.end))
 		}
 		if !typeSet[f.Type] {
 			errs = append(errs, fmt.Errorf("%s: type %q not in bug|friction|inconsistency|preference|idea", label, f.Type))

@@ -159,6 +159,83 @@ func TestIngestRefusesOverwriteWithVerdicts(t *testing.T) {
 	}
 }
 
+// negativeTimeline is a merged timeline whose utterance sits at a negative
+// session-relative time, as an external recording predating manifest t0
+// legitimately produces (deriveOffset returns creation_time − t0 < 0).
+const negativeTimeline = `{"t":-3,"src":"speech","id":"utt-004","payload":{"speaker":"P1","t1":-1,"text":"Hm. I clicked save and nothing happened. No message."}}
+{"t":-2.5,"src":"event","id":"ev-003","payload":{"kind":"click","route":"#general","selector":"[data-testid=save-btn]","text":"Save"}}
+`
+
+// TestIngestAcceptsNegativeAnchoredFinding is the negative-time regression: a
+// finding anchored to a legitimately negative-time utterance must ingest. Pre-fix
+// validate hard-coded the lower bound at 0, so it rejected `t` outside [0, end]
+// and failed the whole (transactional) ingest for such a session.
+func TestIngestAcceptsNegativeAnchoredFinding(t *testing.T) {
+	dir := writeSession(t, negativeTimeline)
+	answer := `{"rubric":"testimony-analysis/v1","findings":[
+	 {"id":"F-001","t":-3.0,"type":"bug","severity":3,"quote":"I clicked save and nothing happened",
+	  "evidence":["utt-004","ev-003"],"status":"unverified"}
+	]}`
+	findings, err := Ingest(dir, strings.NewReader(answer))
+	if err != nil {
+		t.Fatalf("Ingest of a negative-anchored finding: %v", err)
+	}
+	if len(findings) != 1 || findings[0].T != -3.0 {
+		t.Fatalf("got %+v, want one finding at t=-3", findings)
+	}
+}
+
+// TestIngestRefusesEmptyFindings is the data-loss regression: an empty findings
+// array must not truncate a prior good findings.jsonl. Pre-fix Ingest wrote an
+// empty slice with O_TRUNC and reported success.
+func TestIngestRefusesEmptyFindings(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err != nil {
+		t.Fatalf("first Ingest: %v", err)
+	}
+	path := filepath.Join(dir, session.FindingsFile)
+	before, _ := os.ReadFile(path)
+
+	for _, empty := range []string{`{"findings":[]}`, `[]`} {
+		if _, err := Ingest(dir, strings.NewReader(empty)); err == nil || !strings.Contains(err.Error(), "no findings") {
+			t.Fatalf("empty answer %q: expected a no-findings refusal, got %v", empty, err)
+		}
+		after, _ := os.ReadFile(path)
+		if string(before) != string(after) {
+			t.Fatalf("empty answer %q truncated a prior findings.jsonl", empty)
+		}
+	}
+}
+
+// TestIngestRefusesOverwriteWithForeignVerdict is the guard-precision
+// regression: findings.jsonl whose only verdict line carries an out-of-enum
+// value (a hand-edited/shared file) must still block a truncating re-ingest.
+// Pre-fix holdsVerdicts consulted analyze.Load, which drops out-of-enum verdicts,
+// so the guard saw none and the human-decision record was overwritten.
+func TestIngestRefusesOverwriteWithForeignVerdict(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err != nil {
+		t.Fatalf("first Ingest: %v", err)
+	}
+	path := filepath.Join(dir, session.FindingsFile)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// "confirm" is not in the closed enum (confirmed|rejected|duplicate).
+	f.WriteString(`{"kind":"verdict","finding":"F-001","verdict":"confirm","at":"2026-07-18"}` + "\n")
+	f.Close()
+
+	before, _ := os.ReadFile(path)
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("expected overwrite refusal for a foreign-verdict file, got %v", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatalf("findings.jsonl was modified despite the refusal")
+	}
+}
+
 func TestEffectiveStatusLastWins(t *testing.T) {
 	findings := []Finding{{ID: "F-001"}, {ID: "F-002"}}
 	verdicts := []Verdict{

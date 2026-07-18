@@ -155,3 +155,22 @@ Architecture-shaping decisions graduate to an ADR under
   (`bytes.TrimSpace`), matching `analyze.Load`, so an exchanged/hand-edited
   session's blank line is skipped as documented rather than crashing merge/report
   with "unexpected end of JSON input".
+- 2026-07-18 — `analyze.validate` derives the finding-`t` lower bound from the
+  timeline (earliest entry time, floored at 0) instead of hard-coding 0, so a
+  finding faithfully anchored to a legitimately negative-time utterance — an
+  external recording whose `creation_time` predates `t0`, giving a negative
+  `deriveOffset` — no longer fails the whole transactional ingest.
+- 2026-07-18 — `analyze.Ingest` refuses an answer with no findings (bare `[]`,
+  `{"findings":[]}`, or a truncated file) rather than writing an empty slice with
+  O_TRUNC, which previously erased a prior good `findings.jsonl` and reported
+  success.
+- 2026-07-18 — `analyze.holdsVerdicts` scans `findings.jsonl` for any raw
+  `kind:"verdict"` line instead of consulting the enum-filtered `analyze.Load`
+  slice, so the overwrite guard still fires for a hand-edited/shared file whose
+  only verdict carries an out-of-enum value, protecting the retained precision
+  record from a truncating re-ingest.
+- 2026-07-18 — `demo.appendRecords` truncates a stream file back to its
+  pre-write length when a write fails, so a short write (ENOSPC persists a
+  newline-less prefix) can no longer leave a partial JSONL line that corrupts one
+  physical record and breaks merge's reader; corrected the false comment claiming
+  `os.File.Write` gives newline atomicity.

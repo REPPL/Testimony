@@ -63,7 +63,12 @@ page ([`../05-internals/02-schemas.md`](../05-internals/02-schemas.md)).
   `findings.jsonl`. Ingest never trusts the model — nothing lands `confirmed`.
 - To protect the retained precision record, ingest refuses to overwrite a
   `findings.jsonl` that already holds verdict records; a fresh or verdict-free
-  file is written cleanly.
+  file is written cleanly. The guard counts any `kind:"verdict"` line, including
+  one whose value is outside the closed enum (a hand-edited or shared file), so a
+  foreign-valued human decision is never silently truncated by a re-ingest.
+- An answer with no findings (a bare `[]`, `{"findings":[]}`, or a truncated
+  file) is refused rather than written: the write truncates, so an empty answer
+  would otherwise erase a prior good `findings.jsonl` and report success.
 
 ## Deferred
 

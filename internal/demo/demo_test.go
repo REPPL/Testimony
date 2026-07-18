@@ -1,6 +1,7 @@
 package demo
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -143,6 +144,58 @@ func TestAppendLinesReportsWriteError(t *testing.T) {
 	}
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", w.Code)
+	}
+}
+
+// shortWriteFile is an appendFile whose Write persists a prefix and then errors,
+// standing in for a full disk (write(2) fills the remaining space, returns a
+// short count, and the next write returns ENOSPC — os.File.Write persists the
+// truncated prefix before returning the error).
+type shortWriteFile struct {
+	buf  []byte
+	fail bool // when true, Write keeps only a prefix then returns an error
+}
+
+func (f *shortWriteFile) Seek(offset int64, whence int) (int64, error) {
+	return int64(len(f.buf)), nil
+}
+
+func (f *shortWriteFile) Truncate(size int64) error {
+	f.buf = f.buf[:size]
+	return nil
+}
+
+func (f *shortWriteFile) Write(p []byte) (int, error) {
+	if f.fail {
+		half := len(p) / 2
+		f.buf = append(f.buf, p[:half]...)
+		return half, errors.New("no space left on device")
+	}
+	f.buf = append(f.buf, p...)
+	return len(p), nil
+}
+
+// TestAppendRecordsRollsBackPartialWrite is the ENOSPC regression: a short write
+// that persists a newline-less prefix must be truncated away, so the stream file
+// never retains a partial line that would corrupt one physical JSONL record and
+// break merge's reader for the whole file. Pre-fix appendLines wrote directly
+// with no rollback, so the prefix survived.
+func TestAppendRecordsRollsBackPartialWrite(t *testing.T) {
+	f := &shortWriteFile{}
+	if err := appendRecords(f, [][]byte{[]byte(`{"t":1,"kind":"click"}`)}); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+	good := string(f.buf)
+
+	f.fail = true
+	if err := appendRecords(f, [][]byte{[]byte(`{"t":2,"kind":"click"}`)}); err == nil {
+		t.Fatalf("expected a write error on a full disk")
+	}
+	if string(f.buf) != good {
+		t.Fatalf("partial line survived: file is %q, want the clean prefix %q", f.buf, good)
+	}
+	if !strings.HasSuffix(string(f.buf), "\n") {
+		t.Fatalf("file does not end on a newline: %q", f.buf)
 	}
 }
 
