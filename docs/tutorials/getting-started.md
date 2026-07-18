@@ -15,8 +15,10 @@ curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | s
 ```
 
 Answer **y** when it offers ffmpeg and choose **whisperx** as the engine. The
-installer verifies every download against a pinned checksum or the publisher's
-signature, and tells you if `~/.local/bin` still needs adding to your `PATH`.
+installer verifies the binary against the release's published checksums and SLSA
+build-provenance attestation (when the GitHub CLI is installed), verifies each
+dependency against the publisher's signature, and tells you if `~/.local/bin`
+still needs adding to your `PATH`.
 
 Check the install:
 

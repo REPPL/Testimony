@@ -16,26 +16,24 @@
 #   -y, --yes         non-interactive: accept dependency installs (brew if present,
 #                     otherwise the local, admin-free option)
 #       --no-deps     install the binary only; print dependency guidance and exit
-#       --version V   install release V instead of the pinned default (its checksums
-#                     are then verified against that release's published SHA256SUMS
-#                     rather than the hashes pinned in this script)
+#       --version V   install release V instead of the default
 #   -h, --help        this text
 #
-# The binary install verifies a pinned SHA-256 for the pinned release. Everything
-# installs into user-owned locations by default; sudo is never invoked.
+# Trust model. The binary install downloads the platform tarball AND the release's
+# published SHA256SUMS, and verifies the tarball against it (integrity — the bytes
+# are exactly what the release published). When `gh` (the GitHub CLI) is available
+# it ALSO runs `gh attestation verify` against the release workflow's SLSA
+# build-provenance (authenticity — cryptographic proof the tarball was built by
+# REPPL/Testimony's own release.yml, the strong anchor). Without gh it proceeds on
+# the checksum alone and prints a note that installing gh enables provenance
+# verification. No per-release hash is pinned in this script: the checksums are
+# fetched from the release itself and the attestation binds them to the workflow.
+# Everything installs into user-owned locations by default; sudo is never invoked.
 
 set -eu
 
 REPO="REPPL/Testimony"
 VERSION="v0.1.0"
-PINNED_VERSION="v0.1.0"
-
-# SHA-256 of the release tarballs, pinned at publish time (SHA256SUMS is also
-# attached to the GitHub release for independent verification).
-SUM_DARWIN_ARM64="f4a32d5c5f003fb2310f27e19e7529431b6bbeb276bbde8cb1b4165bb3fcd201"
-SUM_DARWIN_AMD64="f260f79960aaa87931e2da6c4bf4efeabaa1eee5b1c6f2ef46c2ae55c21e9e83"
-SUM_LINUX_ARM64="2af0770c449250a26a4f1549af5055d43c2b6d53801645f2d86c567aa2196472"
-SUM_LINUX_AMD64="9a805065c903b4f0a0623b330529d2a03759c97d4c88f5d42cd9b9c95aaf5eda"
 
 # Pinned OpenPGP fingerprint of the evermeet.cx ffmpeg publisher key
 # (Helmut K. C. Tessarek, key id 0x476C4B611A660874). The local-macOS ffmpeg
@@ -109,41 +107,52 @@ platform() {
     printf '%s_%s' "$os" "$arch"
 }
 
-pinned_sum() {
-    case "$1" in
-        darwin_arm64) printf '%s' "$SUM_DARWIN_ARM64" ;;
-        darwin_amd64) printf '%s' "$SUM_DARWIN_AMD64" ;;
-        linux_arm64)  printf '%s' "$SUM_LINUX_ARM64" ;;
-        linux_amd64)  printf '%s' "$SUM_LINUX_AMD64" ;;
-    esac
-}
-
 install_binary() {
     plat=$(platform)
     tarball="testimony_${VERSION}_${plat}.tar.gz"
-    url="https://github.com/$REPO/releases/download/$VERSION/$tarball"
+    base="https://github.com/$REPO/releases/download/$VERSION"
 
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/testimony-install.XXXXXX")
     trap 'rm -rf "$tmp"' EXIT INT TERM
 
     say "Downloading $tarball ..."
-    fetch "$url" "$tmp/$tarball"
+    fetch "$base/$tarball" "$tmp/$tarball"
 
-    if [ "$VERSION" = "$PINNED_VERSION" ]; then
-        want=$(pinned_sum "$plat")
-    else
-        say "Non-pinned version requested; verifying against the release's SHA256SUMS."
-        fetch "https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS" "$tmp/SHA256SUMS"
-        want=$(awk -v f="$tarball" '$2 == f {print $1}' "$tmp/SHA256SUMS")
-        [ -n "$want" ] || die "no entry for $tarball in SHA256SUMS"
-    fi
-
+    # Integrity: verify the tarball against the release's published SHA256SUMS.
+    # No hash is pinned in this script — it is fetched from the release itself.
+    say "Downloading SHA256SUMS ..."
+    fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS"
+    want=$(awk -v f="$tarball" '$2 == f {print $1}' "$tmp/SHA256SUMS")
+    [ -n "$want" ] || die "no entry for $tarball in SHA256SUMS"
     got=$(sha256_of "$tmp/$tarball")
     [ "$got" = "$want" ] || die "SHA-256 mismatch for $tarball
   expected: $want
   got:      $got
 Refusing to install."
-    say "SHA-256 verified: $got"
+    say "SHA-256 verified against the release's SHA256SUMS: $got"
+
+    # Authenticity: when the GitHub CLI is available, verify the tarball's SLSA
+    # build-provenance attestation — cryptographic proof it was built by this
+    # repo's release workflow, not merely that its bytes match a fetched manifest
+    # (which an attacker who replaced BOTH the tarball and SHA256SUMS could forge).
+    # --signer-workflow binds acceptance to release.yml specifically, not any
+    # workflow in the repo. Without gh, proceed on the checksum with a printed note.
+    if have gh; then
+        say "Verifying SLSA build-provenance attestation with gh ..."
+        if gh attestation verify "$tmp/$tarball" \
+               --repo "$REPO" \
+               --signer-workflow "$REPO/.github/workflows/release.yml" >/dev/null 2>&1; then
+            say "Provenance verified: built by $REPO/.github/workflows/release.yml"
+        else
+            die "attestation verification FAILED for $tarball
+  gh could not confirm this tarball was built by $REPO's release workflow.
+Refusing to install."
+        fi
+    else
+        say "NOTE: 'gh' (GitHub CLI) not found — installed on the checksum alone."
+        say "      Install gh to also verify SLSA build-provenance (authenticity):"
+        say "        https://cli.github.com  — then re-run this installer."
+    fi
 
     mkdir -p "$INSTALL_DIR"
     tar -xzf "$tmp/$tarball" -C "$tmp" testimony
@@ -289,7 +298,7 @@ dep_asr() {
     esac
 }
 
-usage() { sed -n '2,26p' "$0" 2>/dev/null || say "see script header"; }
+usage() { sed -n '2,20p' "$0" 2>/dev/null || say "see script header"; }
 
 main() {
     while [ $# -gt 0 ]; do

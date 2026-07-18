@@ -2,8 +2,13 @@
 
 ## Gates
 
-Run from the repo root; CI (`.github/workflows/ci.yml`, `ubuntu-latest`)
-runs the same gates on every push and pull request.
+Run from the repo root; CI (`.github/workflows/ci.yml`) runs the same gates on
+every push and pull request, across Linux and macOS. Two further CI jobs guard
+the supply chain: `gitleaks` scans the full history for committed secrets, and
+`zizmor` audits the workflows themselves. A version tag (`vX.Y.Z`) triggers
+`.github/workflows/release.yml`, which re-runs the full gate against the pushed
+commit and then publishes the per-platform tarballs, a `SHA256SUMS` manifest,
+and their SLSA build-provenance attestations.
 
 ```bash
 gofmt -l .                              # format: any output fails
