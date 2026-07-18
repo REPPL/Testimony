@@ -1,34 +1,35 @@
 name: ci
 
 # Lightweight checks on every push and pull request: format, build, vet, and
-# test on macOS and Linux, plus a smoke test of the merge → report pipeline on
-# the bundled sample, full-history secret scanning, and a workflow audit.
+# test on Linux, plus a smoke test of the merge → report pipeline on the bundled
+# sample, full-history secret scanning, and a workflow audit. Also runs on
+# `merge_group` so the same jobs gate each entry the merge queue builds — the
+# queue tests every PR against the exact main it will land on, and its required
+# checks are these same contexts, so they MUST trigger here or the queue hangs.
 on:
   push:
     branches: ['**']
   pull_request:
+  merge_group:
 
-# Cancel superseded runs of the same ref (PRs and branch pushes); a merged
-# default-branch push is never cancelled mid-run because each ref has its own group.
+# Cancel superseded runs of the same ref (PRs and non-default branch pushes).
+# Never cancel a merge-queue run (each queue entry must complete to merge) or a
+# default-branch push; each already has its own ref, so this only affects
+# rapidly-superseded PR/branch pushes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 permissions:
   contents: read
 
 jobs:
-  # Build + vet + test on both host OSes, plus the pipeline smoke. Race-enabled
-  # unit tests catch data races the plain `go test` would miss. The record
-  # package's avfoundation paths are runtime-gated (they shell out to external
-  # tools only when actually recording), so the darwin build and tests compile
-  # and pass without a TTY or capture tooling — the macOS leg stays green.
-  # Ubuntu-only: the darwin build is covered by the release cross-compile, and a
-  # macos-latest leg aborts the demo/record race binaries with a runner-specific
-  # dyld "missing LC_UUID" trap (a GitHub image + race-detector issue, not our
-  # code — the suite is green on a real Mac). A single job named "check" is also
-  # the context branch protection requires; a matrix would rename it and never
-  # report that context.
+  # Build + vet + test + pipeline smoke, race-enabled. Ubuntu-only: the darwin
+  # build is covered by the release cross-compile, and a macos-latest leg aborts
+  # the demo/record race binaries with a runner-specific dyld "missing LC_UUID"
+  # trap (a GitHub image + race-detector issue, not our code — the suite is green
+  # on a real Mac). A single job named "check" is also the context branch
+  # protection requires; a matrix would rename it and never report that context.
   check:
     timeout-minutes: 10
     runs-on: ubuntu-latest
