@@ -112,9 +112,9 @@ jobs:
         run: gitleaks git --redact --no-banner .
 
   # Audit the workflows themselves (pwn requests, template injection, cache
-  # poisoning, unpinned uses). Testimony is public, so zizmor uploads its SARIF
-  # to Code Scanning, surfacing findings in the Security tab; the job also gates
-  # on those findings. A non-zero exit means a finding.
+  # poisoning, unpinned uses). The action runs zizmor and gates on its findings
+  # (a non-zero exit means a finding); SARIF upload to Code Scanning is off — see
+  # the advanced-security note below.
   zizmor:
     timeout-minutes: 10
     runs-on: ubuntu-latest
