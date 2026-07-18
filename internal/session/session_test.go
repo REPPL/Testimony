@@ -123,6 +123,11 @@ func TestSafeText(t *testing.T) {
 		"crlf\r\nline":           "crlfline",
 		"del\x7fbell\a":          "delbell",
 		"[data-testid=save-btn]": "[data-testid=save-btn]",
+		"rtl\u202eoverride":      "rtloverride", // U+202E RIGHT-TO-LEFT OVERRIDE (Trojan-Source)
+		"iso\u2066\u2069late":    "isolate",     // U+2066/U+2069 directional isolates
+		"line\u2028sep":          "linesep",     // U+2028 line separator
+		"mark\u200e\u200fs":      "marks",       // U+200E/U+200F LRM/RLM
+		"caf\u00e9":              "caf\u00e9",   // ordinary accented text is unchanged
 	}
 	for in, want := range cases {
 		if got := SafeText(in); got != want {

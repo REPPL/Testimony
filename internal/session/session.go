@@ -132,16 +132,24 @@ func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 // artefact (report.md) or a terminal line (review). It strips C0/C1 control
 // bytes — including the newline and carriage return that could forge report
 // structure or split a JSONL record, and the ESC (0x1b) that drives ANSI
-// terminal sequences — and turns tabs into spaces. Attacker-authored
-// transcript, interaction, manifest, and finding text therefore cannot inject
-// headings, terminal control sequences, or extra lines. Ordinary text is
-// unchanged.
+// terminal sequences — turns tabs into spaces, and removes the Unicode
+// bidirectional/line-separator formatting controls behind Trojan-Source
+// spoofing (CVE-2021-42574), so a right-to-left override cannot make a
+// displayed quote or anchor differ from the bytes a verdict is recorded
+// against. Attacker-authored transcript, interaction, manifest, and finding
+// text therefore cannot inject headings, terminal control sequences, extra
+// lines, or reordered glyphs. Ordinary text is unchanged.
 func SafeText(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
 		case r == '\t':
 			return ' '
 		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+			return -1
+		case r == 0x200e || r == 0x200f, // LRM, RLM
+			r >= 0x202a && r <= 0x202e, // LRE, RLE, PDF, LRO, RLO
+			r >= 0x2066 && r <= 0x2069, // LRI, RLI, FSI, PDI
+			r == 0x2028 || r == 0x2029: // line / paragraph separator
 			return -1
 		default:
 			return r

@@ -241,11 +241,17 @@ func anchor(f analyze.Finding) string {
 	return "evidence " + strings.Join(f.Evidence, ", ")
 }
 
+// describe echoes a recorded verdict to the analyst's terminal. Its fields
+// derive from an attacker-authorable finding id in a downloaded session, so
+// each is passed through SafeText — matching printFinding and
+// report.renderFindings — lest an ESC/ANSI byte in the id drive the terminal.
 func describe(v analyze.Verdict) string {
 	if v.Of != "" {
-		return fmt.Sprintf("recorded: %s %s of %s (%s)", v.Finding, v.Verdict, v.Of, v.At)
+		return fmt.Sprintf("recorded: %s %s of %s (%s)",
+			session.SafeText(v.Finding), session.SafeText(v.Verdict), session.SafeText(v.Of), session.SafeText(v.At))
 	}
-	return fmt.Sprintf("recorded: %s %s (%s)", v.Finding, v.Verdict, v.At)
+	return fmt.Sprintf("recorded: %s %s (%s)",
+		session.SafeText(v.Finding), session.SafeText(v.Verdict), session.SafeText(v.At))
 }
 
 func contains(findings []analyze.Finding, id string) bool {

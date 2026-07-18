@@ -221,3 +221,25 @@ func TestIngestRejectsOversizedAnswer(t *testing.T) {
 		t.Fatalf("read %d bytes; the cap (%d) was not enforced", r.read, maxAnswerBytes)
 	}
 }
+
+// TestIngestRejectsOversizedEvidence is the findings-brick regression: a
+// finding whose evidence array is individually valid but enormous would
+// serialise to one findings.jsonl line larger than the downstream JSONL
+// reader's per-line buffer, making the file — and re-ingest — permanently
+// unreadable. Pre-fix validate imposed no cardinality cap.
+func TestIngestRejectsOversizedEvidence(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	ev := make([]string, maxEvidence+1)
+	for i := range ev {
+		ev[i] = `"utt-004"`
+	}
+	finding := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":[` +
+		strings.Join(ev, ",") + `]}`
+	_, err := Ingest(dir, strings.NewReader(`{"findings":[`+finding+`]}`))
+	if err == nil || !strings.Contains(err.Error(), "exceeding the limit") {
+		t.Fatalf("expected an evidence-cardinality refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.FindingsFile)); statErr == nil {
+		t.Fatalf("findings.jsonl was written despite the oversized evidence array")
+	}
+}
