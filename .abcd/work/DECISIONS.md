@@ -40,3 +40,25 @@ Architecture-shaping decisions graduate to an ADR under
   a session by one code path rather than duplicating it. `demo` now blocks on
   SIGINT/SIGTERM and shuts the server down gracefully (exit 0) instead of being
   hard-killed; its printed output and on-disk artefacts are unchanged.
+- 2026-07-17 — `analyze` is host-delegated and emit-or-ingest: `analyze -session
+  DIR [-out FILE]` emits a single self-contained request (versioned rubric
+  `testimony-analysis/v1`, two-pass coding, the whole timeline plus the manifest
+  task list) and `-ingest FILE` is the sole validation boundary. The CLI never
+  calls a model or the network. Ingest decodes with `DisallowUnknownFields`
+  (closed shape), validates transactionally (all errors at once, nothing written
+  on failure), and forces `status:"unverified"` on every finding regardless of
+  input; it refuses to overwrite a `findings.jsonl` that already holds verdicts.
+- 2026-07-17 — Findings validation rules: id `^F-\d{3}$` unique; `type` in the
+  five-value set; `severity` Nielsen-style integer `1..4`; `quote` an exact
+  substring of one *evidence* utterance's text (per-utterance, not corpus-joined,
+  no normalisation), so every finding cites at least one `utt-*`; `evidence` ids
+  must exist in `timeline.jsonl`; `ui` selector/route validated against the
+  timeline's events; `t` within `[0, sessionEnd]`.
+- 2026-07-17 — Verdicts are stored as appended, non-destructive verdict records
+  (`{"kind":"verdict","finding":…,"verdict":confirmed|rejected|duplicate,"of":…,
+  "at":date}`), never by rewriting the finding line, so the birth state and full
+  decision history survive as the precision measure; latest verdict wins for
+  display, and `report`'s Findings section groups by effective status
+  (confirmed, unverified, duplicate, rejected). Flagged divergences from the
+  note: task-boundary chunking is deferred behind a seam (timeline carries no
+  task markers), and keyframe extraction (AC3) is deferred to a later intent.

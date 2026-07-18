@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
+	"github.com/REPPL/Testimony/internal/analyze"
 	"github.com/REPPL/Testimony/internal/demo"
 	"github.com/REPPL/Testimony/internal/record"
 	"github.com/REPPL/Testimony/internal/report"
+	"github.com/REPPL/Testimony/internal/review"
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
 	"github.com/REPPL/Testimony/internal/transcribe"
@@ -29,6 +33,10 @@ Usage:
                         [-device auto|cpu|cuda] [-compute_type auto|int8|float16] [-vad auto|silero|pyannote]   (whisperx only)
   testimony merge        -session DIR                   merge transcript + interactions into timeline.jsonl
   testimony report       -session DIR [-window 2.5]     render timeline.jsonl as a Markdown report
+  testimony analyze      -session DIR [-out FILE]        emit the analysis request (rubric + timeline) on stdout or to FILE
+  testimony analyze      -session DIR -ingest FILE       validate answer JSON (FILE or "-") → findings.jsonl (all findings unverified)
+  testimony review       -session DIR                    interactively record verdicts on unverified findings (TTY-gated)
+  testimony review       -session DIR -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
   testimony version
 
 A session directory is described in docs/reference/session-directory.md.
@@ -155,6 +163,72 @@ func Run(args []string) int {
 		fmt.Printf("transcribed %d utterances → %s\n", n, filepath.Join(*dir, session.TranscriptFile))
 		return 0
 
+	case "analyze":
+		fs := flag.NewFlagSet("analyze", flag.ExitOnError)
+		dir := fs.String("session", "", "session directory")
+		out := fs.String("out", "", "write the emitted request to FILE instead of stdout")
+		ingest := fs.String("ingest", "", "validate answer JSON at FILE (or \"-\" for stdin) into findings.jsonl")
+		fs.Parse(rest)
+		if *dir == "" {
+			return fail(fmt.Errorf("analyze: -session is required"))
+		}
+		if *ingest != "" {
+			if *out != "" {
+				return fail(fmt.Errorf("analyze: -out and -ingest cannot be combined"))
+			}
+			in := os.Stdin
+			if *ingest != "-" {
+				f, err := os.Open(*ingest)
+				if err != nil {
+					return fail(err)
+				}
+				defer f.Close()
+				in = f
+			}
+			findings, err := analyze.Ingest(*dir, in)
+			if err != nil {
+				return fail(err)
+			}
+			fmt.Printf("validated %d findings → %s (all unverified)\n",
+				len(findings), filepath.Join(*dir, session.FindingsFile))
+			return 0
+		}
+		prompt, err := analyze.EmitRequest(*dir)
+		if err != nil {
+			return fail(err)
+		}
+		if *out != "" {
+			if err := os.WriteFile(*out, []byte(prompt), 0o644); err != nil {
+				return fail(err)
+			}
+			fmt.Printf("wrote %s\n", *out)
+			return 0
+		}
+		fmt.Print(prompt)
+		return 0
+
+	case "review":
+		fs := flag.NewFlagSet("review", flag.ExitOnError)
+		dir := fs.String("session", "", "session directory")
+		finding := fs.String("finding", "", "non-interactive: the finding to judge (F-NNN)")
+		verdict := fs.String("verdict", "", "non-interactive: confirmed | rejected | duplicate-of-F-NNN")
+		fs.Parse(rest)
+		if *dir == "" {
+			return fail(fmt.Errorf("review: -session is required"))
+		}
+		if err := review.Run(review.Options{
+			Dir:     *dir,
+			Finding: strings.TrimSpace(*finding),
+			Verdict: strings.TrimSpace(*verdict),
+			In:      os.Stdin,
+			Out:     os.Stdout,
+			IsTTY:   isCharDevice(os.Stdin),
+			Today:   time.Now().Format("2006-01-02"),
+		}); err != nil {
+			return fail(err)
+		}
+		return 0
+
 	case "version":
 		fmt.Println("testimony", Version)
 		return 0
@@ -172,4 +246,14 @@ func Run(args []string) int {
 func fail(err error) int {
 	fmt.Fprintln(os.Stderr, "testimony:", err)
 	return 1
+}
+
+// isCharDevice reports whether f is an interactive terminal, gating review's
+// interactive walk so CI (where stdin is a pipe) never blocks.
+func isCharDevice(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }

@@ -11,6 +11,7 @@ sessions/<timestamp>/
   interactions.jsonl    # normalised interaction events (epoch ms)
   transcript.jsonl      # word-aligned utterances (session-relative seconds)
   timeline.jsonl        # merged, session-relative timeline
+  findings.jsonl        # analysis findings + appended verdicts (written by analyze/review)
   report.md             # human-readable session report
 ```
 
@@ -71,6 +72,53 @@ schema changes update code, sample, and tests together
 {"t":129.01,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"[data-testid=save-btn]","text":"Save","route":"/settings"}}
 ```
 
-`findings.jsonl` (the analysis layer's output) is designed but not yet
-produced — schema in
+## `findings.jsonl` — findings plus appended verdicts
+
+The analysis layer's output, written by [`analyze -ingest`](../04-surfaces/06-analyze.md)
+and [`review`](../04-surfaces/07-review.md). Two record kinds share the file, one
+per line. A finding line carries no `kind`; a verdict line is discriminated by
+`kind: "verdict"`. Verdicts are **appended, never in-place rewrites**, so the
+finding's birth state and full decision history survive as the precision measure
+([note §2](../../research/2026-07-17-architecture-note.md)). Ingest decodes each
+finding with unknown fields disallowed — the shape is closed — and is the sole
+validation boundary; every field below is checked, and `status` is forced to
+`"unverified"` on ingest whatever the answer JSON claims.
+
+**Finding record** (`analyze.Finding`):
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `id` | string | yes | `^F-\d{3}$` (F-NNN, zero-padded); unique within the file |
+| `t` | float64 | yes | finding time, session-relative seconds; `0 ≤ t ≤ sessionEnd` |
+| `type` | string | yes | one of `bug \| friction \| inconsistency \| preference \| idea` |
+| `severity` | int | yes | Nielsen-style `1..4` (cosmetic, minor, major, blocker) |
+| `mode` | string | no | `A \| B`, default `A`; only Mode A is produced in this slice |
+| `quote` | string | yes | non-empty; a **verbatim** substring of the `text` of one *cited* evidence utterance (no normalisation, no joining across utterances) |
+| `evidence` | []string | yes | non-empty; every id exists in `timeline.jsonl`; at least one `utt-*` (a spoken anchor) |
+| `ui` | object | no | `{selector?, route?}`; when present, each must match a real timeline event's `selector`/`route` |
+| `status` | string | yes | always `"unverified"` on ingest (the model is never trusted) |
+
+```json
+{"id":"F-001","t":22.0,"type":"bug","severity":3,"mode":"A",
+ "quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],
+ "ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
+```
+
+**Verdict record** (`analyze.Verdict`):
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `kind` | string | yes | literal `"verdict"` — the discriminator |
+| `finding` | string | yes | an existing finding id in the file |
+| `verdict` | string | yes | one of `confirmed \| rejected \| duplicate` |
+| `of` | string | when duplicate | an existing finding id, `≠ finding` |
+| `at` | string | yes | ISO date `YYYY-MM-DD` |
+
+```json
+{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-07-17"}
+{"kind":"verdict","finding":"F-005","verdict":"duplicate","of":"F-001","at":"2026-07-17"}
+```
+
+Effective status: every finding starts `unverified`; verdict records apply in
+file order and the last one for a finding wins. Design and rationale:
 [`../01-product/04-analysis.md`](../01-product/04-analysis.md).

@@ -1,8 +1,9 @@
 ---
 id: itd-2
 slug: analysis-findings
-spec_id: null
+spec_id: spc-2
 severity: major
+kind: standalone
 ---
 
 # From Timeline to Findings, With a Human Holding the Verdict

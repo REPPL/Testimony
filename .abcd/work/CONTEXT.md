@@ -9,9 +9,14 @@ useful. Short and pointer-heavy; durable design truth lives in
 
 Testimony captures usability evidence, on the record. A Go CLI
 (`testimony`, standard library only) with `record` (managed capture),
-`demo`, `transcribe`, `merge`, and `report` working end-to-end; the Phase 1
-capture surface is complete. Next is automated first-pass analysis
-(`analyze` + `review`). Design in `docs/architecture.md`.
+`demo`, `transcribe`, `merge`, and `report` working end-to-end, plus the
+first-pass analysis layer — `analyze` (emit a host-delegated analysis
+request, then validate the answer into `findings.jsonl`) and `review`
+(record human verdicts, appended non-destructively). The oracle is
+host-delegated: the CLI never calls a model, holds no keys, and adds no
+network dependency; every finding is born `unverified` and ingest is the sole
+validation boundary. Next is codebase mapping (itd-3), then Mode B / the
+pattern library (itd-4). Design in `docs/architecture.md`.
 
 ## Live constraints / sharp edges
 
