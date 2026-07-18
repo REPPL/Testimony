@@ -72,7 +72,7 @@ testimony merge -session DIR
 |---|---|---|
 | `-session` | *(required)* | session directory |
 
-Behaviour: reads `manifest.json` (required), `transcript.jsonl`, and `interactions.jsonl`; converts interaction epoch-millisecond times to session-relative seconds via `t0_epoch_ms`; writes the time-sorted `timeline.jsonl`; prints `merged N utterances + M events → <path>`. A missing `transcript.jsonl` or `interactions.jsonl` counts as zero records rather than an error, so a default audio-only `record` session (which never writes `interactions.jsonl`) still merges to a speech-only timeline.
+Behaviour: reads `manifest.json` (required), `transcript.jsonl`, and `interactions.jsonl`; converts interaction epoch-millisecond times to session-relative seconds via `t0_epoch_ms`; writes the time-sorted `timeline.jsonl`; prints `merged N utterances + M events → <path>`. A missing `transcript.jsonl` or `interactions.jsonl` counts as zero records rather than an error, so a default audio-only `record` session (which never writes `interactions.jsonl`) still merges to a speech-only timeline. When interactions are present, `t0_epoch_ms` is required: without it their epoch-millisecond times cannot be placed on the session clock, so merge fails rather than write a corrupt timeline.
 
 ## `testimony report`
 

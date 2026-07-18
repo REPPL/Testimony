@@ -174,3 +174,15 @@ Architecture-shaping decisions graduate to an ADR under
   newline-less prefix) can no longer leave a partial JSONL line that corrupts one
   physical record and breaks merge's reader; corrected the false comment claiming
   `os.File.Write` gives newline atomicity.
+- 2026-07-18 — `analyze.indexTimeline` seeds `idx.end` on the first entry (`i == 0
+  || end > idx.end`), matching how `idx.start` is seeded, so a fully-negative
+  timeline (an external recording predating manifest t0) reports its true latest
+  (still-negative) entry end as `sessionEnd` instead of flooring it at the zero
+  value 0. Fixes an over-permissive finding-time upper bound that admitted a
+  finding anchored after the real session end.
+- 2026-07-18 — `timeline.Merge` rejects a session that has interactions but a
+  manifest lacking `t0_epoch_ms` (T0EpochMS == 0), since epoch-millisecond
+  interaction times cannot be placed on the session clock without it; previously
+  it used the zero-value anchor and wrote a silently corrupt timeline (~55-year
+  offsets, nonsense report duration) with exit 0. Transcript-only sessions are
+  unaffected.

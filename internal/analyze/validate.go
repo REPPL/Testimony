@@ -53,7 +53,12 @@ func indexTimeline(entries []timeline.Entry) timelineIndex {
 				idx.routes[r] = true
 			}
 		}
-		if end > idx.end {
+		// Seed idx.end on the first entry, exactly as idx.start is seeded below, so
+		// the upper bound reflects the true maximum end even when every entry sits
+		// at negative session-relative time (a recording predating t0, audio-only).
+		// Growing from the zero value 0 would floor the end at 0 and admit a finding
+		// anchored after the real (negative) session end.
+		if i == 0 || end > idx.end {
 			idx.end = end
 		}
 		// Track the earliest entry start so the finding-time lower bound matches

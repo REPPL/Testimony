@@ -23,6 +23,11 @@ alongside the manifest.
   session-relative); interactions enter as `src: "event"` entries with epoch
   milliseconds converted via `t0_epoch_ms`, and are assigned sequential
   `ev-NNN` IDs at merge time.
+- When interactions are present, `t0_epoch_ms` is required: without it the
+  epoch-millisecond interaction times cannot be placed on the session clock, so
+  merge rejects the session rather than emit a silently corrupt timeline. A
+  transcript-only session (no interactions) is already session-relative and is
+  unaffected.
 - Entries are stably sorted by time and written one JSON object per line;
   schema in [`../05-internals/02-schemas.md`](../05-internals/02-schemas.md).
 - Prints the count: `merged N utterances + M events → <dir>/timeline.jsonl`.

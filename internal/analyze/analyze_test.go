@@ -185,6 +185,26 @@ func TestIngestAcceptsNegativeAnchoredFinding(t *testing.T) {
 	}
 }
 
+// TestIngestRejectsFindingAfterNegativeSessionEnd is the loose-upper-bound
+// regression: when every timeline entry sits at negative session-relative time
+// (an external recording predating manifest t0), the session end is the latest
+// still-negative entry, not 0. Pre-fix indexTimeline seeded idx.end from the zero
+// value 0 and only grew it on `end > idx.end`, so a fully-negative timeline
+// reported its end as 0 and admitted a finding anchored after the real session
+// end. negativeTimeline's latest end is utt-004's t1 = -1, so t = -0.5 is after
+// the session ended and must be rejected.
+func TestIngestRejectsFindingAfterNegativeSessionEnd(t *testing.T) {
+	dir := writeSession(t, negativeTimeline)
+	answer := `{"rubric":"testimony-analysis/v1","findings":[
+	 {"id":"F-001","t":-0.5,"type":"bug","severity":3,"quote":"I clicked save and nothing happened",
+	  "evidence":["utt-004","ev-003"],"status":"unverified"}
+	]}`
+	_, err := Ingest(dir, strings.NewReader(answer))
+	if err == nil || !strings.Contains(err.Error(), "outside the session") {
+		t.Fatalf("expected an out-of-range refusal for t after the negative session end, got %v", err)
+	}
+}
+
 // TestIngestRefusesEmptyFindings is the data-loss regression: an empty findings
 // array must not truncate a prior good findings.jsonl. Pre-fix Ingest wrote an
 // empty slice with O_TRUNC and reported success.
