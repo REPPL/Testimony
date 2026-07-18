@@ -1,7 +1,8 @@
 name: ci
 
 # Lightweight checks on every push and pull request: format, build, vet, and
-# test, plus a smoke test of the merge → report pipeline on the bundled sample.
+# test on macOS and Linux, plus a smoke test of the merge → report pipeline on
+# the bundled sample, full-history secret scanning, and a workflow audit.
 on:
   push:
     branches: ['**']
@@ -17,9 +18,18 @@ permissions:
   contents: read
 
 jobs:
+  # Build + vet + test on both host OSes, plus the pipeline smoke. Race-enabled
+  # unit tests catch data races the plain `go test` would miss. The record
+  # package's avfoundation paths are runtime-gated (they shell out to external
+  # tools only when actually recording), so the darwin build and tests compile
+  # and pass without a TTY or capture tooling — the macOS leg stays green.
   check:
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -30,8 +40,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Any file gofmt lists needs `gofmt -w` and fails the job.
+      # The format gate is platform-independent, so run it once on the ubuntu leg
+      # to avoid duplicate work; any file gofmt lists needs `gofmt -w` and fails.
       - name: Format (gofmt)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           set -euo pipefail
           unformatted="$(gofmt -l .)"
@@ -52,6 +64,8 @@ jobs:
 
       # The full pipeline against the bundled sample session: merge must produce
       # a timeline, report must render it, and both outputs must be non-empty.
+      # Runs on both OSes — it also proves the freshly built binary actually runs
+      # the pipeline on each host.
       - name: Pipeline smoke test
         run: |
           set -euo pipefail
@@ -66,3 +80,54 @@ jobs:
           grep -q "## Findings" examples/sample-session/report.md
           grep -q "### Confirmed (1)" examples/sample-session/report.md
           grep -q "\*\*F-001\*\* bug" examples/sample-session/report.md
+
+  # Secrets never land in history: full-history scan on every push/PR. Run as a
+  # pinned, checksum-verified CLI (no PR-comment / SARIF GitHub-API integration
+  # and no marketplace-action licence caveat), so it is self-contained. A
+  # non-zero exit means gitleaks found a secret.
+  gitleaks:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.24.3
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          base="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSLf -o "$base" "$url/$base"
+          curl -sSLf -o checksums.txt "$url/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " $base\$" checksums.txt | sha256sum -c -
+          tar -xzf "$base" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      - name: Scan full history
+        run: gitleaks git --redact --no-banner .
+
+  # Audit the workflows themselves (pwn requests, template injection, cache
+  # poisoning, unpinned uses). Testimony is public, so zizmor uploads its SARIF
+  # to Code Scanning, surfacing findings in the Security tab; the job also gates
+  # on those findings. A non-zero exit means a finding.
+  zizmor:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+        with:
+          # advanced-security: false — Code Scanning is not enabled on this repo,
+          # so a SARIF upload would fail the job even with zero findings. The
+          # action still runs zizmor and fails on any finding above its threshold;
+          # findings surface in the job log. Flip to true (and add
+          # security-events: write) if Code Scanning default setup is enabled later.
+          advanced-security: false

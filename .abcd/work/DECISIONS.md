@@ -102,3 +102,29 @@ Architecture-shaping decisions graduate to an ADR under
   installer is downloaded+executed inside a private `mktemp -d` instead of a
   fixed, world-writable `/tmp/uv-install.sh`, closing the shared-host TOCTOU/
   symlink race.
+- 2026-07-18 — CI adopts two abcd-managed supply-chain gates alongside the
+  existing format/build/vet/`go test -race`/pipeline-smoke `check` job (now run
+  on Linux AND macOS): a `gitleaks` job full-history-scans for committed secrets
+  (pinned, checksum-verified CLI — self-contained, no marketplace-action
+  caveat), and a `zizmor` job audits the workflows (public repo, so via
+  zizmor-action with SARIF upload to Code Scanning). All third-party actions are
+  pinned by commit SHA with `persist-credentials: false` and minimal per-job
+  permissions.
+- 2026-07-18 — Release is tag-triggered (`.github/workflows/release.yml`,
+  `on: push: tags: ['v*']`). A `verify` job re-runs the full gate against the
+  pushed commit (`github.sha`, never the re-pointable tag name), then a `release`
+  job cross-compiles the four `testimony_<TAG>_<os>_<arch>.tar.gz` tarballs
+  (CGO-off, `-trimpath`, version-stamped via `-X …internal/cli.Version`) + LICENSE
+  from that same commit, generates a `SHA256SUMS` manifest, attaches SLSA
+  build-provenance attestation (`actions/attest-build-provenance`, guarded to
+  no-op if the repo is ever private), and publishes with `gh release create
+  --verify-tag --generate-notes`. A no-branch-commit tripwire asserts the job
+  pushes nothing to the default branch.
+- 2026-07-18 — install.sh drops the per-release pinned SHA-256 constants and the
+  pinned-vs-version branching. It now fetches the release's `SHA256SUMS` and
+  verifies the tarball against it (integrity), and when `gh` is present runs
+  `gh attestation verify --signer-workflow REPPL/Testimony/.github/workflows/release.yml`
+  (authenticity — the strong anchor); without `gh` it installs on the checksum
+  alone and prints that installing `gh` enables provenance verification. The
+  dependency section (ffmpeg pinned-GPG path, whisperx/whisper.cpp, private-mktemp
+  uv install) is unchanged.
