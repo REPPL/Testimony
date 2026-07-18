@@ -89,7 +89,7 @@ func Run(args []string) int {
 			return fail(err)
 		}
 		out := filepath.Join(*dir, "report.md")
-		if err := os.WriteFile(out, []byte(md), 0o644); err != nil {
+		if err := session.WriteFileNoFollow(out, []byte(md), 0o644); err != nil {
 			return fail(err)
 		}
 		fmt.Printf("wrote %s\n", out)

@@ -24,7 +24,7 @@ testimony demo [-addr :8737] [-out sessions]
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-addr` | `:8737` | listen address |
+| `-addr` | `:8737` | listen address (a bare `:port` binds loopback `127.0.0.1` only) |
 | `-out` | `sessions` | root directory for new session folders |
 
 Behaviour: creates a new session directory named after the current time (`YYYY-MM-DD_HHMMSS`) under the `-out` root, writes `manifest.json` (participant `P1`, `t0_epoch_ms` set to now), serves the demo page at `/`, and appends captured events via two endpoints:

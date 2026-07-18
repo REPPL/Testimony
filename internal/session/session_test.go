@@ -1,6 +1,7 @@
 package session
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -44,5 +45,88 @@ func TestCreate(t *testing.T) {
 	}
 	if len(m.Tasks) != 1 || m.Tasks[0] != "Find the save button" {
 		t.Fatalf("tasks not carried into manifest: %+v", m.Tasks)
+	}
+}
+
+// TestWriteJSONLRefusesSymlink is the arbitrary-file-overwrite regression: a
+// session artefact planted as a symlink (e.g. in a downloaded session) must not
+// be followed, so the write cannot escape the session directory. Pre-fix
+// os.Create followed the link and truncated the target.
+func TestWriteJSONLRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "authorized_keys")
+	if err := os.WriteFile(outside, []byte("original\n"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	link := filepath.Join(dir, TimelineFile)
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	err := WriteJSONL(link, []map[string]any{{"x": 1}})
+	if err == nil {
+		t.Fatal("WriteJSONL followed a symlink; want refusal")
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "original\n" {
+		t.Fatalf("victim file overwritten through symlink: %q", b)
+	}
+}
+
+// TestWriteFileNoFollowRefusesSymlink covers the same guard for SaveManifest /
+// report.md, which route through WriteFileNoFollow.
+func TestWriteFileNoFollowRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(outside, []byte("original\n"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	link := filepath.Join(dir, ReportFile)
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := WriteFileNoFollow(link, []byte("clobber\n"), 0o644); err == nil {
+		t.Fatal("WriteFileNoFollow followed a symlink; want refusal")
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "original\n" {
+		t.Fatalf("victim file overwritten through symlink: %q", b)
+	}
+}
+
+// TestWriteJSONLPlainFileStillWorks confirms legitimate writes (regular files,
+// including truncating an existing one) are unaffected by the symlink guard.
+func TestWriteJSONLPlainFileStillWorks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	if err := WriteJSONL(path, []map[string]any{{"a": 1}}); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	if err := WriteJSONL(path, []map[string]any{{"b": 2}}); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	got, err := ReadJSONL[map[string]any](path)
+	if err != nil {
+		t.Fatalf("ReadJSONL: %v", err)
+	}
+	if len(got) != 1 || got[0]["b"] != float64(2) {
+		t.Fatalf("unexpected content after overwrite: %v", got)
+	}
+}
+
+// TestSafeText strips control bytes (newline, CR, ESC, DEL, C1) that would
+// otherwise forge report structure or drive an ANSI terminal, while leaving
+// ordinary text intact.
+func TestSafeText(t *testing.T) {
+	cases := map[string]string{
+		"plain save button":      "plain save button",
+		"click\n### INJECTED":    "click### INJECTED",
+		"a\x1b[31mred\x1b[0m":    "a[31mred[0m",
+		"tab\there":              "tab here",
+		"crlf\r\nline":           "crlfline",
+		"del\x7fbell\a":          "delbell",
+		"[data-testid=save-btn]": "[data-testid=save-btn]",
+	}
+	for in, want := range cases {
+		if got := SafeText(in); got != want {
+			t.Errorf("SafeText(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

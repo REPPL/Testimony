@@ -56,11 +56,11 @@ func Render(dir string, window float64) (string, error) {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Session report — %s\n\n", man.Session)
+	fmt.Fprintf(&b, "# Session report — %s\n\n", session.SafeText(man.Session))
 	fmt.Fprintf(&b, "**App:** %s · **Participant:** %s · **Duration:** %s · **Utterances:** %d · **Events:** %d\n\n",
-		orDash(man.App), orDash(man.Participant), clock(end(entries)), len(speech), len(events))
+		session.SafeText(orDash(man.App)), session.SafeText(orDash(man.Participant)), clock(end(entries)), len(speech), len(events))
 	if len(man.Tasks) > 0 {
-		fmt.Fprintf(&b, "**Tasks:** %s\n\n", strings.Join(man.Tasks, "; "))
+		fmt.Fprintf(&b, "**Tasks:** %s\n\n", session.SafeText(strings.Join(man.Tasks, "; ")))
 	}
 	b.WriteString("## Timeline\n\n")
 
@@ -125,7 +125,7 @@ func renderFindings(b *strings.Builder, dir string) {
 		}
 		for _, f := range group {
 			fmt.Fprintf(b, "- **%s** %s · severity %d · [%s] — “%s” — %s",
-				f.ID, f.Type, f.Severity, clock(f.T), f.Quote, findingAnchor(f))
+				f.ID, session.SafeText(f.Type), f.Severity, clock(f.T), session.SafeText(f.Quote), findingAnchor(f))
 			if st := eff[f.ID]; st.At != "" {
 				if st.Of != "" {
 					fmt.Fprintf(b, " · %s of %s (%s)", st.Value, st.Of, st.At)
@@ -145,14 +145,14 @@ func findingAnchor(f analyze.Finding) string {
 	if f.UI != nil && (f.UI.Selector != "" || f.UI.Route != "") {
 		var parts []string
 		if f.UI.Selector != "" {
-			parts = append(parts, "`"+f.UI.Selector+"`")
+			parts = append(parts, "`"+session.SafeText(f.UI.Selector)+"`")
 		}
 		if f.UI.Route != "" {
-			parts = append(parts, f.UI.Route)
+			parts = append(parts, session.SafeText(f.UI.Route))
 		}
 		return strings.Join(parts, " ")
 	}
-	return "evidence " + strings.Join(f.Evidence, ", ")
+	return "evidence " + session.SafeText(strings.Join(f.Evidence, ", "))
 }
 
 func end(entries []timeline.Entry) float64 {
@@ -179,22 +179,27 @@ func clock(sec float64) string {
 
 func speaker(u timeline.Entry) string {
 	if s, ok := u.Payload["speaker"].(string); ok && s != "" {
-		return s
+		return session.SafeText(s)
 	}
 	return "P?"
 }
 
 func text(u timeline.Entry) string {
 	if s, ok := u.Payload["text"].(string); ok {
-		return s
+		return session.SafeText(s)
 	}
 	return ""
 }
 
+// eventLine renders one event. Every payload string is passed through
+// session.SafeText: an event's kind/selector/route come from the unauthenticated
+// capture endpoint (or an attacker-authored timeline in a downloaded session),
+// so stripping control bytes here stops newline-forged report structure and ANSI
+// injection into report.md.
 func eventLine(e timeline.Entry) string {
 	get := func(k string) string {
 		if s, ok := e.Payload[k].(string); ok {
-			return s
+			return session.SafeText(s)
 		}
 		return ""
 	}

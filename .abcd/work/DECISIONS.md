@@ -62,3 +62,32 @@ Architecture-shaping decisions graduate to an ADR under
   (confirmed, unverified, duplicate, rejected). Flagged divergences from the
   note: task-boundary chunking is deferred behind a seam (timeline carries no
   task markers), and keyframe extraction (AC3) is deferred to a later intent.
+- 2026-07-18 — Security hardening (harden branch). Demo capture server: binds
+  loopback by default (a bare `:port` normalises to `127.0.0.1:port`, opt into a
+  wider bind with an explicit host); the write endpoints now require a loopback
+  `Host`, a same-origin/absent `Origin`, and `Content-Type: application/json`,
+  closing the CSRF and DNS-rebinding forgery paths (the demo page and the
+  instrument-your-own-app snippet set the JSON content type on their fetch
+  fallback); each accepted body is re-encoded with `json.Compact` so an embedded
+  newline can no longer split one logical record into corrupt JSONL lines that
+  break `merge`.
+- 2026-07-18 — Session artefact writes refuse to follow symlinks. New
+  `session.OpenFileNoFollow`/`WriteFileNoFollow` (O_NOFOLLOW) back `WriteJSONL`,
+  `SaveManifest`, the `report.md` write, the demo stream files, and review's
+  `AppendVerdict`; `transcribe` lstat-guards `audio.wav` before invoking ffmpeg.
+  A downloaded/shared session can no longer redirect a write to an arbitrary
+  file outside the session directory via a pre-planted symlink.
+- 2026-07-18 — Untrusted display text is sanitised. `session.SafeText` strips
+  C0/C1 control bytes (newline, CR, ESC/ANSI, DEL) from attacker-influenceable
+  fields before they reach `report.md` (utterance/event/finding/manifest text)
+  or the analyst's terminal (`review`), so forged report headings and ANSI
+  terminal injection are neutralised. `analyze -ingest` bounds the untrusted
+  answer read at 16 MiB (`io.LimitReader`) to prevent a memory-exhaustion DoS.
+- 2026-07-18 — install.sh: the macOS ffmpeg path pins the evermeet publisher key
+  fingerprint (`20F6EA3E0CFD6B4C53447A73476C4B611A660874`), importing only that
+  key into a throwaway keyring and asserting the good signature's VALIDSIG
+  carries it — `--auto-key-retrieve` (which trusts any key the signature names)
+  is dropped, so an attacker-signed substitute build is refused. The uv
+  installer is downloaded+executed inside a private `mktemp -d` instead of a
+  fixed, world-writable `/tmp/uv-install.sh`, closing the shared-host TOCTOU/
+  symlink race.

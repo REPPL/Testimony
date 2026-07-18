@@ -106,3 +106,36 @@ func findingLines(t *testing.T, dir string) []string {
 type discard struct{}
 
 func (*discard) Write(p []byte) (int, error) { return len(p), nil }
+
+// TestReportSanitisesInjectedText is the content-injection regression: an
+// attacker-authored event kind carrying a newline + markdown heading, and an
+// utterance carrying an ANSI escape, must not survive into report.md as real
+// report structure or terminal control bytes. Pre-fix these fields were written
+// raw, so "### INJECTED" appeared as a heading and the ESC byte reached the
+// file.
+func TestReportSanitisesInjectedText(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: "app", Participant: "P1"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	timeline := "{\"t\":1,\"src\":\"speech\",\"id\":\"utt-1\",\"payload\":{\"speaker\":\"P1\",\"t1\":2,\"text\":\"hello \\u001b[31mRED\\u001b[0m\"}}\n" +
+		"{\"t\":1.2,\"src\":\"event\",\"id\":\"ev-1\",\"payload\":{\"kind\":\"click\\n### INJECTED-HEADING\",\"selector\":\"btn\"}}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timeline), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "\n### INJECTED-HEADING") {
+		t.Fatalf("forged markdown heading injected into report:\n%s", md)
+	}
+	if strings.ContainsRune(md, 0x1b) {
+		t.Fatalf("ANSI escape byte survived into report.md")
+	}
+	// The legitimate token content is retained (only the control byte is gone).
+	if !strings.Contains(md, "INJECTED-HEADING") {
+		t.Fatalf("expected the kind text to remain, minus the newline")
+	}
+}

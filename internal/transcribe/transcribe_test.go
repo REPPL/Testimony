@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/REPPL/Testimony/internal/session"
@@ -250,5 +251,35 @@ func TestResolveVAD(t *testing.T) {
 		if got := resolveVAD(c.pref); got != c.want {
 			t.Errorf("resolveVAD(%q) = %q, want %q", c.pref, got, c.want)
 		}
+	}
+}
+
+// TestConvertAudioRefusesSymlinkOutput is the arbitrary-file-overwrite
+// regression: ffmpeg -y would follow a symlink at the output path, so a
+// pre-planted audio.wav symlink in an untrusted session must be refused before
+// ffmpeg runs. Hermetic: the guard fires before the ffmpeg PATH lookup.
+func TestConvertAudioRefusesSymlinkOutput(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "voice.wav")
+	if err := os.WriteFile(in, []byte("not really audio"), 0o644); err != nil {
+		t.Fatalf("seed input: %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(outside, []byte("original\n"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	out := filepath.Join(dir, session.AudioFile)
+	if err := os.Symlink(outside, out); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	// The guard must fire specifically on the symlink, before the ffmpeg PATH
+	// lookup — otherwise (with ffmpeg present) the victim would be overwritten,
+	// and on a machine without ffmpeg the error would merely be "not found".
+	err := convertAudio(in, out)
+	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("want symlink refusal, got %v", err)
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "original\n" {
+		t.Fatalf("victim overwritten through symlink: %q", b)
 	}
 }

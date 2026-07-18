@@ -13,6 +13,11 @@ import (
 	"github.com/REPPL/Testimony/internal/timeline"
 )
 
+// maxAnswerBytes caps the untrusted answer read in Ingest, mirroring the
+// bounded reads elsewhere (the demo server's 8 MiB body cap, the 4 MiB JSONL
+// line cap). It is generous for a genuine multi-finding answer.
+const maxAnswerBytes = 16 << 20
+
 // loadTimeline reads the merged timeline, hinting to run merge first when it is
 // missing (matching report).
 func loadTimeline(dir string) ([]timeline.Entry, error) {
@@ -37,9 +42,16 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 	}
 	idx := indexTimeline(entries)
 
-	data, err := io.ReadAll(r)
+	// The answer is untrusted LLM output (this is the validation boundary) and
+	// -ingest reads it from stdin/a file, so cap the read: a multi-gigabyte
+	// answer must not OOM the process before validation runs. maxAnswerBytes is
+	// generous for a real answer; anything larger is rejected, not buffered.
+	data, err := io.ReadAll(io.LimitReader(r, maxAnswerBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > maxAnswerBytes {
+		return nil, fmt.Errorf("answer exceeds %d bytes: refusing to ingest", maxAnswerBytes)
 	}
 	raws, rubric, err := parseContainer(data)
 	if err != nil {
