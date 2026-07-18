@@ -25,6 +25,11 @@ Architecture-shaping decisions graduate to an ADR under
 - 2026-07-17 — WhisperX VAD defaults to silero (`-vad` overrides): pyannote's
   checkpoint trips newer torch's `weights_only` load and aborts every run;
   found in the first live end-to-end session on the target Mac.
+- 2026-07-18 — Sanitise the finding `id` and verdict fields (`value`/`of`/`at`)
+  through `SafeText` when rendered to `report.md` and the review terminal: a
+  shared session's `findings.jsonl` is not revalidated by `analyze.Load`, so
+  those channels could still inject forged report structure / ANSI. Residual of
+  the earlier control-byte hardening, caught by a confirmation hunt.
 - 2026-07-17 — `record` uses ffmpeg avfoundation for both screen and microphone
   capture, not `screencapture -v`: ffmpeg is already a hard dependency (mic +
   transcribe), its SIGINT→finalise-container behaviour is battle-tested and
