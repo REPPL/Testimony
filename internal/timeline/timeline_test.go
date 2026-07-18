@@ -1,6 +1,12 @@
 package timeline
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/REPPL/Testimony/internal/session"
+)
 
 const t0 = int64(1_784_300_400_000) // arbitrary session anchor, epoch ms
 
@@ -38,6 +44,33 @@ func TestBuildEntriesSortsByTime(t *testing.T) {
 	}
 	if first == nil || first.T != 9.5 {
 		t.Fatalf("first event should be at 9.5s, got %+v", first)
+	}
+}
+
+// TestMergeAudioOnlySession is the audio-only-record regression: a default
+// `testimony record` session has manifest + transcript but no interactions.jsonl
+// (only the demo server writes that file), and record itself prints `merge` as
+// the next step. Merge must treat the absent interactions file as zero events and
+// still write a speech-only timeline, not abort with a "no such file" error.
+func TestMergeAudioOnlySession(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	utts := []Utterance{{ID: "utt-001", T0: 1, T1: 2, Speaker: "P1", Text: "hello"}}
+	if err := session.WriteJSONL(filepath.Join(dir, session.TranscriptFile), utts); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	speech, events, err := Merge(dir)
+	if err != nil {
+		t.Fatalf("Merge on audio-only session: %v", err)
+	}
+	if speech != 1 || events != 0 {
+		t.Fatalf("want speech=1 events=0, got speech=%d events=%d", speech, events)
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.TimelineFile)); err != nil {
+		t.Fatalf("timeline.jsonl not written: %v", err)
 	}
 }
 

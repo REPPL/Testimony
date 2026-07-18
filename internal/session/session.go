@@ -197,14 +197,22 @@ func WriteJSONL[T any](path string, values []T) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
 	for _, v := range values {
 		if err := enc.Encode(v); err != nil {
+			f.Close()
 			return err
 		}
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return err
+	}
+	// Return the Close error: on a filesystem that defers write-back errors to
+	// close (NFS close-to-open, or a full device), the final failure surfaces
+	// here, not from Flush — mirroring WriteFileNoFollow, so a committed artefact
+	// is never reported written when its bytes did not reach disk.
+	return f.Close()
 }

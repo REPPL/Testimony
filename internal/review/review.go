@@ -210,11 +210,13 @@ func AppendVerdict(dir string, v analyze.Verdict) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	if _, err := f.Write(append(b, '\n')); err != nil {
+		f.Close()
 		return err
 	}
-	return nil
+	// Return the Close error so a verdict is never reported recorded when its
+	// bytes did not reach disk (write-back deferred to close on NFS/full device).
+	return f.Close()
 }
 
 // printFinding writes a finding to the analyst's terminal. Every
