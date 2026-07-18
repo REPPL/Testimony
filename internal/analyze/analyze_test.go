@@ -194,3 +194,30 @@ func TestEmitRequest(t *testing.T) {
 		}
 	}
 }
+
+// endlessReader yields spaces forever, standing in for a hostile multi-gigabyte
+// answer without allocating one in the test.
+type endlessReader struct{ read int }
+
+func (e *endlessReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = ' '
+	}
+	e.read += len(p)
+	return len(p), nil
+}
+
+// TestIngestRejectsOversizedAnswer is the resource-exhaustion regression: the
+// untrusted answer read is bounded, so an unbounded stream is refused rather
+// than buffered into memory. Pre-fix io.ReadAll had no cap.
+func TestIngestRejectsOversizedAnswer(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	r := &endlessReader{}
+	_, err := Ingest(dir, r)
+	if err == nil || !strings.Contains(err.Error(), "refusing to ingest") {
+		t.Fatalf("expected an over-size refusal, got %v", err)
+	}
+	if r.read > maxAnswerBytes+64*1024 {
+		t.Fatalf("read %d bytes; the cap (%d) was not enforced", r.read, maxAnswerBytes)
+	}
+}

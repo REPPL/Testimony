@@ -206,7 +206,7 @@ func AppendVerdict(dir string, v analyze.Verdict) error {
 		return err
 	}
 	path := filepath.Join(dir, session.FindingsFile)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := session.OpenFileNoFollow(path, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
@@ -217,10 +217,14 @@ func AppendVerdict(dir string, v analyze.Verdict) error {
 	return nil
 }
 
+// printFinding writes a finding to the analyst's terminal. Every
+// attacker-influenceable field (a finding in a downloaded session is untrusted)
+// is passed through session.SafeText first, so embedded ESC/ANSI or control
+// bytes cannot manipulate the terminal.
 func printFinding(w io.Writer, f analyze.Finding) {
-	fmt.Fprintf(w, "%s — %s, severity %d, [%s]\n", f.ID, f.Type, f.Severity, clock(f.T))
-	fmt.Fprintf(w, "  “%s”\n", f.Quote)
-	fmt.Fprintf(w, "  anchor: %s\n", anchor(f))
+	fmt.Fprintf(w, "%s — %s, severity %d, [%s]\n", f.ID, session.SafeText(f.Type), f.Severity, clock(f.T))
+	fmt.Fprintf(w, "  “%s”\n", session.SafeText(f.Quote))
+	fmt.Fprintf(w, "  anchor: %s\n", session.SafeText(anchor(f)))
 }
 
 func anchor(f analyze.Finding) string {

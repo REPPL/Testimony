@@ -26,6 +26,12 @@ func convertAudio(in, out string) error {
 	if _, err := os.Stat(in); err != nil {
 		return fmt.Errorf("audio file: %w", err)
 	}
+	// ffmpeg -y follows a symlink at the output path. In an untrusted (shared or
+	// downloaded) session directory a pre-planted audio.wav symlink would
+	// redirect the write outside the session, so refuse to overwrite through one.
+	if fi, err := os.Lstat(out); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to write %s: it is a symlink", out)
+	}
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		return fmt.Errorf("ffmpeg not found on PATH (needed to produce the 16 kHz mono %s): brew install ffmpeg", session.AudioFile)

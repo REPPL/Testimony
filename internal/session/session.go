@@ -16,9 +16,12 @@ package session
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -89,7 +92,61 @@ func SaveManifest(dir string, m Manifest) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, ManifestFile), append(b, '\n'), 0o644)
+	return WriteFileNoFollow(filepath.Join(dir, ManifestFile), append(b, '\n'), 0o644)
+}
+
+// OpenFileNoFollow opens path for writing with O_NOFOLLOW, so a symlink planted
+// at the final path component is refused rather than followed. A session
+// directory is an exchange unit (a shared or downloaded session may be
+// attacker-authored); without this guard a planted symlink — e.g. a
+// timeline.jsonl pointing at ~/.ssh/authorized_keys — would redirect a write to
+// an arbitrary file outside the session directory. flag is OR-ed with
+// O_NOFOLLOW; callers pass the usual O_CREATE/O_TRUNC/O_APPEND/O_WRONLY set.
+func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
+	f, err := os.OpenFile(path, flag|syscall.O_NOFOLLOW, perm)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, fmt.Errorf("refusing to write %s: it is a symlink", path)
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
+// WriteFileNoFollow is os.WriteFile that refuses to follow a symlink at path
+// (see OpenFileNoFollow). It truncates an existing regular file, as os.WriteFile
+// does.
+func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
+	f, err := OpenFileNoFollow(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// SafeText neutralises untrusted text before it is written into a human-facing
+// artefact (report.md) or a terminal line (review). It strips C0/C1 control
+// bytes — including the newline and carriage return that could forge report
+// structure or split a JSONL record, and the ESC (0x1b) that drives ANSI
+// terminal sequences — and turns tabs into spaces. Attacker-authored
+// transcript, interaction, manifest, and finding text therefore cannot inject
+// headings, terminal control sequences, or extra lines. Ordinary text is
+// unchanged.
+func SafeText(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t':
+			return ' '
+		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+			return -1
+		default:
+			return r
+		}
+	}, s)
 }
 
 // ReadJSONL decodes a JSON-Lines file into a slice of T. Blank lines are
@@ -123,9 +180,12 @@ func ReadJSONL[T any](path string) ([]T, error) {
 	return out, nil
 }
 
-// WriteJSONL writes each value as one JSON line to path.
+// WriteJSONL writes each value as one JSON line to path. It refuses to follow a
+// symlink at path (see OpenFileNoFollow) so writing a session artefact — even
+// from an untrusted, downloaded session directory — cannot be redirected to an
+// arbitrary file outside the session.
 func WriteJSONL[T any](path string, values []T) error {
-	f, err := os.Create(path)
+	f, err := OpenFileNoFollow(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}

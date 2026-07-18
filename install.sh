@@ -37,6 +37,12 @@ SUM_DARWIN_AMD64="f260f79960aaa87931e2da6c4bf4efeabaa1eee5b1c6f2ef46c2ae55c21e9e
 SUM_LINUX_ARM64="2af0770c449250a26a4f1549af5055d43c2b6d53801645f2d86c567aa2196472"
 SUM_LINUX_AMD64="9a805065c903b4f0a0623b330529d2a03759c97d4c88f5d42cd9b9c95aaf5eda"
 
+# Pinned OpenPGP fingerprint of the evermeet.cx ffmpeg publisher key
+# (Helmut K. C. Tessarek, key id 0x476C4B611A660874). The local-macOS ffmpeg
+# path verifies the build's signature against THIS key only — never any key the
+# signature happens to name — so an attacker-signed substitute build is refused.
+EVERMEET_FPR="20F6EA3E0CFD6B4C53447A73476C4B611A660874"
+
 INSTALL_DIR="${TESTIMONY_INSTALL_DIR:-$HOME/.local/bin}"
 ASSUME_YES=0
 NO_DEPS=0
@@ -180,7 +186,8 @@ install_ffmpeg_local() {
     case "$os" in
         darwin)
             # evermeet.cx publishes a GPG signature (.sig) per build; verify it
-            # when gpg is available, refuse on a bad signature.
+            # against the PINNED publisher key ($EVERMEET_FPR) when gpg is
+            # available, and refuse on a bad or wrong-key signature.
             say "Fetching static ffmpeg build (evermeet.cx) ..."
             fetch "https://evermeet.cx/ffmpeg/info/ffmpeg/release" "$tmp2/info.json"
             u=$(sed -n 's/.*"zip":{"url":"\([^"]*\)".*/\1/p' "$tmp2/info.json" | head -1)
@@ -188,11 +195,23 @@ install_ffmpeg_local() {
             fetch "$u" "$tmp2/ffmpeg.zip"
             if have gpg; then
                 fetch "$u.sig" "$tmp2/ffmpeg.zip.sig"
-                if gpg --batch --keyserver hkps://keys.openpgp.org --auto-key-retrieve \
-                       --verify "$tmp2/ffmpeg.zip.sig" "$tmp2/ffmpeg.zip" >/dev/null 2>&1; then
-                    say "ffmpeg GPG signature verified (publisher key via keys.openpgp.org)."
+                # Import ONLY the pinned publisher key into a throwaway keyring,
+                # then verify against it. --auto-key-retrieve is never used: it
+                # would fetch whatever key the (attacker-supplied) signature
+                # names and accept a build signed by that key. We also assert the
+                # good signature's VALIDSIG carries the pinned fingerprint, so a
+                # signature made by any other key is rejected. Fail closed.
+                gnupg=$(mktemp -d "${TMPDIR:-/tmp}/testimony-gpg.XXXXXX")
+                status=$(GNUPGHOME="$gnupg" gpg --batch --no-auto-key-retrieve \
+                             --keyserver hkps://keys.openpgp.org \
+                             --recv-keys "$EVERMEET_FPR" >/dev/null 2>&1 \
+                         && GNUPGHOME="$gnupg" gpg --batch --no-auto-key-retrieve --status-fd 1 \
+                             --verify "$tmp2/ffmpeg.zip.sig" "$tmp2/ffmpeg.zip" 2>/dev/null) || true
+                rm -rf "$gnupg"
+                if printf '%s\n' "$status" | grep -q "VALIDSIG.*$EVERMEET_FPR"; then
+                    say "ffmpeg GPG signature verified (pinned evermeet key $EVERMEET_FPR)."
                 else
-                    err "ffmpeg GPG signature verification FAILED; refusing this build."
+                    err "ffmpeg GPG signature verification FAILED (not signed by the pinned evermeet key); refusing this build."
                     rm -rf "$tmp2"; return
                 fi
             else
@@ -239,8 +258,14 @@ dep_asr() {
         whisperx)
             if ! have uv; then
                 if ask "whisperx installs via uv (user-local, no admin). Install uv first (astral.sh installer)?"; then
-                    fetch "https://astral.sh/uv/install.sh" "${TMPDIR:-/tmp}/uv-install.sh"
-                    sh "${TMPDIR:-/tmp}/uv-install.sh"
+                    # Download+execute inside a private mktemp -d, not a fixed
+                    # /tmp/uv-install.sh: a predictable, world-writable path lets
+                    # a local attacker on a shared host pre-plant a symlink or win
+                    # the write→exec race and run their own code as the user.
+                    uvd=$(mktemp -d "${TMPDIR:-/tmp}/testimony-uv.XXXXXX")
+                    fetch "https://astral.sh/uv/install.sh" "$uvd/uv-install.sh"
+                    sh "$uvd/uv-install.sh"
+                    rm -rf "$uvd"
                     # uv lands in ~/.local/bin; make it visible to this run.
                     PATH="$HOME/.local/bin:$PATH"; export PATH
                 else

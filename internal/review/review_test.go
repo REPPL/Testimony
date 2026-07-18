@@ -193,3 +193,43 @@ func TestInteractiveQuitStops(t *testing.T) {
 		t.Fatalf("quit-first wrote %d verdicts, want 0", len(verdicts))
 	}
 }
+
+// TestPrintFindingSanitisesANSI is the terminal-injection regression: a
+// finding's quote/anchor come from an untrusted (downloaded) session, so an
+// embedded ESC must not reach the analyst's terminal. Pre-fix f.Quote was
+// written with a raw %s.
+func TestPrintFindingSanitisesANSI(t *testing.T) {
+	f := analyze.Finding{
+		ID: "F-001", Type: "bug", Severity: 3, T: 1,
+		Quote: "danger \x1b[2J\x1b[31mspoofed",
+		UI:    &analyze.UI{Selector: "btn\x1b]0;pwn\a", Route: "#x"},
+	}
+	var buf bytes.Buffer
+	printFinding(&buf, f)
+	if bytes.ContainsRune(buf.Bytes(), 0x1b) {
+		t.Fatalf("ESC byte reached the terminal output: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "spoofed") {
+		t.Fatalf("legitimate quote text should remain: %q", buf.String())
+	}
+}
+
+// TestAppendVerdictRefusesSymlink is the arbitrary-file-append regression: a
+// findings.jsonl planted as a symlink must not be followed.
+func TestAppendVerdictRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(outside, []byte("original\n"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, session.FindingsFile)); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	err := AppendVerdict(dir, analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"})
+	if err == nil {
+		t.Fatal("AppendVerdict followed a symlink; want refusal")
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "original\n" {
+		t.Fatalf("victim file appended through symlink: %q", b)
+	}
+}

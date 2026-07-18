@@ -10,7 +10,7 @@ app contains at least one intentional usability flaw, found by talking.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-addr` | `:8737` | listen address |
+| `-addr` | `:8737` | listen address (a bare `:port` binds loopback `127.0.0.1` only) |
 | `-out` | `sessions` | root directory for new session folders |
 
 ## Behaviour
@@ -23,8 +23,14 @@ app contains at least one intentional usability flaw, found by talking.
 - `POST /api/interactions` appends one normalised interaction (single JSON
   object) per line to `interactions.jsonl`; `POST /api/events` appends a JSON
   array of raw rrweb events, one per line, to `events.rrweb.jsonl`. Request
-  bodies are validated as JSON and size-limited (8 MiB); writes are
-  serialised under a mutex.
+  bodies are validated as JSON, re-encoded to a single line so an embedded
+  newline cannot split one record across lines, and size-limited (8 MiB);
+  writes are serialised under a mutex.
+- The capture surface is loopback-only by default and the write endpoints are
+  guarded against cross-origin forgery: a request must carry a loopback `Host`,
+  a same-origin (or absent) `Origin`, and `Content-Type: application/json`.
+  This closes the CSRF and DNS-rebinding paths by which a web page the
+  participant merely has open could otherwise forge or corrupt evidence.
 - Prints capture instructions on startup: start a voice recorder, say
   "session start" aloud, explore, then Ctrl+C and run
   [`transcribe`](02-transcribe.md) → [`merge`](03-merge.md) →

@@ -8,7 +8,7 @@ This guide points the session capture at your own web application instead of the
 testimony demo
 ```
 
-This creates a fresh session directory (with `manifest.json` anchoring the session clock) and listens on `:8737` (change with `-addr`). Ignore the demo page it serves at `/` — you only need its two capture endpoints:
+This creates a fresh session directory (with `manifest.json` anchoring the session clock) and listens on `:8737` (change with `-addr`). A bare `:port` binds loopback (`127.0.0.1`) only, so the capture surface is not published to the network. Ignore the demo page it serves at `/` — you only need its two capture endpoints:
 
 | Endpoint | Body | Appends to |
 |---|---|---|
@@ -16,6 +16,8 @@ This creates a fresh session directory (with `manifest.json` anchoring the sessi
 | `POST /api/events` | a batch of raw rrweb events (a JSON array) | `events.rrweb.jsonl` (one line per array element) |
 
 Both endpoints accept POST only (anything else returns 405), cap the body at 8 MiB, and return `204 No Content` on success. `/api/interactions` rejects invalid JSON with 400; `/api/events` rejects anything that is not a JSON array with 400.
+
+To defend the evidence against cross-origin forgery (CSRF) and DNS-rebinding, the write endpoints require `Content-Type: application/json`, a loopback `Host`, and — when present — a same-origin `Origin`. Post from your app's own origin (see the proxy in step 5) and always set the JSON content type, as the snippet below does. Each accepted body is re-encoded to a single line, so one request is always exactly one JSONL record.
 
 ## 2. Add stable `data-testid` attributes
 
@@ -56,7 +58,7 @@ A minimal capture script, following the same conventions as the demo app — pre
     try {
       navigator.sendBeacon
         ? navigator.sendBeacon(url, new Blob([JSON.stringify(body)], { type: "application/json" }))
-        : fetch(url, { method: "POST", body: JSON.stringify(body), keepalive: true });
+        : fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), keepalive: true });
     } catch (e) { /* capture must never break the app */ }
   }
   function interaction(kind, el, extra) {
