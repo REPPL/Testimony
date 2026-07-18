@@ -222,7 +222,7 @@ func AppendVerdict(dir string, v analyze.Verdict) error {
 // is passed through session.SafeText first, so embedded ESC/ANSI or control
 // bytes cannot manipulate the terminal.
 func printFinding(w io.Writer, f analyze.Finding) {
-	fmt.Fprintf(w, "%s — %s, severity %d, [%s]\n", f.ID, session.SafeText(f.Type), f.Severity, clock(f.T))
+	fmt.Fprintf(w, "%s — %s, severity %d, [%s]\n", session.SafeText(f.ID), session.SafeText(f.Type), f.Severity, clock(f.T))
 	fmt.Fprintf(w, "  “%s”\n", session.SafeText(f.Quote))
 	fmt.Fprintf(w, "  anchor: %s\n", session.SafeText(anchor(f)))
 }

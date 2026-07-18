@@ -214,6 +214,22 @@ func TestPrintFindingSanitisesANSI(t *testing.T) {
 	}
 }
 
+// TestPrintFindingSanitisesID is the id-channel terminal-injection regression:
+// analyze.Load does not validate a finding's id (only ingest does), so a
+// downloaded session can carry an ESC in the id itself. Pre-fix f.ID was
+// written with a raw %s while its siblings were sanitised.
+func TestPrintFindingSanitisesID(t *testing.T) {
+	f := analyze.Finding{
+		ID: "F-001\x1b[2J\x1b[1;1Hspoofed", Type: "bug", Severity: 3, T: 1,
+		Quote: "ok",
+	}
+	var buf bytes.Buffer
+	printFinding(&buf, f)
+	if bytes.ContainsRune(buf.Bytes(), 0x1b) {
+		t.Fatalf("ESC byte from the id reached the terminal: %q", buf.String())
+	}
+}
+
 // TestAppendVerdictRefusesSymlink is the arbitrary-file-append regression: a
 // findings.jsonl planted as a symlink must not be followed.
 func TestAppendVerdictRefusesSymlink(t *testing.T) {

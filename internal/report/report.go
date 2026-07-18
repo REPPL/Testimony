@@ -125,12 +125,12 @@ func renderFindings(b *strings.Builder, dir string) {
 		}
 		for _, f := range group {
 			fmt.Fprintf(b, "- **%s** %s · severity %d · [%s] — “%s” — %s",
-				f.ID, session.SafeText(f.Type), f.Severity, clock(f.T), session.SafeText(f.Quote), findingAnchor(f))
+				session.SafeText(f.ID), session.SafeText(f.Type), f.Severity, clock(f.T), session.SafeText(f.Quote), findingAnchor(f))
 			if st := eff[f.ID]; st.At != "" {
 				if st.Of != "" {
-					fmt.Fprintf(b, " · %s of %s (%s)", st.Value, st.Of, st.At)
+					fmt.Fprintf(b, " · %s of %s (%s)", session.SafeText(st.Value), session.SafeText(st.Of), session.SafeText(st.At))
 				} else {
-					fmt.Fprintf(b, " · %s (%s)", st.Value, st.At)
+					fmt.Fprintf(b, " · %s (%s)", session.SafeText(st.Value), session.SafeText(st.At))
 				}
 			}
 			b.WriteString("\n")
