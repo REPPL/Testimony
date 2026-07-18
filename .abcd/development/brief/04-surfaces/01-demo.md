@@ -25,7 +25,9 @@ app contains at least one intentional usability flaw, found by talking.
   array of raw rrweb events, one per line, to `events.rrweb.jsonl`. Request
   bodies are validated as JSON, re-encoded to a single line so an embedded
   newline cannot split one record across lines, and size-limited (8 MiB);
-  writes are serialised under a mutex.
+  writes are serialised under a mutex. A persisted batch answers `204 No
+  Content`; if an append fails the endpoint answers `500` rather than a false
+  `204`, so the client does not treat a dropped event as captured.
 - The capture surface is loopback-only by default and the write endpoints are
   guarded against cross-origin forgery: a request must carry a loopback `Host`,
   a same-origin (or absent) `Origin`, and `Content-Type: application/json`.

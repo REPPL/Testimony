@@ -128,3 +128,22 @@ Architecture-shaping decisions graduate to an ADR under
   alone and prints that installing `gh` enables provenance verification. The
   dependency section (ffmpeg pinned-GPG path, whisperx/whisper.cpp, private-mktemp
   uv install) is unchanged.
+- 2026-07-18 — bughunt-1 correctness fixes. `timeline.Merge` now treats a
+  missing `transcript.jsonl`/`interactions.jsonl` as zero records (via
+  `readOptionalJSONL`, tolerating `fs.ErrNotExist`), so the documented default
+  audio-only `record` → `merge` pipeline no longer aborts with "no such file";
+  brief 04-surfaces/03-merge.md and docs/reference/cli.md updated.
+- 2026-07-18 — Demo capture handler (`appendLines`) now checks the append
+  write error and answers `500` instead of a false `204`, and writes each
+  record + newline as one buffer so a partial write cannot leave a truncated,
+  unparseable JSONL line; brief 04-surfaces/01-demo.md updated.
+- 2026-07-18 — `analyze.Load` validates the verdict enum (the previously-unused
+  `verdictSet`): a verdict value outside `confirmed|rejected|duplicate` is
+  ignored, so its finding stays `unverified` and no longer vanishes from the
+  report and review queue into an unrendered status group; schema doc noted.
+- 2026-07-18 — `session.WriteJSONL` and `review.AppendVerdict` now return the
+  file `Close()` error (matching `WriteFileNoFollow`), so a write-back failure
+  deferred to close is not masked as success on committed artefacts.
+- 2026-07-18 — Demo/record banners derive the display URL via `demo.DisplayURL`
+  instead of concatenating `-addr` after a literal "localhost", fixing the
+  broken `http://localhost0.0.0.0:8737` shown for an explicit-host bind.

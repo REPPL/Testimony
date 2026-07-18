@@ -13,8 +13,12 @@ alongside the manifest.
 
 ## Behaviour
 
-- Reads `manifest.json`, `transcript.jsonl`, and `interactions.jsonl`; a
-  missing file is an error.
+- Reads `manifest.json` (required), `transcript.jsonl`, and
+  `interactions.jsonl`. A missing `transcript.jsonl` or `interactions.jsonl` is
+  treated as zero records, not an error, so a default audio-only `record`
+  session (which never writes `interactions.jsonl`) still merges to a
+  speech-only timeline, and a session merged before transcription still merges
+  to an event-only one. A malformed line in either file is still an error.
 - Utterances enter as `src: "speech"` entries at their `t0` (already
   session-relative); interactions enter as `src: "event"` entries with epoch
   milliseconds converted via `t0_epoch_ms`, and are assigned sequential

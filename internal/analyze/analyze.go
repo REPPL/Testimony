@@ -112,6 +112,16 @@ func Load(dir string) ([]Finding, []Verdict, error) {
 			if err := json.Unmarshal(raw, &v); err != nil {
 				return nil, nil, fmt.Errorf("%s:%d: %w", path, line, err)
 			}
+			// The verdict enum is closed (confirmed|rejected|duplicate). A verdict
+			// carrying any other value — a typo, an empty string, or a foreign
+			// value from a shared/hand-edited session — is not representable, so it
+			// is ignored rather than applied. The finding then keeps its
+			// "unverified" status and still appears in the report and the review
+			// queue, instead of landing in a status group nothing renders and
+			// silently vanishing from both.
+			if !verdictSet[v.Verdict] {
+				continue
+			}
 			verdicts = append(verdicts, v)
 			continue
 		}

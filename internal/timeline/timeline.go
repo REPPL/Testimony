@@ -4,7 +4,9 @@
 package timeline
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"sort"
 
@@ -123,6 +125,21 @@ func EventsNear(entries []Entry, u Entry, window float64) []string {
 	return ids
 }
 
+// readOptionalJSONL reads a JSONL input that a valid session may legitimately
+// lack. A default audio-only `testimony record` run captures no interactions,
+// and a session may equally reach merge before transcription: an absent file is
+// therefore zero records, not a fatal error, so an audio-only or interaction-only
+// session still merges to a partial timeline instead of aborting the documented
+// pipeline. Any other read error (a malformed line, a permission failure) is
+// still returned unchanged.
+func readOptionalJSONL[T any](path string) ([]T, error) {
+	out, err := session.ReadJSONL[T](path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return out, err
+}
+
 // Merge reads manifest, transcript and interactions from dir, writes
 // timeline.jsonl, and returns the number of speech and event entries.
 func Merge(dir string) (speech, events int, err error) {
@@ -130,11 +147,11 @@ func Merge(dir string) (speech, events int, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	utts, err := session.ReadJSONL[Utterance](filepath.Join(dir, session.TranscriptFile))
+	utts, err := readOptionalJSONL[Utterance](filepath.Join(dir, session.TranscriptFile))
 	if err != nil {
 		return 0, 0, fmt.Errorf("read transcript: %w", err)
 	}
-	ints, err := session.ReadJSONL[Interaction](filepath.Join(dir, session.InteractionsFile))
+	ints, err := readOptionalJSONL[Interaction](filepath.Join(dir, session.InteractionsFile))
 	if err != nil {
 		return 0, 0, fmt.Errorf("read interactions: %w", err)
 	}

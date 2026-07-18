@@ -88,6 +88,37 @@ func TestReportNoFindings(t *testing.T) {
 	}
 }
 
+// TestReportKeepsFindingWithUnknownVerdict is the vanishing-finding regression.
+// findings.jsonl is a shared/hand-editable artefact; a verdict line carrying a
+// value outside the closed enum (here a "confirm" typo) must not push its finding
+// into an unrendered status group. The finding must still appear, falling back to
+// Unverified, rather than disappearing from the report entirely.
+func TestReportKeepsFindingWithUnknownVerdict(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: "app", Participant: "P1"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	findings := "{\"id\":\"F-001\",\"t\":22,\"type\":\"bug\",\"severity\":3,\"quote\":\"ok\",\"evidence\":[\"utt-004\"],\"status\":\"unverified\"}\n" +
+		"{\"kind\":\"verdict\",\"finding\":\"F-001\",\"verdict\":\"confirm\",\"at\":\"2026-07-17\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(md, "**F-001**") {
+		t.Fatalf("finding with an unrecognised verdict vanished from the report:\n%s", md)
+	}
+	if !strings.Contains(md, "### Unverified (1)") {
+		t.Fatalf("finding with an unrecognised verdict should fall back to Unverified:\n%s", md)
+	}
+}
+
 func findingLines(t *testing.T, dir string) []string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))

@@ -120,5 +120,9 @@ validation boundary; every field below is checked, and `status` is forced to
 ```
 
 Effective status: every finding starts `unverified`; verdict records apply in
-file order and the last one for a finding wins. Design and rationale:
+file order and the last one for a finding wins. A verdict whose `verdict` value
+is outside the closed enum (a typo, an empty string, or a foreign value in a
+shared session) is ignored, so its finding keeps `unverified` and still appears
+in the report and review queue rather than vanishing into an unrendered group.
+Design and rationale:
 [`../01-product/04-analysis.md`](../01-product/04-analysis.md).

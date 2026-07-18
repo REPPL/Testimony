@@ -60,7 +60,7 @@ func Run(addr, outRoot string) error {
 	fmt.Printf(`testimony demo — capture session started
 
   session dir : %s
-  url         : http://localhost%s
+  url         : %s
 
   1. Start your voice/screen recorder NOW (QuickTime → File → New Audio Recording).
   2. Say “session start” aloud, open the URL, and think aloud while you explore.
@@ -70,7 +70,7 @@ func Run(addr, outRoot string) error {
        testimony merge      -session %s
        testimony report     -session %s
 
-`, dir, addr, dir, dir, dir)
+`, dir, DisplayURL(addr), dir, dir, dir)
 
 	// Block until interrupted, then shut the server down cleanly.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -175,8 +175,17 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, l := range lines {
-		f.Write(l)
-		f.Write([]byte("\n"))
+		// Write the record and its terminating newline as a single buffer: a
+		// partial write (e.g. ENOSPC) can then never land a data line without
+		// its newline, which would join to the next successful write and produce
+		// one malformed physical line that later fails merge's JSONL reader.
+		if _, err := f.Write(append(l, '\n')); err != nil {
+			// The capture was not persisted; tell the client so it does not treat
+			// a dropped event as recorded, rather than answering 204 as if it had
+			// succeeded.
+			http.Error(w, "capture write failed", http.StatusInternalServerError)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -249,6 +258,24 @@ func isJSONContentType(ct string) bool {
 // are not published to the LAN even though the banner prints "localhost". An
 // operator who deliberately wants a wider bind can still pass an explicit host
 // (e.g. "0.0.0.0:8737").
+// DisplayURL renders the human-facing URL an operator opens for a capture
+// server bound to addr. It shows "localhost" only for the host-less default
+// (":8737" -> http://localhost:8737); when an operator passes an explicit host
+// for a wider bind (e.g. "0.0.0.0:8737") it shows that host, so the printed URL
+// is never the broken "http://localhost0.0.0.0:8737" that raw concatenation of
+// addr after the "localhost" literal produced. Shared by demo.Run and
+// record.printStatus.
+func DisplayURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://localhost" + addr // malformed addr: preserve the old form
+	}
+	if host == "" {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
 func listenAddr(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {

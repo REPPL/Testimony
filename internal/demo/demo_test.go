@@ -125,6 +125,44 @@ func TestBatchCompactsEmbeddedNewline(t *testing.T) {
 	}
 }
 
+// TestAppendLinesReportsWriteError is the dropped-write regression: when the
+// append to a stream file fails, the handler must not answer 204 (which tells the
+// browser the capture was persisted and stops it re-sending). Here the stream
+// file is closed underneath the server so its Write fails; the handler must
+// surface an error status instead of a silent 204.
+func TestAppendLinesReportsWriteError(t *testing.T) {
+	s, _ := newTestServer(t)
+	if err := s.interactions.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", "{\"t\":1,\"kind\":\"click\"}", nil))
+	if w.Code == http.StatusNoContent {
+		t.Fatalf("a failed capture write returned 204; want an error status")
+	}
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+}
+
+// TestDisplayURL pins the human-facing URL: "localhost" only for the host-less
+// default, and the real host otherwise, never the broken "localhost0.0.0.0:8737"
+// that concatenating a full -addr after the "localhost" literal produced.
+func TestDisplayURL(t *testing.T) {
+	cases := map[string]string{
+		":8737":          "http://localhost:8737",
+		"0.0.0.0:8737":   "http://0.0.0.0:8737",
+		"127.0.0.1:8737": "http://127.0.0.1:8737",
+		"[::1]:8737":     "http://[::1]:8737",
+	}
+	for in, want := range cases {
+		if got := DisplayURL(in); got != want {
+			t.Errorf("DisplayURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestWriteEndpointGuard covers the CSRF / DNS-rebinding surface: a request must
 // carry a JSON Content-Type, a loopback Host, and (when present) a same-origin
 // Origin. A rejected request must write nothing.

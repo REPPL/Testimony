@@ -285,7 +285,7 @@ func printStatus(log io.Writer, recorders []string, demoOn bool, addr string) {
 		fmt.Fprintf(log, "  recording   : %s\n", strings.Join(recorders, ", "))
 	}
 	if demoOn {
-		fmt.Fprintf(log, "  demo url    : http://localhost%s\n", addr)
+		fmt.Fprintf(log, "  demo url    : %s\n", demo.DisplayURL(addr))
 	}
 	fmt.Fprint(log, "\n  Say “session start” aloud, then think aloud while you work.\n")
 	fmt.Fprint(log, "  Press Ctrl+C to stop.\n")
