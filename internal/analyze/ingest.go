@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -59,6 +60,13 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 	}
 	if rubric != "" && !knownRubrics[rubric] {
 		return nil, fmt.Errorf("unknown rubric %q (expected %s)", rubric, RubricVersion)
+	}
+	// An empty findings array (a bare `[]`, `{"findings":[]}`, or a truncated
+	// answer file) is a no-op, not a truncating write: the write below opens with
+	// O_TRUNC, so proceeding would erase a prior good findings.jsonl and report
+	// success. Refuse it, mirroring the verdict-overwrite guard.
+	if len(raws) == 0 {
+		return nil, fmt.Errorf("answer contains no findings; refusing to overwrite %s", session.FindingsFile)
 	}
 
 	var (
@@ -141,14 +149,42 @@ func decodeFinding(raw json.RawMessage) (Finding, error) {
 }
 
 // holdsVerdicts reports whether an existing findings.jsonl already contains any
-// verdict record. A missing file is not an error (false, nil).
+// verdict record. A missing file is not an error (false, nil). It scans for raw
+// kind:"verdict" lines rather than reusing analyze.Load, whose verdict slice is
+// filtered to the closed enum (confirmed|rejected|duplicate): a hand-edited or
+// shared file whose only verdict lines carry a foreign or typo'd value would
+// otherwise slip past the guard and have its human-decision records truncated by
+// a re-ingest — exactly the precision history the guard exists to protect.
 func holdsVerdicts(dir string) (bool, error) {
-	_, verdicts, err := Load(dir)
+	path := filepath.Join(dir, session.FindingsFile)
+	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}
 		return false, err
 	}
-	return len(verdicts) > 0, nil
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		raw := sc.Bytes()
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		var probe struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			return false, fmt.Errorf("%s: %w", path, err)
+		}
+		if probe.Kind == "verdict" {
+			return true, nil
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
+	return false, nil
 }

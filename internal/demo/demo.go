@@ -174,20 +174,45 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, l := range lines {
-		// Write the record and its terminating newline as a single buffer: a
-		// partial write (e.g. ENOSPC) can then never land a data line without
-		// its newline, which would join to the next successful write and produce
-		// one malformed physical line that later fails merge's JSONL reader.
-		if _, err := f.Write(append(l, '\n')); err != nil {
-			// The capture was not persisted; tell the client so it does not treat
-			// a dropped event as recorded, rather than answering 204 as if it had
-			// succeeded.
-			http.Error(w, "capture write failed", http.StatusInternalServerError)
-			return
-		}
+	if err := appendRecords(f, lines); err != nil {
+		// The capture was not persisted; tell the client so it does not treat a
+		// dropped event as recorded, rather than answering 204 as if it had
+		// succeeded.
+		http.Error(w, "capture write failed", http.StatusInternalServerError)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// appendFile is the subset of *os.File that appendRecords needs; a fake
+// satisfies it in tests to exercise the partial-write rollback.
+type appendFile interface {
+	io.Writer
+	Seek(offset int64, whence int) (int64, error)
+	Truncate(size int64) error
+}
+
+// appendRecords writes each line and its terminating newline to f. os.File.Write
+// gives no atomicity guarantee: a full disk fills the remaining space and returns
+// a short count, so a bare Write can persist a truncated, newline-less prefix
+// (e.g. `{"t":123,"kind":"cl`) before ENOSPC surfaces. That partial line would
+// join the next successful write into one malformed physical record and break
+// the JSONL reader for the whole file. So on any write error appendRecords
+// truncates f back to the length it had before the failing write, so no partial
+// line survives — the caller only reports the drop, the file stays clean.
+func appendRecords(f appendFile, lines [][]byte) error {
+	for _, l := range lines {
+		before, err := f.Seek(0, io.SeekEnd)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(append(l, '\n')); err != nil {
+			// Best-effort roll back any partial bytes; surface the original error.
+			f.Truncate(before)
+			return err
+		}
+	}
+	return nil
 }
 
 // compactLine canonicalises one accepted JSON value into a single newline-free

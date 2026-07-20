@@ -3,6 +3,7 @@ package timeline
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/REPPL/Testimony/internal/session"
@@ -71,6 +72,30 @@ func TestMergeAudioOnlySession(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, session.TimelineFile)); err != nil {
 		t.Fatalf("timeline.jsonl not written: %v", err)
+	}
+}
+
+// TestMergeRejectsMissingT0WithInteractions is the missing-anchor regression: a
+// session with interactions.jsonl but a manifest lacking t0_epoch_ms cannot place
+// those epoch-ms interaction times on the session clock. Pre-fix Merge used the
+// zero-value t0 (0), turning each epoch-ms timestamp into a ~55-year offset and
+// writing a silently corrupt timeline while exiting 0. Merge must reject it.
+func TestMergeRejectsMissingT0WithInteractions(t *testing.T) {
+	dir := t.TempDir()
+	// Manifest without t0_epoch_ms (left at the zero value).
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	ints := []Interaction{{T: t0 + 9_500, Kind: "click", Selector: "[data-testid=save-btn]"}}
+	if err := session.WriteJSONL(filepath.Join(dir, session.InteractionsFile), ints); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+	if _, _, err := Merge(dir); err == nil || !strings.Contains(err.Error(), "t0_epoch_ms") {
+		t.Fatalf("expected a missing-t0 error, got %v", err)
+	}
+	// The corrupt timeline must not have been written.
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the missing t0")
 	}
 }
 

@@ -89,7 +89,7 @@ validation boundary; every field below is checked, and `status` is forced to
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `id` | string | yes | `^F-\d{3}$` (F-NNN, zero-padded); unique within the file |
-| `t` | float64 | yes | finding time, session-relative seconds; `0 ≤ t ≤ sessionEnd` |
+| `t` | float64 | yes | finding time, session-relative seconds; `sessionStart ≤ t ≤ sessionEnd`, where the bounds are the earliest and latest entry times in `timeline.jsonl` and `sessionStart` is `0` unless the timeline holds negative-time utterances (a recording predating `t0`) |
 | `type` | string | yes | one of `bug \| friction \| inconsistency \| preference \| idea` |
 | `severity` | int | yes | Nielsen-style `1..4` (cosmetic, minor, major, blocker) |
 | `mode` | string | no | `A \| B`, default `A`; only Mode A is produced in this slice |
