@@ -36,14 +36,19 @@ import (
 
 // stopGrace is how long each recorder is given to finalise its container after
 // SIGINT before it is escalated to SIGKILL.
-const stopGrace = 5 * time.Second
+//
+// stopGrace and startupWindow are vars rather than consts only so the lifecycle
+// tests can shrink them: exercising the interaction between the stop path and
+// the start-up classification otherwise costs five seconds of wall clock per
+// assertion. Production never reassigns them.
+var stopGrace = 5 * time.Second
 
 // startupWindow bounds how soon after a recorder starts an exit is still
 // treated as a start-up failure (e.g. a TCC denial, which fails within a
 // second or two). A recorder that ran longer than this before exiting cannot
 // be a start-up denial, so it is reported as an unexpected mid-session stop
 // rather than mislabelled as a permissions problem.
-const startupWindow = 5 * time.Second
+var startupWindow = 5 * time.Second
 
 // Test seams: overridden in tests to drive the lifecycle without installing a
 // real signal handler or spawning ffmpeg. In production they are the real
@@ -161,11 +166,19 @@ func Run(opts Options) error {
 		// window this is most often a TCC denial; a later exit is an unexpected
 		// mid-session stop (e.g. a device disconnect). Stop the rest and report
 		// actionably, letting the classifier decide the phrasing.
+		//
+		// The classification is sampled HERE, at the moment the exit is observed,
+		// and only used after the stopping work. Measuring it after stopAll
+		// charged the shutdown against the recorder's lifetime: stopAll blocks up
+		// to stopGrace per remaining child, which alone equals startupWindow, so a
+		// genuine TCC denial that failed in the first second was reported as an
+		// unexpected mid-session stop and the operator was sent looking for a
+		// device fault instead of the permission they had never granted.
+		atStartup := time.Since(dead.started) < startupWindow
 		stopAll(children)
 		if srv != nil {
 			_ = srv.Shutdown(context.Background())
 		}
-		atStartup := time.Since(dead.started) < startupWindow
 		return errors.New(classifyRecorderExit(dead.stream, dead.err, dead.stderr.tail(), atStartup))
 	}
 
@@ -219,6 +232,33 @@ func expectedOutput(dir, stream string) string {
 	return filepath.Join(dir, session.AudioFile)
 }
 
+// checkPlainOutput refuses an ffmpeg output path that already exists as anything
+// other than a regular file. ffmpeg is handed the path as a string and told to
+// overwrite it with -y, so it is the one write in this codebase that cannot go
+// through session.OpenFileNoFollow — and it follows a symlink at the final
+// component exactly as OpenFileNoFollow's doc comment warns. A session directory
+// is an exchange unit: a symlink pre-planted at sessions/<ts>/audio.wav would
+// silently redirect the whole recording outside the session, overwriting an
+// arbitrary file the operator never named. os.Lstat does not resolve the link,
+// so a symlink is reported with ModeSymlink set even when its target is missing.
+// An absent path is fine — that is the ordinary case, and ffmpeg creates it.
+func checkPlainOutput(path string) error {
+	fi, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to write %s: it is a symlink", path)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing to write %s: it is not a regular file", path)
+	}
+	return nil
+}
+
 // startRecorders resolves the ffmpeg binary and device indices, then starts one
 // ffmpeg subprocess per requested stream, each in its own process group with
 // captured stderr. On darwin the streams are non-empty; elsewhere they are, so
@@ -238,12 +278,17 @@ func startRecorders(dir string, streams []string) ([]*liveChild, error) {
 
 	var children []*liveChild
 	for _, stream := range streams {
+		out := expectedOutput(dir, stream)
+		if err := checkPlainOutput(out); err != nil {
+			stopAll(children)
+			return nil, err
+		}
 		var args []string
 		switch stream {
 		case streamMicrophone:
-			args = micArgs(micIndex, expectedOutput(dir, stream))
+			args = micArgs(micIndex, out)
 		case streamScreen:
-			args = screenArgs(screenIndex, expectedOutput(dir, stream))
+			args = screenArgs(screenIndex, out)
 		}
 		cmd := exec.Command(ffmpeg, args...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

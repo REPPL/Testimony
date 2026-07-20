@@ -119,6 +119,57 @@ func TestReportKeepsFindingWithUnknownVerdict(t *testing.T) {
 	}
 }
 
+// TestReportAttachesEventsPerUtteranceWithoutIDs is the duplicated-events
+// regression. timeline.Merge copies a transcript's id verbatim into Entry.ID and
+// never validates it, so a transcript whose lines omit "id" — or repeats one —
+// yields several utterances sharing an ID. Pre-fix the attachment map was keyed
+// by that ID, so all such utterances shared a single bucket and each of them
+// rendered every event attached to any of them: here three id-less utterances
+// and three clicks produced nine event lines instead of three. Each event must
+// appear exactly once, under the utterance whose window actually contains it.
+func TestReportAttachesEventsPerUtteranceWithoutIDs(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: "app", Participant: "Alice"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// Three utterances at 1/10/20 s, each with an empty id, and one click just
+	// after each of them.
+	tl := `{"t":1,"src":"speech","id":"","payload":{"speaker":"Alice","t1":3,"text":"first"}}
+{"t":2,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"one"}}
+{"t":10,"src":"speech","id":"","payload":{"speaker":"Alice","t1":12,"text":"second"}}
+{"t":11,"src":"event","id":"ev-002","payload":{"kind":"click","selector":"two"}}
+{"t":20,"src":"speech","id":"","payload":{"speaker":"Alice","t1":22,"text":"third"}}
+{"t":21,"src":"event","id":"ev-003","payload":{"kind":"click","selector":"three"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, sel := range []string{"`one`", "`two`", "`three`"} {
+		if n := strings.Count(md, sel); n != 1 {
+			t.Fatalf("event %s rendered %d times, want 1:\n%s", sel, n, md)
+		}
+	}
+	// Each event sits under its own utterance: the selector follows its speech
+	// line and precedes the next one.
+	for _, pair := range [][2]string{{"first", "`one`"}, {"second", "`two`"}, {"third", "`three`"}} {
+		utt, sel := strings.Index(md, pair[0]), strings.Index(md, pair[1])
+		if utt < 0 || sel < utt {
+			t.Fatalf("event %s is not attached under utterance %q:\n%s", pair[1], pair[0], md)
+		}
+	}
+	if strings.Index(md, "`one`") > strings.Index(md, "second") {
+		t.Fatalf("first event drifted past the second utterance:\n%s", md)
+	}
+	if strings.Index(md, "`two`") > strings.Index(md, "third") {
+		t.Fatalf("second event drifted past the third utterance:\n%s", md)
+	}
+}
+
 func findingLines(t *testing.T, dir string) []string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))

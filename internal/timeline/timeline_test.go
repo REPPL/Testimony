@@ -3,6 +3,7 @@ package timeline
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -96,6 +97,85 @@ func TestMergeRejectsMissingT0WithInteractions(t *testing.T) {
 	// The corrupt timeline must not have been written.
 	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
 		t.Fatalf("timeline.jsonl was written despite the missing t0")
+	}
+}
+
+// TestMergeRejectsInteractionMissingT is the phantom-event regression: an
+// interactions.jsonl line with no "t" used to decode leniently to the zero value
+// 0, which BuildEntries turned into a relative time of about minus fifty-six
+// years. Pre-fix Merge counted that record and the report rendered it at 00:00,
+// so a malformed capture line silently became an event at the very start of the
+// evidence record. Merge must refuse the session and name the offending line.
+func TestMergeRejectsInteractionMissingT(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// The second record is the malformed one: a click with no "t".
+	lines := "" +
+		`{"t":` + strconv.FormatInt(t0+9_500, 10) + `,"kind":"click","selector":"[data-testid=save-btn]"}` + "\n" +
+		`{"kind":"click","selector":"[data-testid=tab-appearance]"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.InteractionsFile), []byte(lines), 0o644); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+
+	_, _, err := Merge(dir)
+	if err == nil {
+		t.Fatalf("expected a missing-t error, got nil")
+	}
+	if !strings.Contains(err.Error(), "interaction 2") || !strings.Contains(err.Error(), "missing t") {
+		t.Fatalf("error should name the offending line and field, got %v", err)
+	}
+	// The timeline carrying the phantom event must not have been written.
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the malformed interaction")
+	}
+}
+
+// TestMergeRejectsInteractionMissingKind covers the other field
+// docs/reference/session-directory.md marks required: an interaction with no
+// kind would join the timeline naming no observed action, so Merge refuses it.
+func TestMergeRejectsInteractionMissingKind(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	line := `{"t":` + strconv.FormatInt(t0+9_500, 10) + `,"selector":"[data-testid=save-btn]"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.InteractionsFile), []byte(line), 0o644); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+	if _, _, err := Merge(dir); err == nil || !strings.Contains(err.Error(), "missing kind") {
+		t.Fatalf("expected a missing-kind error, got %v", err)
+	}
+}
+
+// TestMergeAcceptsInteractionAtT0 guards the other half of the required-field
+// check: an interaction captured at exactly t0 has a relative time of 0, which a
+// value-typed decode cannot distinguish from an absent "t". Alice clicking the
+// moment capture starts is legitimate evidence and must still merge.
+func TestMergeAcceptsInteractionAtT0(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	line := `{"t":` + strconv.FormatInt(t0, 10) + `,"kind":"click","selector":"[data-testid=start]"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.InteractionsFile), []byte(line), 0o644); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+
+	speech, events, err := Merge(dir)
+	if err != nil {
+		t.Fatalf("Merge with an interaction at t0: %v", err)
+	}
+	if speech != 0 || events != 1 {
+		t.Fatalf("want speech=0 events=1, got speech=%d events=%d", speech, events)
+	}
+	entries, err := session.ReadJSONL[Entry](filepath.Join(dir, session.TimelineFile))
+	if err != nil {
+		t.Fatalf("read timeline: %v", err)
+	}
+	if len(entries) != 1 || entries[0].T != 0 {
+		t.Fatalf("want a single event at t=0, got %+v", entries)
 	}
 }
 

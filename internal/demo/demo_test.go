@@ -70,9 +70,75 @@ func TestListenAddrDefaultsToLoopback(t *testing.T) {
 		"192.168.1.5:8737": "192.168.1.5:8737",
 	}
 	for in, want := range cases {
-		if got := listenAddr(in); got != want {
+		got, err := listenAddr(in)
+		if err != nil {
+			t.Errorf("listenAddr(%q) returned an error: %v", in, err)
+			continue
+		}
+		if got != want {
 			t.Errorf("listenAddr(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestListenAddrRejectsUnparseableAddr is the bind-everywhere regression: an
+// addr that does not parse into host and port must be refused, never handed on
+// to net.Listen. Pre-fix listenAddr returned such an addr unchanged, so an empty
+// -addr reached net.Listen("tcp", "") and bound the unauthenticated capture
+// write endpoints on every interface — the exact outcome the loopback default
+// exists to prevent.
+func TestListenAddrRejectsUnparseableAddr(t *testing.T) {
+	for _, in := range []string{"", "8737", "localhost", "127.0.0.1"} {
+		got, err := listenAddr(in)
+		if err == nil {
+			t.Errorf("listenAddr(%q) = %q with no error; want a refusal", in, got)
+		}
+		if got != "" {
+			t.Errorf("listenAddr(%q) returned %q alongside its error; want no address", in, got)
+		}
+	}
+}
+
+// TestServeRefusesUnparseableAddr proves the refusal reaches the capture server:
+// Serve must not bind at all for an empty addr, and must not leave stream files
+// behind in the session directory for a session it never served.
+func TestServeRefusesUnparseableAddr(t *testing.T) {
+	dir := t.TempDir()
+	srv, err := Serve("", dir)
+	if err == nil {
+		Shutdown(srv)
+		t.Fatal("Serve accepted an empty addr; want a refusal rather than a bind on every interface")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.InteractionsFile)); !os.IsNotExist(statErr) {
+		t.Fatalf("Serve left a stream file behind for a refused addr: %v", statErr)
+	}
+}
+
+// TestServeBoundsRequestTimeouts is the Ctrl+C-hang regression: the capture
+// server must give every request phase a finite budget. Pre-fix it was built
+// with none, so a single client that opened a connection and then stalled kept
+// it alive for ever and the shutdown waited on it, leaving 'testimony record'
+// hanging after Ctrl+C instead of finalising the session.
+func TestServeBoundsRequestTimeouts(t *testing.T) {
+	srv, err := Serve(":0", t.TempDir())
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	defer Shutdown(srv)
+
+	if srv.ReadHeaderTimeout <= 0 {
+		t.Errorf("ReadHeaderTimeout = %v, want a bounded budget", srv.ReadHeaderTimeout)
+	}
+	if srv.ReadTimeout <= 0 {
+		t.Errorf("ReadTimeout = %v, want a bounded budget", srv.ReadTimeout)
+	}
+	if srv.IdleTimeout <= 0 {
+		t.Errorf("IdleTimeout = %v, want a bounded budget", srv.IdleTimeout)
+	}
+	// A request must still be allowed to carry the largest batch the endpoint
+	// accepts, so the budget cannot be so tight that it refuses honest capture.
+	if srv.ReadTimeout < srv.ReadHeaderTimeout {
+		t.Errorf("ReadTimeout %v is shorter than ReadHeaderTimeout %v", srv.ReadTimeout, srv.ReadHeaderTimeout)
 	}
 }
 
@@ -255,6 +321,94 @@ func TestWriteEndpointGuard(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// jsonRecordOfSize builds a single valid, whitespace-free interaction JSON
+// object of exactly n bytes, padding its text field. Because it carries no
+// insignificant whitespace, json.Compact leaves it byte-for-byte, so its stored
+// line length is exactly n.
+func jsonRecordOfSize(t *testing.T, n int) string {
+	t.Helper()
+	const prefix = `{"t":1,"kind":"click","text":"`
+	const suffix = `"}`
+	if n < len(prefix)+len(suffix) {
+		t.Fatalf("cannot build a %d-byte record: the envelope alone is %d bytes", n, len(prefix)+len(suffix))
+	}
+	return prefix + strings.Repeat("a", n-len(prefix)-len(suffix)) + suffix
+}
+
+// TestOversizedInteractionIsRefusedNotPersisted is the unreadable-record
+// regression: the write side must honour the read side's session.MaxJSONLLine
+// invariant. Pre-fix the endpoint accepted a body up to 8 MiB and wrote it as
+// one JSONL line, so a record between 4 and 8 MiB was durably persisted and then
+// permanently unreadable — merge, report and analyze all failed for that session
+// with no way to recover it. Such a record must be refused with 413 and nothing
+// must reach the stream file.
+func TestOversizedInteractionIsRefusedNotPersisted(t *testing.T) {
+	cases := map[string]string{
+		// Between the old 8 MiB body cap and the readers' 4 MiB line limit: the
+		// size that used to be accepted and corrupt the session.
+		"over the body cap": jsonRecordOfSize(t, 6<<20),
+		// Exactly the line limit: the terminating newline pushes the physical line
+		// one byte past what the readers can scan back, so it too must be refused.
+		"line limit plus newline": jsonRecordOfSize(t, session.MaxJSONLLine),
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, dir := newTestServer(t)
+			w := httptest.NewRecorder()
+			s.handleInteraction(w, jsonPost("/api/interactions", body, nil))
+
+			if w.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want 413", w.Code)
+			}
+			if lines := fileLines(t, filepath.Join(dir, session.InteractionsFile)); len(lines) != 0 {
+				t.Fatalf("refused record still wrote %d lines of %d bytes", len(lines), len(lines[0]))
+			}
+			if _, err := session.ReadJSONL[map[string]any](filepath.Join(dir, session.InteractionsFile)); err != nil {
+				t.Fatalf("ReadJSONL on the stream file failed after a refusal: %v", err)
+			}
+		})
+	}
+}
+
+// TestAcceptedInteractionStaysReadable pins the other side of the limit: a
+// record just inside it is still accepted and can be read straight back by the
+// same reader merge uses, so the refusal above is not simply refusing
+// everything large.
+func TestAcceptedInteractionStaysReadable(t *testing.T) {
+	s, dir := newTestServer(t)
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", jsonRecordOfSize(t, session.MaxJSONLLine-1), nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	got, err := session.ReadJSONL[map[string]any](filepath.Join(dir, session.InteractionsFile))
+	if err != nil {
+		t.Fatalf("ReadJSONL on an accepted record failed: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("read back %d records, want 1", len(got))
+	}
+}
+
+// TestOversizedBatchRecordIsRefusedWhole is the same invariant on the batch
+// path, where a batch may legitimately be larger than one record: a batch whose
+// records are individually fine except for one over-long element must be refused
+// entirely. Persisting the good records first and then the unreadable one would
+// still leave the reader unable to scan past it.
+func TestOversizedBatchRecordIsRefusedWhole(t *testing.T) {
+	s, dir := newTestServer(t)
+	body := "[" + `{"a":1}` + "," + jsonRecordOfSize(t, session.MaxJSONLLine) + "]"
+
+	w := httptest.NewRecorder()
+	s.handleRawEvents(w, jsonPost("/api/events", body, nil))
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", w.Code)
+	}
+	if lines := fileLines(t, filepath.Join(dir, session.RawEventsFile)); len(lines) != 0 {
+		t.Fatalf("refused batch persisted %d lines, want none", len(lines))
 	}
 }
 

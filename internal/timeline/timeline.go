@@ -42,6 +42,21 @@ type Interaction struct {
 	Route    string `json:"route,omitempty"`
 }
 
+// rawInteraction is how an interactions.jsonl record is decoded before it is
+// trusted. Its T is a pointer so that an absent "t" stays distinguishable from a
+// genuine 0: an interaction captured at exactly t0 legitimately carries t equal
+// to the anchor, so a value-typed field cannot tell the two apart and a
+// required-field check on it would either reject honest records or admit
+// malformed ones. Everything else mirrors Interaction.
+type rawInteraction struct {
+	T        *int64 `json:"t"`
+	Kind     string `json:"kind"`
+	Selector string `json:"selector,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Route    string `json:"route,omitempty"`
+}
+
 // Entry is one line of timeline.jsonl: a speech or event item on the shared
 // session-relative clock.
 type Entry struct {
@@ -140,6 +155,39 @@ func readOptionalJSONL[T any](path string) ([]T, error) {
 	return out, err
 }
 
+// checkedInteractions enforces the two fields that
+// docs/reference/session-directory.md marks required on an interaction — t and
+// kind — and converts the accepted records for BuildEntries. Without the check a
+// record missing "t" decodes leniently to the zero value 0, which BuildEntries
+// turns into a relative time of (0 - t0)/1000: for a real anchor that is roughly
+// minus fifty-six years. Merge would still count the event and the report would
+// render it at the top of the timeline, so one malformed capture line would
+// silently plant a phantom event at the very start of the evidence record — the
+// least visible place for a fabrication to sit. A record with no kind is refused
+// for the same reason: it would join the timeline naming no observed action.
+// Refusing the whole merge names the offending line so the operator repairs the
+// capture instead of reading a corrupted account of the session.
+func checkedInteractions(path string, raw []rawInteraction) ([]Interaction, error) {
+	out := make([]Interaction, 0, len(raw))
+	for i, r := range raw {
+		if r.T == nil {
+			return nil, fmt.Errorf("%s: interaction %d is missing t; cannot place it on the session clock", path, i+1)
+		}
+		if r.Kind == "" {
+			return nil, fmt.Errorf("%s: interaction %d is missing kind; an event must name what happened", path, i+1)
+		}
+		out = append(out, Interaction{
+			T:        *r.T,
+			Kind:     r.Kind,
+			Selector: r.Selector,
+			Text:     r.Text,
+			Value:    r.Value,
+			Route:    r.Route,
+		})
+	}
+	return out, nil
+}
+
 // Merge reads manifest, transcript and interactions from dir, writes
 // timeline.jsonl, and returns the number of speech and event entries.
 func Merge(dir string) (speech, events int, err error) {
@@ -151,7 +199,8 @@ func Merge(dir string) (speech, events int, err error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("read transcript: %w", err)
 	}
-	ints, err := readOptionalJSONL[Interaction](filepath.Join(dir, session.InteractionsFile))
+	intsPath := filepath.Join(dir, session.InteractionsFile)
+	raw, err := readOptionalJSONL[rawInteraction](intsPath)
 	if err != nil {
 		return 0, 0, fmt.Errorf("read interactions: %w", err)
 	}
@@ -162,8 +211,13 @@ func Merge(dir string) (speech, events int, err error) {
 	// and write a silently corrupt timeline. Reject it rather than emit nonsense.
 	// A transcript-only session carries no interactions and is already
 	// session-relative, so it is unaffected.
-	if len(ints) > 0 && man.T0EpochMS == 0 {
+	if len(raw) > 0 && man.T0EpochMS == 0 {
 		return 0, 0, fmt.Errorf("manifest is missing t0_epoch_ms; cannot place interactions on the session clock")
+	}
+
+	ints, err := checkedInteractions(intsPath, raw)
+	if err != nil {
+		return 0, 0, err
 	}
 
 	entries := BuildEntries(man.T0EpochMS, utts, ints)

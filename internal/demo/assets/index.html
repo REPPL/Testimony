@@ -161,7 +161,17 @@
     if (extra) for (var k in extra) payload[k] = extra[k];
     post("/api/interactions", payload);
   }
-  document.addEventListener("click", function (e) { interaction("click", e.target); }, true);
+  // Only a real user gesture is evidence. The switch sliders forward their click
+  // to the hidden checkbox with el.click(), which re-enters this same capture
+  // listener, so one toggle of the notification switch was recorded as two click
+  // interactions and inflated the captured evidence. Untrusted (script-made)
+  // events are ignored, which also guards any synthetic click added later; the
+  // operator's own click on the slider is trusted and still captured exactly
+  // once, and the resulting change event is captured by the listener below.
+  document.addEventListener("click", function (e) {
+    if (!e.isTrusted) return;
+    interaction("click", e.target);
+  }, true);
   document.addEventListener("change", function (e) {
     var el = e.target;
     var value = el.type === "checkbox" ? String(el.checked) : String(el.value).slice(0, 80);

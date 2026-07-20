@@ -69,9 +69,15 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 		return nil, fmt.Errorf("answer contains no findings; refusing to overwrite %s", session.FindingsFile)
 	}
 
+	// Undecodable elements are dropped before validation, so the surviving slice
+	// no longer aligns with the answer. Each survivor therefore carries the
+	// position it held in the answer, and validate labels from that: otherwise a
+	// failure in the third finding of an answer whose second one was undecodable
+	// would be reported as "finding #2" — an index into a filtered slice the
+	// operator never sees, pointing them at the wrong finding to fix.
 	var (
-		findings []Finding
-		errs     []error
+		decoded []positioned
+		errs    []error
 	)
 	for i, raw := range raws {
 		f, derr := decodeFinding(raw)
@@ -79,11 +85,16 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 			errs = append(errs, fmt.Errorf("finding #%d: %v", i+1, derr))
 			continue
 		}
-		findings = append(findings, f)
+		decoded = append(decoded, positioned{finding: f, at: i + 1})
 	}
-	errs = append(errs, validate(findings, idx)...)
+	errs = append(errs, validate(decoded, idx)...)
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
+	}
+
+	findings := make([]Finding, len(decoded))
+	for i, p := range decoded {
+		findings[i] = p.finding
 	}
 
 	if held, err := holdsVerdicts(dir); err != nil {

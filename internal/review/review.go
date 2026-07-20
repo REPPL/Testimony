@@ -80,6 +80,17 @@ func single(opts Options, findings []analyze.Finding) error {
 	return nil
 }
 
+// errPersist marks an error that arose while writing a verdict to disk, as
+// distinct from the validation errors the walk raises for an unrecognised
+// keystroke or a bad duplicate target. The walk must be able to tell them
+// apart: a validation error is a genuine retry situation and is printed as a
+// hint, whereas a failed append means the human's decision — the precision
+// evidence the method stands on — never reached findings.jsonl. Conflating the
+// two let `testimony review` print a retry hint and exit 0 while silently
+// losing the verdict, so anything wrapping this sentinel aborts the walk and
+// propagates to the CLI's non-zero exit.
+var errPersist = errors.New("recording the verdict failed")
+
 // walk interactively judges each unverified finding in id order.
 func walk(opts Options, findings []analyze.Finding, verdicts []analyze.Verdict) error {
 	eff := analyze.EffectiveStatus(findings, verdicts)
@@ -108,6 +119,14 @@ func walk(opts Options, findings []analyze.Finding, verdicts []analyze.Verdict) 
 			}
 			done, quit, verr := applyChoice(opts, findings, f, choice, r)
 			if verr != nil {
+				// Only an invalid choice or an invalid duplicate target is
+				// worth re-prompting for; a persistence failure is not
+				// something the analyst can retype their way out of, and
+				// swallowing it here would end the run successfully with the
+				// verdict lost.
+				if errors.Is(verr, errPersist) {
+					return verr
+				}
 				fmt.Fprintf(opts.Out, "  %v\n", verr)
 				continue
 			}
@@ -156,7 +175,9 @@ func applyChoice(opts Options, findings []analyze.Finding, f analyze.Finding, ch
 
 func record(opts Options, rec analyze.Verdict) error {
 	if err := AppendVerdict(opts.Dir, rec); err != nil {
-		return err
+		// Wrapped so walk can distinguish a lost verdict from a mistyped
+		// keystroke; see errPersist.
+		return fmt.Errorf("%w: %v", errPersist, err)
 	}
 	fmt.Fprintf(opts.Out, "  %s\n", describe(rec))
 	return nil
@@ -206,11 +227,37 @@ func AppendVerdict(dir string, v analyze.Verdict) error {
 		return err
 	}
 	path := filepath.Join(dir, session.FindingsFile)
-	f, err := session.OpenFileNoFollow(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	// O_RDWR rather than O_WRONLY because the record cannot be framed correctly
+	// without first reading the byte already at the end of the file.
+	f, err := session.OpenFileNoFollow(path, os.O_APPEND|os.O_RDWR, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(append(b, '\n')); err != nil {
+	rec := append(b, '\n')
+	// A findings.jsonl need not end in a newline: it may have been hand edited,
+	// produced by another tool, or left short by a crash part-way through an
+	// earlier write. Appending blindly would fuse the verdict onto that
+	// unterminated final line, producing one physical line holding two JSON
+	// objects — which makes not just those two records but the entire file
+	// unparseable to every reader. So probe the last byte and open a fresh line
+	// when it is not already one. (O_APPEND still puts the write at the end,
+	// whatever the seek offset; the seek is only to learn the size.)
+	end, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if end > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], end-1); err != nil {
+			f.Close()
+			return err
+		}
+		if last[0] != '\n' {
+			rec = append([]byte{'\n'}, rec...)
+		}
+	}
+	if _, err := f.Write(rec); err != nil {
 		f.Close()
 		return err
 	}

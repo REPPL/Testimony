@@ -74,22 +74,47 @@ func indexTimeline(entries []timeline.Entry) timelineIndex {
 	return idx
 }
 
+// positioned pairs a decoded finding with at: its 1-based position in the
+// answer the operator actually wrote. The two differ whenever an earlier
+// element failed to decode, because Ingest drops those before validation; the
+// pairing is what lets an error say "finding #3" and mean the third finding in
+// the answer, which is the only index the operator can count to.
+type positioned struct {
+	finding Finding
+	at      int
+}
+
+// atPositions pairs each finding with its own ordinal, for callers (Validate)
+// whose findings did not come from a partially-decoded answer and so are
+// already in answer order.
+func atPositions(findings []Finding) []positioned {
+	out := make([]positioned, len(findings))
+	for i, f := range findings {
+		out[i] = positioned{finding: f, at: i + 1}
+	}
+	return out
+}
+
 // validate runs every schema rule against the decoded findings and returns all
 // errors (transactional and exhaustive), each naming the finding, the field,
-// and the offending value.
-func validate(findings []Finding, idx timelineIndex) []error {
+// and the offending value. Positional labels come from each finding's recorded
+// answer position, never from this loop's counter: an answer whose second
+// element failed to decode would otherwise have its third element reported as
+// "finding #2", sending the operator to edit the wrong one.
+func validate(findings []positioned, idx timelineIndex) []error {
 	var errs []error
 	seen := map[string]int{}
 
-	for i, f := range findings {
+	for _, p := range findings {
+		f := p.finding
 		label := f.ID
 		if !IsFindingID(label) {
-			label = fmt.Sprintf("finding #%d", i+1)
+			label = fmt.Sprintf("finding #%d", p.at)
 			errs = append(errs, fmt.Errorf("%s: id %q must match ^F-\\d{3}$", label, f.ID))
 		} else if prev, dup := seen[f.ID]; dup {
 			errs = append(errs, fmt.Errorf("%s: duplicate id (first seen at finding #%d)", f.ID, prev))
 		} else {
-			seen[f.ID] = i + 1
+			seen[f.ID] = p.at
 		}
 
 		// The floor is the earlier of 0 and the earliest entry start: a normal
@@ -166,7 +191,7 @@ func Validate(dir string, findings []Finding) error {
 	if err != nil {
 		return err
 	}
-	return errors.Join(validate(findings, indexTimeline(entries))...)
+	return errors.Join(validate(atPositions(findings), indexTimeline(entries))...)
 }
 
 func containsAny(texts []string, sub string) bool {

@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -326,6 +328,150 @@ func TestRunInstallsSignalHandlerBeforeSpawning(t *testing.T) {
 	want := []string{"notify", "spawn"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("signal handler must be installed before recorders spawn: got %v, want %v", got, want)
+	}
+}
+
+// TestRunClassifiesStartupExitDespiteSlowStop proves that a recorder which dies
+// inside the start-up window is still diagnosed as a permissions denial even
+// when the stop path that follows outlasts that window. The pre-fix code
+// computed the classification AFTER stopAll had run, so the elapsed time it
+// measured included the shutdown: stopAll blocks up to stopGrace per remaining
+// child, which alone equals startupWindow, and a genuine TCC denial that failed
+// in the first second was therefore reported as an unexpected mid-session stop.
+// The operator was sent hunting a device fault instead of granting the
+// microphone permission. Hermetic: no ffmpeg, no TTY, no real signal; the
+// timings are shrunk so the slow stop costs milliseconds.
+func TestRunClassifiesStartupExitDespiteSlowStop(t *testing.T) {
+	origNotify, origStart := notifyContext, startRecordersFn
+	origGrace, origWindow := stopGrace, startupWindow
+	t.Cleanup(func() {
+		notifyContext, startRecordersFn = origNotify, origStart
+		stopGrace, startupWindow = origGrace, origWindow
+	})
+
+	// The stop path must outlast the start-up window, which is the whole point:
+	// the stubborn screen recorder below ignores SIGINT and so burns the full
+	// grace before it is escalated.
+	startupWindow = 20 * time.Millisecond
+	stopGrace = 200 * time.Millisecond
+
+	// Never cancelled: Run must reach the recorder-exit branch, not the Ctrl+C one.
+	notifyContext = func() (context.Context, context.CancelFunc) {
+		return context.WithCancel(context.Background())
+	}
+
+	var stubborn *fakeProc
+	startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+		buf := &lockedBuffer{}
+		_, _ = buf.Write([]byte("[AVFoundation indev @ 0x0] Failed to open device\nInput/output error"))
+		// The microphone recorder is denied by TCC and dies at once — well inside
+		// the start-up window.
+		mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), buf)
+		_ = mic.p.Signal(syscall.SIGINT)
+
+		// A second recorder that ignores SIGINT, so stopAll blocks the full grace
+		// before escalating to SIGKILL — the delay that used to be charged against
+		// the microphone's lifetime.
+		stubborn = newFakeProc(syscall.SIGKILL)
+		return []*liveChild{mic, newLiveChild(streamScreen, stubborn, &lockedBuffer{})}, nil
+	}
+
+	err := Run(Options{Out: t.TempDir(), Participant: "Alice", GOOS: "darwin", Log: io.Discard})
+	if err == nil {
+		t.Fatal("a recorder exiting on its own must make Run exit non-zero")
+	}
+
+	msg := err.Error()
+	if !strings.Contains(msg, "Microphone") || !strings.Contains(msg, "permissions") {
+		t.Fatalf("an exit inside the start-up window must be diagnosed as a permissions denial, not a mid-session stop: %q", msg)
+	}
+	if !strings.Contains(msg, "Privacy & Security") {
+		t.Fatalf("the diagnosis must point at the settings pane: %q", msg)
+	}
+
+	// The stop path really did outlast the start-up window: the stubborn child was
+	// escalated, which only happens once the grace expired.
+	if got := stubborn.sent(); len(got) != 2 || got[1] != syscall.SIGKILL {
+		t.Fatalf("the stubborn recorder must have been escalated to SIGKILL, making the stop outlast the window: %v", got)
+	}
+}
+
+// TestCheckPlainOutputRefusesSymlink proves the recorder output guard. ffmpeg is
+// handed audio.wav/screen.mp4 as a path string with -y, so unlike every other
+// write in this codebase it cannot go through session.OpenFileNoFollow and will
+// happily follow a symlink at the final component. Pre-fix there was no guard at
+// all: a symlink pre-planted at sessions/<ts>/audio.wav redirected the entire
+// recording out of the session directory, overwriting a file the operator never
+// named. An absent path — the ordinary case — must still be allowed.
+func TestCheckPlainOutputRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+
+	// The ordinary case: nothing there yet, ffmpeg creates it.
+	if err := checkPlainOutput(filepath.Join(dir, session.AudioFile)); err != nil {
+		t.Fatalf("an absent output path must be allowed: %v", err)
+	}
+
+	// Re-recording over a previous plain audio.wav stays allowed.
+	plain := filepath.Join(dir, session.ScreenFile)
+	if err := os.WriteFile(plain, []byte("previous take"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPlainOutput(plain); err != nil {
+		t.Fatalf("an existing regular file must be allowed: %v", err)
+	}
+
+	// A symlink planted at the output path must be refused, and refused by name,
+	// even though its target does not exist — os.Lstat must not resolve it.
+	outside := filepath.Join(t.TempDir(), "elsewhere.wav")
+	planted := filepath.Join(dir, "planted.wav")
+	if err := os.Symlink(outside, planted); err != nil {
+		t.Fatal(err)
+	}
+	err := checkPlainOutput(planted)
+	if err == nil {
+		t.Fatal("a symlink at the recorder output path must be refused, not followed")
+	}
+	if !strings.Contains(err.Error(), "symlink") || !strings.Contains(err.Error(), planted) {
+		t.Fatalf("the refusal must name the path and the reason: %v", err)
+	}
+	if _, statErr := os.Lstat(outside); statErr == nil {
+		t.Fatal("the guard must not have created the symlink target outside the session")
+	}
+
+	// A directory (or any other non-regular file) at the output path is refused too.
+	sub := filepath.Join(dir, "subdir.wav")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPlainOutput(sub); err == nil {
+		t.Fatal("a non-regular file at the recorder output path must be refused")
+	}
+}
+
+// TestStartRecordersRefusesSymlinkedOutput proves the guard is wired into the
+// spawn path itself: startRecorders must refuse before any ffmpeg subprocess is
+// started when a symlink sits at the audio output path. Skipped where ffmpeg is
+// absent, since startRecorders resolves the binary first.
+func TestStartRecordersRefusesSymlinkedOutput(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	if runtime.GOOS != "darwin" {
+		t.Skip("device probing is darwin-only")
+	}
+
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(t.TempDir(), "elsewhere.wav"), filepath.Join(dir, session.AudioFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	children, err := startRecorders(dir, []string{streamMicrophone})
+	if err == nil {
+		stopAll(children)
+		t.Fatal("startRecorders must refuse a symlinked audio output rather than spawn ffmpeg on it")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("the refusal must name the reason: %v", err)
 	}
 }
 
