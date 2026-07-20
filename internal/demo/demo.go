@@ -40,6 +40,32 @@ const DefaultApp = "testimony demo"
 // DefaultTask is the seeded task for a demo session.
 const DefaultTask = "Explore the settings prototype and think aloud"
 
+// The capture server serves one operator over loopback, so every phase of a
+// request has a generous but finite budget. Without these an http.Server waits
+// for ever: a single connection that opens and then stalls before sending its
+// request headers — a browser tab suspended by the OS, a half-closed socket a
+// sleeping laptop left behind — keeps a connection alive indefinitely, and
+// Shutdown waits for it, so Ctrl+C hangs instead of finalising the session.
+// readTimeout covers the whole request including a maxBatchBody rrweb batch,
+// which crosses loopback in milliseconds; idleTimeout reaps keep-alive
+// connections the page will not reuse.
+const (
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 60 * time.Second
+	idleTimeout       = 120 * time.Second
+)
+
+// shutdownTimeout bounds how long a caller waits for in-flight capture writes
+// to finish before the server is closed out from under them. Finalising the
+// session promptly matters more than the last few bytes of one stalled
+// connection, and an operator who has pressed Ctrl+C is waiting.
+const shutdownTimeout = 5 * time.Second
+
+// maxBatchBody caps a raw-event batch body. A batch carries many records, so it
+// may legitimately exceed the limit that applies to any one of them; each line
+// it produces is still checked individually against session.MaxJSONLLine.
+const maxBatchBody = 8 << 20
+
 // Run starts the demo capture server on addr, creating a new session
 // directory under outRoot. It blocks until the process is interrupted.
 func Run(addr, outRoot string) error {
@@ -76,7 +102,23 @@ func Run(addr, outRoot string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	<-ctx.Done()
-	return srv.Shutdown(context.Background())
+	return Shutdown(srv)
+}
+
+// Shutdown stops a capture server returned by Serve, under a deadline. It is
+// how every caller should stop the server: srv.Shutdown with a context that
+// never expires blocks for as long as any connection stays open, so one stalled
+// client left Ctrl+C hanging for ever instead of finalising the session. When
+// the graceful drain misses the deadline the remaining connections are closed
+// outright — the two stream files use direct O_APPEND writes, so records already
+// accepted are durable either way.
+func Shutdown(srv *http.Server) error {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		return srv.Close()
+	}
+	return nil
 }
 
 // Serve starts the demo capture server on addr, appending its two interaction
@@ -85,6 +127,12 @@ func Run(addr, outRoot string) error {
 // running *http.Server for the caller to Shutdown. record reuses this to run
 // the demo app into the same directory as the recorders.
 func Serve(addr, dir string) (*http.Server, error) {
+	// Resolve the bind address before touching the session directory, so an addr
+	// that will be refused never leaves empty stream files behind.
+	bind, err := listenAddr(addr)
+	if err != nil {
+		return nil, err
+	}
 	open := func(name string) (*os.File, error) {
 		return session.OpenFileNoFollow(filepath.Join(dir, name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	}
@@ -108,7 +156,7 @@ func Serve(addr, dir string) (*http.Server, error) {
 	mux.HandleFunc("/api/interactions", s.handleInteraction)
 	mux.HandleFunc("/api/events", s.handleRawEvents)
 
-	ln, err := net.Listen("tcp", listenAddr(addr))
+	ln, err := net.Listen("tcp", bind)
 	if err != nil {
 		inter.Close()
 		raw.Close()
@@ -117,7 +165,12 @@ func Serve(addr, dir string) (*http.Server, error) {
 	// The two stream files use direct O_APPEND writes (no buffering), so their
 	// data is durable without an explicit Close; the OS reclaims them on exit,
 	// as before. Not closing them on Shutdown avoids racing an in-flight write.
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		IdleTimeout:       idleTimeout,
+	}
 	go srv.Serve(ln)
 	return srv, nil
 }
@@ -142,9 +195,25 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	if !allowWrite(w, r) {
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	// The write side must respect the read side's invariant: every JSONL reader
+	// stops at session.MaxJSONLLine, so a longer line accepted here would be
+	// durably persisted and permanently unreadable, breaking merge, report and
+	// analyze for the whole session. A single interaction can therefore never be
+	// larger than one readable line; a batch may be, because it becomes many. Read
+	// one byte past the cap so an over-long body is refused as too large rather
+	// than silently truncated and then rejected as invalid JSON, which would tell
+	// the operator the page sent nonsense when it sent too much.
+	maxBody := int64(session.MaxJSONLLine)
+	if batch {
+		maxBody = maxBatchBody
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if int64(len(body)) > maxBody {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -161,12 +230,20 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 				http.Error(w, "invalid JSON", http.StatusBadRequest)
 				return
 			}
+			if tooLongForJSONL(line) {
+				http.Error(w, "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
+				return
+			}
 			lines = append(lines, line)
 		}
 	} else {
 		line, err := compactLine(body)
 		if err != nil {
 			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if tooLongForJSONL(line) {
+			http.Error(w, "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
 			return
 		}
 		lines = append(lines, line)
@@ -229,6 +306,15 @@ func compactLine(b []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// tooLongForJSONL reports whether line, plus the newline appendRecords adds,
+// would exceed what session.ReadJSONL and analyze.Load can scan back. It is
+// checked before anything is written, so a batch carrying one over-long record
+// is refused whole rather than leaving the records before it on disk followed by
+// a line no reader can reach past.
+func tooLongForJSONL(line []byte) bool {
+	return len(line)+1 > session.MaxJSONLLine
+}
+
 // allowWrite guards the capture write endpoints against cross-origin forgery
 // (CSRF) and DNS-rebinding of the loopback server. It requires a loopback Host
 // (a rebinding page still sends the attacker hostname), a same-origin Origin
@@ -278,11 +364,6 @@ func isJSONContentType(ct string) bool {
 	return strings.EqualFold(strings.TrimSpace(ct), "application/json")
 }
 
-// listenAddr binds the capture server to loopback by default: a bare ":8737"
-// (empty host) becomes "127.0.0.1:8737", so the unauthenticated write endpoints
-// are not published to the LAN even though the banner prints "localhost". An
-// operator who deliberately wants a wider bind can still pass an explicit host
-// (e.g. "0.0.0.0:8737").
 // DisplayURL renders the human-facing URL an operator opens for a capture
 // server bound to addr. It shows "localhost" only for the host-less default
 // (":8737" -> http://localhost:8737); when an operator passes an explicit host
@@ -301,13 +382,26 @@ func DisplayURL(addr string) string {
 	return "http://" + net.JoinHostPort(host, port)
 }
 
-func listenAddr(addr string) string {
+// listenAddr binds the capture server to loopback by default: a bare ":8737"
+// (empty host) becomes "127.0.0.1:8737", so the unauthenticated write endpoints
+// are not published to the LAN even though the banner prints "localhost". An
+// operator who deliberately wants a wider bind can still pass an explicit host
+// (e.g. "0.0.0.0:8737").
+//
+// An addr that does not parse into host and port is refused outright rather
+// than passed through to net.Listen. Passing it through defeated the very
+// defaulting above: net.Listen("tcp", "") binds every interface, so an empty
+// -addr published the unauthenticated capture write endpoints to the whole LAN
+// on an arbitrary port, silently and with the banner still saying "localhost".
+// Refusing names the expected form instead, and leaves the deliberate host-less
+// ":8737" -> loopback behaviour untouched.
+func listenAddr(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return addr // let net.Listen surface a malformed address
+		return "", fmt.Errorf("invalid capture address %q: want host:port or :port, e.g. \":8737\"", addr)
 	}
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	return net.JoinHostPort(host, port)
+	return net.JoinHostPort(host, port), nil
 }

@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,6 +244,79 @@ func TestPrintFindingSanitisesID(t *testing.T) {
 	printFinding(&buf, f)
 	if bytes.ContainsRune(buf.Bytes(), 0x1b) {
 		t.Fatalf("ESC byte from the id reached the terminal: %q", buf.String())
+	}
+}
+
+// TestInteractiveWalkFailsWhenVerdictCannotBePersisted is the lost-verdict
+// regression: an AppendVerdict I/O failure used to be returned through the same
+// channel as an invalid-keystroke validation error, so the walk printed it as a
+// retry hint, swallowed it with `continue`, and `testimony review` exited 0 —
+// leaving the analyst believing Alice's confirmed finding was on the record when
+// nothing had reached disk. The walk must now abort and surface the error.
+func TestInteractiveWalkFailsWhenVerdictCannotBePersisted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions do not deny writes")
+	}
+	dir := writeSession(t)
+	path := filepath.Join(dir, session.FindingsFile)
+	// Read-only findings.jsonl: analyze.Load still succeeds, but the append
+	// cannot open the file for writing.
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+	var out bytes.Buffer
+	err := Run(Options{Dir: dir, In: strings.NewReader("c\n"), Out: &out, IsTTY: true, Today: "2026-07-17"})
+	if err == nil {
+		t.Fatalf("Run returned nil after a failed verdict append; output was %q", out.String())
+	}
+	if !strings.Contains(err.Error(), "recording the verdict failed") {
+		t.Fatalf("error does not name the persistence failure: %v", err)
+	}
+}
+
+// TestAppendVerdictTerminatesAnUnterminatedLastLine is the file-fusing
+// regression: a findings.jsonl whose final line lacks its trailing newline —
+// hand edited, externally produced, or truncated by an earlier crash — used to
+// have the verdict concatenated straight onto it, yielding one physical line
+// with two JSON objects and rendering the whole file unparseable for every
+// reader. The append must start a fresh line instead.
+func TestAppendVerdictTerminatesAnUnterminatedLastLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, session.FindingsFile)
+	unterminated := strings.TrimRight(findingsFixture, "\n")
+	if err := os.WriteFile(path, []byte(unterminated), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	rec := analyze.Verdict{Kind: "verdict", Finding: "F-003", Verdict: "confirmed", At: "2026-07-17"}
+	if err := AppendVerdict(dir, rec); err != nil {
+		t.Fatalf("AppendVerdict: %v", err)
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("got %d lines, want 4 (3 findings + 1 verdict): %q", len(lines), string(b))
+	}
+	for i, l := range lines {
+		var v any
+		if err := json.Unmarshal([]byte(l), &v); err != nil {
+			t.Fatalf("line %d is not one JSON record: %v (%q)", i+1, err, l)
+		}
+	}
+
+	// The verdict is still readable through the normal loader.
+	_, verdicts, err := analyze.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(verdicts) != 1 || verdicts[0].Finding != "F-003" {
+		t.Fatalf("verdicts: %+v, want one for F-003", verdicts)
 	}
 }
 

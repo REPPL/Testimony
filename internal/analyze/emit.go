@@ -79,13 +79,22 @@ func EmitRequest(dir string) (string, error) {
 	b.WriteString("- `t` is the moment of the finding, within the session; set it to the cited utterance's start time.\n")
 	b.WriteString("- When the referent is verbal-only and ambiguous (\"this thing here\"), still cite the utterance, and set `ui` only if an event names the element (keyframe extraction is a later capability).\n\n")
 
+	// The manifest is attacker-authorable — a session directory is an exchange
+	// unit, so it may have been shared or downloaded — and the request is printed
+	// to the operator's terminal before it is handed to an agent. Every
+	// manifest-derived string therefore goes through session.SafeText, matching
+	// report and review: without it an App, Participant, or task carrying ESC
+	// drives ANSI sequences in the terminal, and one carrying a newline forges
+	// Markdown structure (a fake "## " heading or extra rubric instructions) inside
+	// the request the agent is asked to obey. The timeline block below needs no
+	// such treatment: json.Marshal escapes control bytes on the way out.
 	b.WriteString("## Session\n\n")
-	fmt.Fprintf(&b, "- App: %s\n", orNone(man.App))
-	fmt.Fprintf(&b, "- Participant: %s\n", orNone(man.Participant))
+	fmt.Fprintf(&b, "- App: %s\n", session.SafeText(orNone(man.App)))
+	fmt.Fprintf(&b, "- Participant: %s\n", session.SafeText(orNone(man.Participant)))
 	if len(man.Tasks) > 0 {
 		b.WriteString("- Tasks:\n")
 		for i, t := range man.Tasks {
-			fmt.Fprintf(&b, "  %d. %s\n", i+1, t)
+			fmt.Fprintf(&b, "  %d. %s\n", i+1, session.SafeText(t))
 		}
 	} else {
 		b.WriteString("- Tasks: (none recorded)\n")

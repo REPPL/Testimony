@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -139,6 +140,31 @@ func TestWriteFileNoFollowRefusesSymlink(t *testing.T) {
 	}
 }
 
+// TestWriteJSONLRefusesFIFO is the hang regression: a session artefact planted
+// as a FIFO (in a session Alice merely received from Bob) must be refused, not
+// opened. Pre-fix the guard covered only symlinks, so the write open blocked
+// for ever waiting for a reader and merge or report never returned. The test
+// runs the write in a goroutine and fails on a timeout, so a regression reports
+// a failure rather than hanging the suite.
+func TestWriteJSONLRefusesFIFO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	if err := syscall.Mkfifo(path, 0o644); err != nil {
+		t.Skipf("FIFOs unavailable on this platform: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- WriteJSONL(path, []map[string]any{{"actor": "Alice"}}) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("WriteJSONL wrote to a FIFO; want refusal")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("WriteJSONL blocked on a FIFO instead of refusing it")
+	}
+}
+
 // TestWriteJSONLPlainFileStillWorks confirms legitimate writes (regular files,
 // including truncating an existing one) are unaffected by the symlink guard.
 func TestWriteJSONLPlainFileStillWorks(t *testing.T) {
@@ -174,6 +200,7 @@ func TestSafeText(t *testing.T) {
 		"iso\u2066\u2069late":    "isolate",     // U+2066/U+2069 directional isolates
 		"line\u2028sep":          "linesep",     // U+2028 line separator
 		"mark\u200e\u200fs":      "marks",       // U+200E/U+200F LRM/RLM
+		"alm\u061cstrip":         "almstrip",    // U+061C ARABIC LETTER MARK (Bidi_Control)
 		"caf\u00e9":              "caf\u00e9",   // ordinary accented text is unchanged
 	}
 	for in, want := range cases {

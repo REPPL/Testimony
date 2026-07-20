@@ -38,10 +38,19 @@ func Render(dir string, window float64) (string, error) {
 		}
 	}
 
-	// Attach each event to the first utterance whose window contains it.
-	attached := map[string][]timeline.Entry{} // utterance ID → events
+	// Attach each event to the first utterance whose window contains it. The
+	// buckets are keyed by the utterance's position in speech, never by its ID:
+	// timeline.Merge copies a transcript's id verbatim and never validates it, so
+	// a transcript whose lines omit "id" gives every utterance the ID "" and an
+	// ID-keyed map collapses them all into one bucket — every utterance would then
+	// render every event attached to any of them. report.md is the human evidence
+	// artefact, so that silently fabricates the record of what the participant was
+	// doing while they spoke. Indexing by position removes the dependence on ID
+	// uniqueness entirely. The used[] dedup below still keys on event ids, which
+	// merge synthesises uniquely as ev-%03d.
+	attached := make([][]timeline.Entry, len(speech)) // utterance index → events
 	used := map[string]bool{}
-	for _, u := range speech {
+	for i, u := range speech {
 		for _, id := range timeline.EventsNear(entries, u, window) {
 			if used[id] {
 				continue
@@ -49,7 +58,7 @@ func Render(dir string, window float64) (string, error) {
 			used[id] = true
 			for _, e := range events {
 				if e.ID == id {
-					attached[u.ID] = append(attached[u.ID], e)
+					attached[i] = append(attached[i], e)
 				}
 			}
 		}
@@ -74,10 +83,10 @@ func Render(dir string, window float64) (string, error) {
 		}
 	}
 
-	for _, u := range speech {
+	for i, u := range speech {
 		flushStandaloneBefore(u.T)
 		fmt.Fprintf(&b, "\n**[%s] %s:** “%s”\n", clock(u.T), speaker(u), text(u))
-		for _, e := range attached[u.ID] {
+		for _, e := range attached[i] {
 			fmt.Fprintf(&b, "  - [%s] %s\n", clock(e.T), eventLine(e))
 		}
 	}

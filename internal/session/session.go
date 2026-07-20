@@ -105,19 +105,38 @@ func SaveManifest(dir string, m Manifest) error {
 }
 
 // OpenFileNoFollow opens path for writing with O_NOFOLLOW, so a symlink planted
-// at the final path component is refused rather than followed. A session
-// directory is an exchange unit (a shared or downloaded session may be
-// attacker-authored); without this guard a planted symlink — e.g. a
-// timeline.jsonl pointing at ~/.ssh/authorized_keys — would redirect a write to
-// an arbitrary file outside the session directory. flag is OR-ed with
-// O_NOFOLLOW; callers pass the usual O_CREATE/O_TRUNC/O_APPEND/O_WRONLY set.
+// at the final path component is refused rather than followed, and refuses any
+// opened path that is not a regular file. A session directory is an exchange
+// unit (a shared or downloaded session may be attacker-authored); without the
+// symlink guard a planted symlink — e.g. a timeline.jsonl pointing at
+// ~/.ssh/authorized_keys — would redirect a write to an arbitrary file outside
+// the session directory, and without the regular-file guard a FIFO planted at
+// the same path would hold the write open for ever, waiting for a reader that
+// never arrives, hanging merge or report on a session the operator merely
+// received. O_NONBLOCK is set so that the FIFO open itself returns instead of
+// blocking before the check can run; it has no effect on the ordinary case,
+// because opening a regular file never blocks and the flag does not alter
+// subsequent reads or writes on one. flag is OR-ed with O_NOFOLLOW and
+// O_NONBLOCK; callers pass the usual O_CREATE/O_TRUNC/O_APPEND/O_WRONLY set.
 func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
-	f, err := os.OpenFile(path, flag|syscall.O_NOFOLLOW, perm)
+	f, err := os.OpenFile(path, flag|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, perm)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {
 			return nil, fmt.Errorf("refusing to write %s: it is a symlink", path)
 		}
 		return nil, err
+	}
+	// Stat the descriptor rather than the path, so the answer describes the file
+	// that was actually opened and cannot be swapped between the check and the
+	// write.
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("refusing to write %s: it is not a regular file", path)
 	}
 	return f, nil
 }
@@ -141,9 +160,11 @@ func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 // artefact (report.md) or a terminal line (review). It strips C0/C1 control
 // bytes — including the newline and carriage return that could forge report
 // structure or split a JSONL record, and the ESC (0x1b) that drives ANSI
-// terminal sequences — turns tabs into spaces, and removes the Unicode
-// bidirectional/line-separator formatting controls behind Trojan-Source
-// spoofing (CVE-2021-42574), so a right-to-left override cannot make a
+// terminal sequences — turns tabs into spaces, and removes the complete Unicode
+// Bidi_Control set (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) along
+// with the line and paragraph separators, the formatting controls behind
+// Trojan-Source spoofing (CVE-2021-42574), so a right-to-left override or an
+// Arabic letter mark cannot make a
 // displayed quote or anchor differ from the bytes a verdict is recorded
 // against. Attacker-authored transcript, interaction, manifest, and finding
 // text therefore cannot inject headings, terminal control sequences, extra
@@ -155,7 +176,11 @@ func SafeText(s string) string {
 			return ' '
 		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
 			return -1
-		case r == 0x200e || r == 0x200f, // LRM, RLM
+		// The complete Unicode Bidi_Control set, plus the line and paragraph
+		// separators: leaving any member out would let that one character do the
+		// reordering the rest are stripped to prevent.
+		case r == 0x061c, // ALM
+			r == 0x200e || r == 0x200f, // LRM, RLM
 			r >= 0x202a && r <= 0x202e, // LRE, RLE, PDF, LRO, RLO
 			r >= 0x2066 && r <= 0x2069, // LRI, RLI, FSI, PDI
 			r == 0x2028 || r == 0x2029: // line / paragraph separator
@@ -165,6 +190,13 @@ func SafeText(s string) string {
 		}
 	}, s)
 }
+
+// MaxJSONLLine is the largest single JSONL record the readers accept. It is the
+// shared read-side invariant every writer must respect: a record persisted above
+// this size is durably unreadable, breaking merge, report, and analyze for the
+// whole session, so the capture endpoints reject anything larger rather than
+// accept a line no reader can take back.
+const MaxJSONLLine = 4 << 20 // 4 MiB
 
 // ReadJSONL decodes a JSON-Lines file into a slice of T. Blank lines are
 // skipped. A missing file is an error; an empty file yields an empty slice.
@@ -177,7 +209,7 @@ func ReadJSONL[T any](path string) ([]T, error) {
 
 	var out []T
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	sc.Buffer(make([]byte, 0, 64*1024), MaxJSONLLine)
 	line := 0
 	for sc.Scan() {
 		line++
