@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,14 +24,17 @@ func convertAudio(in, out string) error {
 	if !audioExts[ext] {
 		return fmt.Errorf("unsupported audio format %q: expected .m4a, .mov, or .wav", ext)
 	}
-	if _, err := os.Stat(in); err != nil {
+	// os.Stat resolves a symlink, so an operator pointing -audio at a symlinked
+	// recording is fine; what must be refused is a non-regular target, because a
+	// FIFO handed to ffmpeg as its input blocks the subprocess's open(2) for ever,
+	// waiting for a writer that never arrives.
+	if fi, err := os.Stat(in); err != nil {
 		return fmt.Errorf("audio file: %w", err)
+	} else if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing to read %s: it is not a regular file", in)
 	}
-	// ffmpeg -y follows a symlink at the output path. In an untrusted (shared or
-	// downloaded) session directory a pre-planted audio.wav symlink would
-	// redirect the write outside the session, so refuse to overwrite through one.
-	if fi, err := os.Lstat(out); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing to write %s: it is a symlink", out)
+	if err := checkPlainOutput(out); err != nil {
+		return err
 	}
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -39,6 +43,38 @@ func convertAudio(in, out string) error {
 	cmd := exec.Command(ffmpeg, "-y", "-i", in, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out)
 	if raw, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg: %w\n%s", err, tail(raw))
+	}
+	return nil
+}
+
+// checkPlainOutput refuses an ffmpeg output path that already exists as anything
+// other than a regular file. ffmpeg is handed the path as a string and told to
+// overwrite it with -y, so this write cannot go through
+// session.OpenFileNoFollow, and ffmpeg opens without either O_NOFOLLOW or
+// O_NONBLOCK. A session directory is an exchange unit — a shared or downloaded
+// session may be attacker-authored — and both non-regular cases matter there. A
+// symlink pre-planted at audio.wav would silently redirect the whole conversion
+// outside the session, overwriting an arbitrary file the operator never named. A
+// FIFO planted at the same path is worse than useless: ffmpeg's open(2) blocks
+// for ever waiting for a reader that never arrives, so `testimony transcribe`
+// hangs rather than failing, on a session the operator merely received. os.Lstat
+// does not resolve the link, so a symlink is reported with ModeSymlink set even
+// when its target is missing; it is named separately from the general refusal
+// because a redirected write and a stuck one call for different remedies. An
+// absent path is fine — that is the ordinary case, and ffmpeg creates it.
+func checkPlainOutput(path string) error {
+	fi, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to write %s: it is a symlink", path)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing to write %s: it is not a regular file", path)
 	}
 	return nil
 }

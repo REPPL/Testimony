@@ -179,6 +179,102 @@ func TestMergeAcceptsInteractionAtT0(t *testing.T) {
 	}
 }
 
+// TestMergeRejectsUtteranceMissingT0 is the phantom-utterance regression, the
+// speech-side twin of TestMergeRejectsInteractionMissingT. A transcript.jsonl
+// line with no "t0" used to decode leniently to the zero value 0, so pre-fix
+// Merge counted it and BuildEntries placed it at the session's very start: the
+// report printed words at 00:00 that the transcript had never timed, above
+// everything that genuinely happened there. Merge must refuse the session and
+// name the offending line.
+func TestMergeRejectsUtteranceMissingT0(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// The second record is the malformed one: an utterance with no "t0".
+	lines := "" +
+		`{"id":"utt-001","t0":8.0,"t1":12.5,"speaker":"P1","text":"I'll change my display name."}` + "\n" +
+		`{"id":"utt-002","t1":28.0,"speaker":"P1","text":"I clicked save and nothing happened."}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(lines), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	_, _, err := Merge(dir)
+	if err == nil {
+		t.Fatalf("expected a missing-t0 error, got nil")
+	}
+	if !strings.Contains(err.Error(), "utterance 2") || !strings.Contains(err.Error(), "missing t0") {
+		t.Fatalf("error should name the offending line and field, got %v", err)
+	}
+	// The timeline carrying the phantom utterance must not have been written.
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the malformed utterance")
+	}
+}
+
+// TestMergeAcceptsUtteranceAtT0 guards the other half of the required-field
+// check, mirroring TestMergeAcceptsInteractionAtT0: an utterance beginning the
+// moment capture starts carries t0 0, which a value-typed decode cannot
+// distinguish from an absent "t0". Alice speaking as recording begins is
+// legitimate evidence and must still merge, at t 0.
+func TestMergeAcceptsUtteranceAtT0(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	line := `{"id":"utt-001","t0":0,"t1":3.5,"speaker":"P1","text":"Right, I'm starting now."}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(line), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	speech, events, err := Merge(dir)
+	if err != nil {
+		t.Fatalf("Merge with an utterance at t0: %v", err)
+	}
+	if speech != 1 || events != 0 {
+		t.Fatalf("want speech=1 events=0, got speech=%d events=%d", speech, events)
+	}
+	entries, err := session.ReadJSONL[Entry](filepath.Join(dir, session.TimelineFile))
+	if err != nil {
+		t.Fatalf("read timeline: %v", err)
+	}
+	if len(entries) != 1 || entries[0].T != 0 || entries[0].Src != "speech" {
+		t.Fatalf("want a single speech entry at t=0, got %+v", entries)
+	}
+}
+
+// TestMergeDefaultsUtteranceMissingT1ToT0 pins the deliberate asymmetry between
+// the two transcript times: a missing end cannot move an utterance to a moment
+// it did not occur, so it is defaulted to t0 rather than refused, matching the
+// fallback SpeechEnd already documents. Pre-fix a missing "t1" decoded to 0, so
+// an utterance at t0 22 got the join window [22-w, 0+w] — inverted, silently
+// matching no event at all. The defaulted entry must instead carry t1 equal to
+// t0, giving an honest zero-length span.
+func TestMergeDefaultsUtteranceMissingT1ToT0(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	line := `{"id":"utt-002","t0":22.0,"speaker":"P1","text":"I clicked save and nothing happened."}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(line), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	if _, _, err := Merge(dir); err != nil {
+		t.Fatalf("Merge with an utterance missing t1: %v", err)
+	}
+	entries, err := session.ReadJSONL[Entry](filepath.Join(dir, session.TimelineFile))
+	if err != nil {
+		t.Fatalf("read timeline: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want a single speech entry, got %+v", entries)
+	}
+	if got := SpeechEnd(entries[0]); got != 22.0 {
+		t.Fatalf("want the end defaulted to t0 (22.0), got %v", got)
+	}
+}
+
 func TestEventsNearWindow(t *testing.T) {
 	entries := sample()
 	var speech []Entry

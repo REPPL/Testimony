@@ -233,37 +233,74 @@ func AppendVerdict(dir string, v analyze.Verdict) error {
 	if err != nil {
 		return err
 	}
-	rec := append(b, '\n')
-	// A findings.jsonl need not end in a newline: it may have been hand edited,
-	// produced by another tool, or left short by a crash part-way through an
-	// earlier write. Appending blindly would fuse the verdict onto that
-	// unterminated final line, producing one physical line holding two JSON
-	// objects — which makes not just those two records but the entire file
-	// unparseable to every reader. So probe the last byte and open a fresh line
-	// when it is not already one. (O_APPEND still puts the write at the end,
-	// whatever the seek offset; the seek is only to learn the size.)
-	end, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		f.Close()
-		return err
-	}
-	if end > 0 {
-		var last [1]byte
-		if _, err := f.ReadAt(last[:], end-1); err != nil {
-			f.Close()
-			return err
-		}
-		if last[0] != '\n' {
-			rec = append([]byte{'\n'}, rec...)
-		}
-	}
-	if _, err := f.Write(rec); err != nil {
+	if err := writeVerdict(f, append(b, '\n')); err != nil {
 		f.Close()
 		return err
 	}
 	// Return the Close error so a verdict is never reported recorded when its
 	// bytes did not reach disk (write-back deferred to close on NFS/full device).
 	return f.Close()
+}
+
+// verdictFile is the subset of *os.File that writeVerdict needs; a fake
+// satisfies it in tests to exercise the partial-write rollback.
+type verdictFile interface {
+	io.Writer
+	io.ReaderAt
+	Seek(offset int64, whence int) (int64, error)
+	Truncate(size int64) error
+}
+
+// writeVerdict frames rec so it lands as its own physical line and writes it,
+// rolling the file back if the write only partly lands.
+//
+// A findings.jsonl need not end in a newline: it may have been hand edited,
+// produced by another tool, or left short by a crash part-way through an
+// earlier write. Appending blindly would fuse the verdict onto that
+// unterminated final line, producing one physical line holding two JSON
+// objects — which makes not just those two records but the entire file
+// unparseable to every reader. So probe the last byte and open a fresh line
+// when it is not already one. (O_APPEND still puts the write at the end,
+// whatever the seek offset; the seek is only to learn the size.)
+//
+// The write itself needs the same rollback the capture path has in
+// demo.appendRecords: os.File.Write gives no atomicity guarantee, so a full
+// disk fills the remaining space, returns a short count, and leaves a
+// truncated, newline-less fragment (e.g. `{"kind":"verdict","find`) behind.
+// That fragment would fuse with the next successful write into one malformed
+// physical line and make the whole findings.jsonl — the human verdict record
+// this package exists to protect — unparseable to every reader. So on any
+// write error the file is truncated back to the length it had immediately
+// before the write. The size is re-measured at that point rather than reusing
+// the offset the newline probe learned: the descriptor is O_APPEND, so the
+// write lands at the true end of file, which a concurrent appender (a second
+// `testimony review`, or an analyze ingest) may have moved on since the probe.
+// Truncating to the stale offset would delete that other writer's record
+// instead of only our own partial bytes.
+func writeVerdict(f verdictFile, rec []byte) error {
+	end, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+	if end > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], end-1); err != nil {
+			return err
+		}
+		if last[0] != '\n' {
+			rec = append([]byte{'\n'}, rec...)
+		}
+	}
+	before, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(rec); err != nil {
+		// Best-effort roll back any partial bytes; surface the original error.
+		f.Truncate(before)
+		return err
+	}
+	return nil
 }
 
 // printFinding writes a finding to the analyst's terminal. Every
@@ -320,10 +357,25 @@ func readLine(r *bufio.Reader) (string, error) {
 	return line, nil
 }
 
+// clock renders a session-relative time for the review prompt. Negative times
+// are legitimate — an external recording whose creation_time predates the
+// manifest t0 yields a negative offset, and analyze.indexTimeline deliberately
+// admits findings anchored there — so the sign is rendered rather than clamped
+// away. Clamping showed the analyst 00:00 for a pre-t0 finding, the wrong
+// moment on the very surface where they record the verdict. This mirrors
+// report.clock; see the note in review_test.go about the duplication.
 func clock(sec float64) string {
-	if sec < 0 {
-		sec = 0
+	neg := sec < 0
+	if neg {
+		sec = -sec
 	}
 	s := int(sec + 0.5)
-	return fmt.Sprintf("%02d:%02d", s/60, s%60)
+	sign := ""
+	// The sign is taken from the rounded value, not the raw one, so a time a
+	// fraction of a second before t0 prints as 00:00 rather than the nonsense
+	// "-00:00".
+	if neg && s > 0 {
+		sign = "-"
+	}
+	return fmt.Sprintf("%s%02d:%02d", sign, s/60, s%60)
 }

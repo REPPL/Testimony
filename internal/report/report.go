@@ -166,24 +166,45 @@ func findingAnchor(f analyze.Finding) string {
 
 func end(entries []timeline.Entry) float64 {
 	var max float64
-	for _, e := range entries {
+	for i, e := range entries {
 		t := e.T
 		if e.Src == "speech" {
 			t = timeline.SpeechEnd(e)
 		}
-		if t > max {
+		// Seed the maximum from the first entry, exactly as analyze.indexTimeline
+		// seeds idx.end, rather than growing it from the zero value: a session whose
+		// recording predates the manifest t0 has every entry at a negative
+		// session-relative time, and a zero-seeded maximum would report that
+		// session's span as 00:00 instead of where it truly ends.
+		if i == 0 || t > max {
 			max = t
 		}
 	}
 	return max
 }
 
+// clock renders a session-relative time as a signed MM:SS stamp. Negative times
+// are legitimate and deliberately supported — an external recording whose
+// creation_time predates the manifest t0 yields a negative offset, so
+// transcript, timeline and findings can all carry pre-t0 anchors — and the
+// earlier clamp to zero made every one of them print as [00:00], so report.md
+// silently misstated when they happened. The sign is split off before the
+// arithmetic because %02d over a negative integer division renders garbage such
+// as "-1:-30".
 func clock(sec float64) string {
-	if sec < 0 {
-		sec = 0
+	neg := sec < 0
+	if neg {
+		sec = -sec
 	}
 	s := int(sec + 0.5)
-	return fmt.Sprintf("%02d:%02d", s/60, s%60)
+	sign := ""
+	// The sign is taken from the rounded value, not the raw one, so a time a
+	// fraction of a second before t0 prints as 00:00 rather than the nonsense
+	// "-00:00".
+	if neg && s > 0 {
+		sign = "-"
+	}
+	return fmt.Sprintf("%s%02d:%02d", sign, s/60, s%60)
 }
 
 func speaker(u timeline.Entry) string {

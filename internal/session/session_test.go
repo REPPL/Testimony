@@ -1,8 +1,10 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -96,6 +98,78 @@ func TestReadJSONLSkipsWhitespaceOnlyLine(t *testing.T) {
 	}
 }
 
+// TestManifestT0RejectsAbsentAnchor is the epoch-anchored-session regression: a
+// manifest that omits t0_epoch_ms decodes to the int64 zero value, which pre-fix
+// was read straight out of the field and subtracted from real epoch-millisecond
+// event times — anchoring the whole session at 1 January 1970 and placing every
+// event about fifty-seven years in, as plausible-looking numbers in a written
+// timeline. Manifest.T0 must refuse the absent anchor instead of handing back 0.
+func TestManifestT0RejectsAbsentAnchor(t *testing.T) {
+	dir := t.TempDir()
+	// Write the manifest by hand, with no t0_epoch_ms at all: this is what an
+	// exchanged or hand-edited session looks like, and the case SaveManifest of a
+	// zero-valued struct cannot distinguish from a recorded zero.
+	body := `{"session":"2026-07-17_153045","app":"settings prototype","participant":"Alice"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ManifestFile), []byte(body), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	// Loading still succeeds: report and analyze need the context fields and no
+	// anchor, so the refusal belongs at the point of use, not at load.
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if m.App != "settings prototype" {
+		t.Fatalf("context fields lost: %+v", m)
+	}
+
+	t0, err := m.T0()
+	if err == nil {
+		t.Fatalf("T0 returned %d for a manifest with no t0_epoch_ms; want refusal", t0)
+	}
+	if !errors.Is(err, ErrNoT0) {
+		t.Fatalf("T0 error does not match ErrNoT0: %v", err)
+	}
+	if t0 != 0 {
+		t.Fatalf("T0 returned %d alongside its error; want 0", t0)
+	}
+}
+
+// TestManifestT0RejectsPreEpochAnchor covers the same anchor guard for a
+// negative t0_epoch_ms, which no recorder can produce and which pre-fix would
+// have been used as a real anchor, pushing every event past the end of the
+// session instead of before its start.
+func TestManifestT0RejectsPreEpochAnchor(t *testing.T) {
+	m := Manifest{Session: "s", T0EpochMS: -1}
+	if t0, err := m.T0(); err == nil {
+		t.Fatalf("T0 accepted a pre-epoch anchor, returning %d; want refusal", t0)
+	}
+}
+
+// TestManifestT0AcceptsRecordedAnchor is the other half of the guard: a session
+// created by Create carries a real t0, and T0 must hand back exactly the value
+// Create recorded, so the refusal above cannot be satisfied by rejecting
+// everything.
+func TestManifestT0AcceptsRecordedAnchor(t *testing.T) {
+	now := time.Date(2026, 7, 17, 15, 30, 45, 0, time.UTC)
+	dir, err := Create(t.TempDir(), now, Manifest{App: "settings prototype"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	t0, err := m.T0()
+	if err != nil {
+		t.Fatalf("T0 on a recorded session: %v", err)
+	}
+	if t0 != now.UnixMilli() {
+		t.Fatalf("T0: got %d, want %d", t0, now.UnixMilli())
+	}
+}
+
 // TestWriteJSONLRefusesSymlink is the arbitrary-file-overwrite regression: a
 // session artefact planted as a symlink (e.g. in a downloaded session) must not
 // be followed, so the write cannot escape the session directory. Pre-fix
@@ -181,6 +255,90 @@ func TestWriteJSONLPlainFileStillWorks(t *testing.T) {
 	}
 	if len(got) != 1 || got[0]["b"] != float64(2) {
 		t.Fatalf("unexpected content after overwrite: %v", got)
+	}
+}
+
+// TestWriteJSONLRefusesOverlongRecord is the unreadable-artefact regression:
+// MaxJSONLLine is the invariant every writer must respect, but pre-fix
+// WriteJSONL enforced no upper bound, so merge could persist a timeline.jsonl
+// record larger than ReadJSONL can scan back and still report success. The
+// oversized record must be refused, and — because the refusal happens before
+// the file is opened — an existing artefact must survive untouched rather than
+// be truncated by the failed write.
+func TestWriteJSONLRefusesOverlongRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	if err := WriteJSONL(path, []map[string]string{{"actor": "Alice"}}); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+
+	huge := []map[string]string{{"v": strings.Repeat("a", MaxJSONLLine)}}
+	err := WriteJSONL(path, huge)
+	if err == nil {
+		t.Fatal("WriteJSONL persisted a record over MaxJSONLLine; want refusal")
+	}
+	if !strings.Contains(err.Error(), "record 0") {
+		t.Errorf("error does not name the offending index: %v", err)
+	}
+
+	// The earlier artefact is intact: nothing was written, not even a truncation.
+	got, err := ReadJSONL[map[string]string](path)
+	if err != nil {
+		t.Fatalf("ReadJSONL after refusal: %v", err)
+	}
+	if len(got) != 1 || got[0]["actor"] != "Alice" {
+		t.Fatalf("refused write disturbed the existing artefact: %v", got)
+	}
+}
+
+// TestWriteJSONLRefusalLeavesNoPartialFile pins the transactional stance on the
+// records *before* the offending one: pre-fix there was no check at all, and a
+// naive per-record check would still leave the earlier lines on disk followed
+// by a line no reader can reach past. A refused set must write nothing.
+func TestWriteJSONLRefusalLeavesNoPartialFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FindingsFile)
+	values := []map[string]string{
+		{"actor": "Bob"},
+		{"v": strings.Repeat("b", MaxJSONLLine)},
+	}
+	if err := WriteJSONL(path, values); err == nil {
+		t.Fatal("WriteJSONL accepted a set carrying an over-long record; want refusal")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("refused write created %s (err=%v); want no file at all", FindingsFile, err)
+	}
+}
+
+// TestWriteJSONLBoundaryLineRoundTrips pins the exact boundary WriteJSONL
+// chose: a line is readable when its bytes *including* the trailing newline fit
+// within MaxJSONLLine, because ReadJSONL's scanner buffer must hold the
+// terminator too. A record encoding to exactly MaxJSONLLine bytes with its
+// newline must therefore be accepted and read back; one byte more must not.
+func TestWriteJSONLBoundaryLineRoundTrips(t *testing.T) {
+	// {"v":"<payload>"}\n is len(payload) + 9 bytes.
+	const overhead = 9
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	atLimit := []map[string]string{{"v": strings.Repeat("c", MaxJSONLLine-overhead)}}
+	if err := WriteJSONL(path, atLimit); err != nil {
+		t.Fatalf("WriteJSONL refused a record at the limit: %v", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if fi.Size() != MaxJSONLLine {
+		t.Fatalf("boundary line is %d bytes, want exactly %d — adjust the test, not the guard", fi.Size(), MaxJSONLLine)
+	}
+	got, err := ReadJSONL[map[string]string](path)
+	if err != nil {
+		t.Fatalf("ReadJSONL could not read back a line WriteJSONL accepted: %v", err)
+	}
+	if len(got) != 1 || len(got[0]["v"]) != MaxJSONLLine-overhead {
+		t.Fatalf("boundary record did not round-trip: %d records", len(got))
+	}
+
+	overLimit := []map[string]string{{"v": strings.Repeat("c", MaxJSONLLine-overhead+1)}}
+	if err := WriteJSONL(path, overLimit); err == nil {
+		t.Fatal("WriteJSONL accepted a line one byte past the limit; want refusal")
 	}
 }
 

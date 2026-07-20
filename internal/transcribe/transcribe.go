@@ -74,9 +74,8 @@ func Run(opts Options) (int, error) {
 		if err := convertAudio(opts.Audio, wav); err != nil {
 			return 0, err
 		}
-	} else if _, err := os.Stat(wav); err != nil {
-		return 0, fmt.Errorf("no %s in session %s and no -audio given: run `testimony record` first, or pass -audio FILE",
-			session.AudioFile, opts.SessionDir)
+	} else if err := checkSessionAudio(wav, opts.SessionDir); err != nil {
+		return 0, err
 	}
 
 	offset, provenance := resolveOffset(opts, man.T0EpochMS, external)
@@ -99,6 +98,27 @@ func Run(opts Options) (int, error) {
 		return 0, fmt.Errorf("write transcript: %w", err)
 	}
 	return len(utts), nil
+}
+
+// checkSessionAudio validates the in-place audio.wav before its path is handed
+// to the ASR engine. The engine opens the path itself, so this read never passes
+// through session.OpenFileNoFollow's regular-file guard, and mere existence is
+// not enough to establish that reading it will terminate: in a session that was
+// shared or downloaded rather than recorded here, a FIFO planted at audio.wav
+// satisfies os.Stat and then blocks the engine's read for ever, hanging
+// `testimony transcribe` on a session the operator merely received. A symlink is
+// resolved by os.Stat and needs no refusal here — a symlink redirects writes,
+// and this path is only ever read.
+func checkSessionAudio(wav, sessionDir string) error {
+	fi, err := os.Stat(wav)
+	if err != nil {
+		return fmt.Errorf("no %s in session %s and no -audio given: run `testimony record` first, or pass -audio FILE",
+			session.AudioFile, sessionDir)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing to read %s: it is not a regular file", wav)
+	}
+	return nil
 }
 
 // resolveOffset picks the audio→session offset: the explicit -offset flag

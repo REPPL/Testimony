@@ -82,6 +82,44 @@ func Create(outRoot string, now time.Time, m Manifest) (dir string, err error) {
 	return dir, nil
 }
 
+// ErrNoT0 reports a manifest that carries no usable capture anchor. It is
+// returned by Manifest.T0 and is worth matching with errors.Is when a caller
+// wants to distinguish "this session cannot be placed on a wall clock" from an
+// unreadable or malformed manifest.
+var ErrNoT0 = errors.New("manifest is missing t0_epoch_ms")
+
+// T0 returns the session's anchor instant in epoch milliseconds, or ErrNoT0
+// when the manifest carries none. Every caller that converts epoch-ms times to
+// session-relative ones — timeline.BuildEntries, transcribe's audio-offset
+// derivation — must obtain t0 through here rather than reading the field
+// directly.
+//
+// The check is needed because T0EpochMS is a value-typed int64: a manifest that
+// simply omits t0_epoch_ms decodes to 0, which is indistinguishable from a
+// recorded zero and is then subtracted from real epoch-ms timestamps. That
+// places every event about fifty-seven years into the session and writes a
+// silently corrupt timeline — wrong, plausible-looking numbers, which is worse
+// than a refusal, because a report built on them reads as evidence.
+//
+// Treating 0 as absent is safe rather than merely convenient: a genuine
+// t0_epoch_ms of 0 is midnight on 1 January 1970, which is not a capture
+// instant any recorder can produce. Create derives t0 from the same now that
+// names the session directory, so every manifest this tool writes has one.
+// Negative values are refused on the same reasoning — they anchor the session
+// before the epoch, and no capture starts there.
+//
+// The check deliberately lives here and not in LoadManifest. Several consumers
+// legitimately load a manifest they need no anchor from — report.Render works
+// from an already session-relative timeline.jsonl, and analyze.EmitRequest
+// reads only the app, participant, and task context — so refusing at load time
+// would fail commands that have no use for t0 and no way to be wrong about it.
+func (m Manifest) T0() (int64, error) {
+	if m.T0EpochMS <= 0 {
+		return 0, fmt.Errorf("%w (session %q); cannot place epoch-millisecond times on the session clock", ErrNoT0, m.Session)
+	}
+	return m.T0EpochMS, nil
+}
+
 // LoadManifest reads manifest.json from dir.
 func LoadManifest(dir string) (Manifest, error) {
 	var m Manifest
@@ -236,7 +274,39 @@ func ReadJSONL[T any](path string) ([]T, error) {
 // symlink at path (see OpenFileNoFollow) so writing a session artefact — even
 // from an untrusted, downloaded session directory — cannot be redirected to an
 // arbitrary file outside the session.
+//
+// It also holds the writers to MaxJSONLLine, the read-side invariant: without
+// the check merge could persist a timeline.jsonl (or analyze a findings.jsonl)
+// carrying a record longer than ReadJSONL can scan back, report success, and
+// leave the operator with an artefact its own reader — and every later merge,
+// report, and analyze run over that session — refuses whole. The whole set is
+// measured before the file is opened, so a refusal neither truncates an
+// existing artefact nor leaves a prefix of the new one behind, matching the
+// all-or-nothing stance of analyze.Ingest and demo.appendRecords. That costs a
+// second encoding pass over records that are small structs; a durably
+// unreadable session is the worse trade.
 func WriteJSONL[T any](path string, values []T) error {
+	// Encode into one reusable buffer so the pre-flight pass holds a single
+	// record, not the whole file, in memory.
+	var buf bytes.Buffer
+	check := json.NewEncoder(&buf)
+	for i, v := range values {
+		buf.Reset()
+		if err := check.Encode(v); err != nil {
+			return err
+		}
+		// Encode's output already ends in the newline, and that newline counts:
+		// ReadJSONL's bufio.Scanner buffer caps at MaxJSONLLine bytes and must
+		// hold the record *and* its terminator to find the line end, so a record
+		// is readable when its bytes including the newline fit within the limit —
+		// one byte less payload than the constant's face value. demo's
+		// tooLongForJSONL draws the boundary on the same side, so the capture and
+		// artefact writers accept exactly the same set of records.
+		if buf.Len() > MaxJSONLLine {
+			return fmt.Errorf("%s: record %d encodes to %d bytes, over the %d-byte JSONL line limit", path, i, buf.Len(), MaxJSONLLine)
+		}
+	}
+
 	f, err := OpenFileNoFollow(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err

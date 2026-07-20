@@ -51,11 +51,13 @@ var stopGrace = 5 * time.Second
 var startupWindow = 5 * time.Second
 
 // Test seams: overridden in tests to drive the lifecycle without installing a
-// real signal handler or spawning ffmpeg. In production they are the real
-// implementations.
+// real signal handler, spawning ffmpeg, or binding a port for the demo server.
+// In production they are the real implementations.
 var (
 	notifyContext    = defaultNotifyContext
 	startRecordersFn = startRecorders
+	serveDemoFn      = demo.Serve
+	shutdownDemoFn   = demo.Shutdown
 )
 
 // defaultNotifyContext returns a context cancelled on SIGINT/SIGTERM/SIGHUP —
@@ -142,7 +144,7 @@ func Run(opts Options) error {
 
 	var srv *http.Server
 	if opts.Demo {
-		srv, err = demo.Serve(opts.Addr, dir)
+		srv, err = serveDemoFn(opts.Addr, dir)
 		if err != nil {
 			stopAll(children)
 			return fmt.Errorf("start demo server: %w", err)
@@ -176,16 +178,12 @@ func Run(opts Options) error {
 		// device fault instead of the permission they had never granted.
 		atStartup := time.Since(dead.started) < startupWindow
 		stopAll(children)
-		if srv != nil {
-			_ = srv.Shutdown(context.Background())
-		}
+		stopDemo(srv)
 		return errors.New(classifyRecorderExit(dead.stream, dead.err, dead.stderr.tail(), atStartup))
 	}
 
 	stopAll(children)
-	if srv != nil {
-		_ = srv.Shutdown(context.Background())
-	}
+	stopDemo(srv)
 
 	// Finalisation validates that each recorder actually left a usable artefact.
 	// A recorder blocked on its TCC prompt for the whole session finalises no
@@ -200,6 +198,25 @@ func Run(opts Options) error {
 		return errors.New("capture incomplete — see the messages above")
 	}
 	return nil
+}
+
+// stopDemo stops the demo capture server, when one is running, through demo's
+// bounded shutdown helper. Both of Run's exit paths — the Ctrl+C branch and the
+// recorder-exited branch — go through this one function so neither can drift
+// back to stopping the server itself: srv.Shutdown with a context that never
+// expires blocks for as long as any connection stays open, so a single stalled
+// browser tab left `testimony record -demo` hanging on Ctrl+C instead of
+// finalising the session. That is the hang demo.Shutdown exists to prevent, and
+// it is only prevented where the helper is actually used.
+func stopDemo(srv *http.Server) {
+	if srv == nil {
+		return
+	}
+	// The shutdown error is deliberately dropped: the two capture streams use
+	// direct O_APPEND writes, so records already accepted are durable whether the
+	// drain completed or the deadline forced a Close, and the session must still
+	// be finalised either way.
+	_ = shutdownDemoFn(srv)
 }
 
 // finaliseOutputs validates each stopped recorder's expected artefact and turns

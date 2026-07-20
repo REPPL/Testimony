@@ -95,6 +95,18 @@ func atPositions(findings []Finding) []positioned {
 	return out
 }
 
+// findingLabel names a finding in an error message: its own id when that id is
+// well-formed, and otherwise its position in the answer, which is the only
+// handle the operator has on a finding whose id is unusable. Both the schema
+// rules and the serialised-size check label through here so an operator reading
+// a joined error sees one naming scheme throughout.
+func findingLabel(f Finding, at int) string {
+	if IsFindingID(f.ID) {
+		return f.ID
+	}
+	return fmt.Sprintf("finding #%d", at)
+}
+
 // validate runs every schema rule against the decoded findings and returns all
 // errors (transactional and exhaustive), each naming the finding, the field,
 // and the offending value. Positional labels come from each finding's recorded
@@ -107,9 +119,8 @@ func validate(findings []positioned, idx timelineIndex) []error {
 
 	for _, p := range findings {
 		f := p.finding
-		label := f.ID
-		if !IsFindingID(label) {
-			label = fmt.Sprintf("finding #%d", p.at)
+		label := findingLabel(f, p.at)
+		if !IsFindingID(f.ID) {
 			errs = append(errs, fmt.Errorf("%s: id %q must match ^F-\\d{3}$", label, f.ID))
 		} else if prev, dup := seen[f.ID]; dup {
 			errs = append(errs, fmt.Errorf("%s: duplicate id (first seen at finding #%d)", f.ID, prev))

@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -431,5 +432,116 @@ func TestIngestRejectsOversizedEvidence(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, session.FindingsFile)); statErr == nil {
 		t.Fatalf("findings.jsonl was written despite the oversized evidence array")
+	}
+}
+
+// TestIngestRejectsFindingWithoutT is the missing-anchor regression: a finding
+// that omits "t" must be refused, not filed at the start of the session. Pre-fix
+// Finding.T decoded as a value type, so an absent "t" became 0 — indistinguishable
+// from a finding genuinely anchored at t=0 — and validate's only check on t
+// (the range [0, end] for a normal session) waved it through. Ingest returned no
+// error and the finding was written and rendered at [00:00], tens of seconds from
+// the utterance at t=22 it quotes.
+func TestIngestRejectsFindingWithoutT(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	answer := `{"rubric":"testimony-analysis/v1","findings":[
+	 {"id":"F-001","type":"bug","severity":3,"quote":"I clicked save and nothing happened",
+	  "evidence":["utt-004","ev-003"]}
+	]}`
+	_, err := Ingest(dir, strings.NewReader(answer))
+	if err == nil || !strings.Contains(err.Error(), "missing t") {
+		t.Fatalf("expected a missing-t refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.FindingsFile)); statErr == nil {
+		t.Fatalf("findings.jsonl was written despite the finding having no t")
+	}
+}
+
+// TestIngestAcceptsFindingAtZero is the other half of the missing-t fix: t=0 is
+// a legitimate anchor (a finding at the very start of the session), which is why
+// the check is a nil-pointer test and not a zero test. A zero test would reject
+// this honest finding.
+func TestIngestAcceptsFindingAtZero(t *testing.T) {
+	// utt-004 is moved to t=0 so a finding anchored there is genuinely in range.
+	zeroTimeline := `{"t":0,"src":"speech","id":"utt-004","payload":{"speaker":"P1","t1":6,"text":"Hm. I clicked save and nothing happened. No message."}}
+`
+	dir := writeSession(t, zeroTimeline)
+	answer := `{"rubric":"testimony-analysis/v1","findings":[
+	 {"id":"F-001","t":0,"type":"bug","severity":3,"quote":"I clicked save and nothing happened",
+	  "evidence":["utt-004"]}
+	]}`
+	findings, err := Ingest(dir, strings.NewReader(answer))
+	if err != nil {
+		t.Fatalf("Ingest of a finding anchored at t=0: %v", err)
+	}
+	if len(findings) != 1 || findings[0].T != 0 {
+		t.Fatalf("got %+v, want one finding at t=0", findings)
+	}
+}
+
+// longIDTimeline returns a timeline holding one utterance whose id is ~2 MiB
+// long, and that id. Every line stays under session.MaxJSONLLine, so the
+// timeline itself is readable; a finding citing the id a few times nonetheless
+// serialises past the limit. Long ids are the way to build such a finding
+// without an unreadable fixture: a huge quote cannot do it, because the quote
+// must be a verbatim substring of the cited utterance and so would push that
+// utterance's own line over the limit first.
+func longIDTimeline(t float64, id string) string {
+	return fmt.Sprintf(
+		`{"t":%g,"src":"speech","id":%q,"payload":{"speaker":"P1","t1":%g,"text":"I clicked save and nothing happened. No message."}}`+"\n",
+		t, id, t+6)
+}
+
+// TestIngestRejectsOversizedFindingLine is the findings-brick regression seen
+// through serialised size rather than cardinality: maxEvidence bounds how many
+// ids a finding cites, but nothing bounded how long those ids are, so a finding
+// whose fields are each individually valid still serialised to a findings.jsonl
+// line larger than session.MaxJSONLLine. Pre-fix Ingest wrote it and reported
+// success, leaving the file permanently unreadable to report, review, and the
+// re-ingest recovery path. Nothing may be written, and the refusal must name the
+// offending finding and its size.
+func TestIngestRejectsOversizedFindingLine(t *testing.T) {
+	longID := "utt-" + strings.Repeat("x", 2<<20)
+	dir := writeSession(t, longIDTimeline(22, longID))
+
+	answer := fmt.Sprintf(
+		`{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":[%q,%q,%q]}]}`,
+		longID, longID, longID)
+	_, err := Ingest(dir, strings.NewReader(answer))
+	if err == nil || !strings.Contains(err.Error(), "exceeding the") {
+		t.Fatalf("expected an over-long line refusal, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "F-001") {
+		t.Fatalf("refusal does not name the offending finding:\n%v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.FindingsFile)); statErr == nil {
+		t.Fatalf("findings.jsonl was written despite an over-long finding line")
+	}
+}
+
+// TestIngestOversizedFindingLeavesPriorFileIntact proves the size check is
+// transactional: it runs before any write, so an answer whose second finding is
+// over-long leaves a prior good findings.jsonl exactly as it was, rather than
+// truncating it and then failing.
+func TestIngestOversizedFindingLeavesPriorFileIntact(t *testing.T) {
+	longID := "utt-" + strings.Repeat("x", 2<<20)
+	dir := writeSession(t, timelineFixture+longIDTimeline(23, longID))
+
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err != nil {
+		t.Fatalf("first Ingest: %v", err)
+	}
+	path := filepath.Join(dir, session.FindingsFile)
+	before, _ := os.ReadFile(path)
+
+	answer := fmt.Sprintf(`{"findings":[
+	 {"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"]},
+	 {"id":"F-002","t":23,"type":"friction","severity":2,"quote":"No message","evidence":[%q,%q,%q]}
+	]}`, longID, longID, longID)
+	if _, err := Ingest(dir, strings.NewReader(answer)); err == nil || !strings.Contains(err.Error(), "F-002") {
+		t.Fatalf("expected an over-long line refusal naming F-002, got %v", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatalf("a prior findings.jsonl was modified despite the refusal")
 	}
 }

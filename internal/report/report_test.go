@@ -170,6 +170,73 @@ func TestReportAttachesEventsPerUtteranceWithoutIDs(t *testing.T) {
 	}
 }
 
+// TestReportRendersNegativeSessionRelativeTimes is the clamped-clock regression.
+// A recording whose creation_time predates the manifest t0 yields a negative
+// offset, so utterances, events and findings legitimately sit before t0 —
+// analyze.indexTimeline admits findings anchored there. Pre-fix report.clock
+// clamped every negative time to zero and report.end grew its maximum from the
+// zero value, so this fully pre-t0 session rendered every line as [00:00] and
+// claimed a duration of 00:00 rather than its true span ending at -35 s.
+func TestReportRendersNegativeSessionRelativeTimes(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: "app", Participant: "Alice"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// Every entry precedes t0: an utterance spanning -90 s to -35 s, one click
+	// inside its window, and one standalone click well before it.
+	tl := `{"t":-125,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"early"}}
+{"t":-90,"src":"speech","id":"utt-001","payload":{"speaker":"Alice","t1":-35,"text":"before the clock started"}}
+{"t":-88,"src":"event","id":"ev-002","payload":{"kind":"click","selector":"attached"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	findings := "{\"id\":\"F-001\",\"t\":-90,\"type\":\"bug\",\"severity\":3,\"quote\":\"before the clock\",\"evidence\":[\"utt-001\"],\"status\":\"unverified\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, want := range []string{
+		"[-02:05]", // the standalone event at -125 s
+		"[-01:30]", // the utterance at -90 s
+		"[-01:28]", // the event attached to it
+		"**Duration:** -00:35",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("report missing signed clock %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "[00:00]") {
+		t.Fatalf("a pre-t0 time was clamped to zero:\n%s", md)
+	}
+}
+
+// TestReportClockRoundsSymmetrically guards the sign-splitting arithmetic in
+// clock: a negative time must round by magnitude the way its positive twin
+// does, so the digits never disagree across the sign.
+func TestReportClockRoundsSymmetrically(t *testing.T) {
+	for _, tc := range []struct {
+		sec  float64
+		want string
+	}{
+		{0, "00:00"},
+		{-0.4, "00:00"},
+		{-0.6, "-00:01"},
+		{61.5, "01:02"},
+		{-61.5, "-01:02"},
+		{-90, "-01:30"},
+		{-3600, "-60:00"},
+	} {
+		if got := clock(tc.sec); got != tc.want {
+			t.Fatalf("clock(%g) = %q, want %q", tc.sec, got, tc.want)
+		}
+	}
+}
+
 func findingLines(t *testing.T, dir string) []string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))
