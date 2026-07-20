@@ -15,6 +15,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,8 +62,16 @@ const dirLayout = "2006-01-02_150405"
 // created directory path. Both demo and record call this so the manifest is
 // written once, by one code path.
 func Create(outRoot string, now time.Time, m Manifest) (dir string, err error) {
+	if err := os.MkdirAll(outRoot, 0o755); err != nil {
+		return "", err
+	}
 	dir = filepath.Join(outRoot, now.Format(dirLayout))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// os.Mkdir (not MkdirAll) fails with EEXIST if the directory already exists,
+	// so two captures starting within the same second-granularity instant cannot
+	// silently resolve to — and share — one directory. Reusing it would clobber
+	// the first session's manifest (its t0 anchor) and conflate the two sessions'
+	// append-only streams and capture files.
+	if err := os.Mkdir(dir, 0o755); err != nil {
 		return "", err
 	}
 	m.Session = filepath.Base(dir)
@@ -173,7 +182,10 @@ func ReadJSONL[T any](path string) ([]T, error) {
 	for sc.Scan() {
 		line++
 		raw := sc.Bytes()
-		if len(raw) == 0 {
+		// Skip blank lines, including whitespace-only ones (as may appear in a
+		// hand-edited or exchanged session), matching analyze.Load so the two
+		// JSONL readers agree on what counts as blank.
+		if len(bytes.TrimSpace(raw)) == 0 {
 			continue
 		}
 		var v T
