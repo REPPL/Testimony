@@ -1,13 +1,24 @@
 package record
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// deviceListTimeout bounds the avfoundation device enumeration. It is a var, not a
+// const, only so a test could shrink it; production never reassigns it. Enumeration
+// normally returns in well under a second, but a wedged CoreAudio/camera driver or a
+// stuck TCC daemon can block the AVFoundation query indefinitely, and probeDevices
+// runs before the interrupt handler can stop anything — so without a deadline a single
+// bad device hangs `testimony record` forever, with the session dir already created
+// and nothing recording.
+var deviceListTimeout = 15 * time.Second
 
 // micArgs builds the ffmpeg argv that captures the system default microphone to
 // a canonical 16 kHz mono PCM WAV — exactly the parameters
@@ -125,8 +136,16 @@ func selectDevices(video, audio []avDevice, wantScreen bool) (screenIndex int, m
 // returns the detected audio-input names for the caller to log. Impure (spawns
 // ffmpeg); isolated here and skipped in CI.
 func probeDevices(ffmpeg string, wantScreen bool) (screenIndex int, mics []string, err error) {
-	cmd := exec.Command(ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", "")
+	ctx, cancel := context.WithTimeout(context.Background(), deviceListTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", "")
 	out, runErr := cmd.CombinedOutput()
+	// A wedged device/driver can make the enumeration block for ever; the context
+	// deadline turns that into an actionable error rather than a silent hang before
+	// any recorder (or the interrupt handler) is live.
+	if ctx.Err() == context.DeadlineExceeded {
+		return 0, nil, fmt.Errorf("ffmpeg avfoundation device listing timed out after %s — a capture device or driver is unresponsive; disconnect or disable it, then re-run", deviceListTimeout)
+	}
 	// ffmpeg prints the listing to stderr and then exits non-zero by design, so an
 	// *exec.ExitError is expected and ignored — the listing is still in out. But a
 	// failure to run ffmpeg at all (a corrupt or wrong-architecture binary, a

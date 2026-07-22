@@ -10,6 +10,68 @@ called out in a **Breaking** section.
 
 ## [Unreleased]
 
+A second robustness pass over the same capture → analysis pipeline, closing the
+defects a multi-round review surfaced after v0.3.0. Every fix carries a
+regression test; the review finished with two consecutive passes finding only
+nitpicks.
+
+### Fixed
+
+Evidence-record and validation integrity:
+
+- A failed write of `findings.jsonl` (a full disk part-way through) no longer
+  leaves a truncated fragment that bricks the file against its own recovery —
+  the re-ingest path could not even parse it to overwrite it. The write now rolls
+  back to an empty, re-ingestable file.
+- `report.md`, the shareable evidence artefact, no longer passes attacker-authored
+  text through as live Markdown: an image or link in a transcript quote (e.g. a
+  remote-image tracking beacon) is neutralised so it renders as literal text.
+- A finding whose verbatim quote consists only of stripped control/bidi
+  characters is rejected, rather than passing the quote check against an empty
+  string.
+- A hand-edited `findings.jsonl` carrying two findings with the same `id` is
+  refused on load, naming the line, instead of silently collapsing them under one
+  status in the report.
+- An interaction whose epoch-millisecond time is astronomically large is refused
+  at merge (matching the existing utterance-side bound), rather than producing a
+  session span the report can only render as `--:--`.
+
+Robustness against malformed or exchanged sessions:
+
+- `analyze -ingest FILE` and `analyze -out FILE` now go through the same
+  symlink/FIFO-refusing guard every other session-artefact read and write uses, so
+  a pointer into an untrusted session directory cannot redirect the write out of
+  the session or hang the read on a planted FIFO.
+- The session's own `audio.wav` is refused when it is a symlink, so a shared
+  session cannot redirect transcription at an out-of-session file whose words would
+  then land in the (re-shareable) `transcript.jsonl`.
+- A missing-vs-unreadable `audio.wav` is distinguished, so a permissions or
+  symlink-loop error is no longer misreported as "no audio, run record first".
+- A finding id embedded in a `review` error message is sanitised before it reaches
+  the terminal, closing an ANSI-escape path through a hand-authored id.
+- A derived or persisted audio offset beyond a plausible magnitude is refused at
+  `transcribe`, where the bad recording metadata enters, rather than one command
+  later at `merge`.
+
+Capture reliability (`record`/`transcribe`, macOS):
+
+- Device enumeration now runs under a timeout, so a wedged capture device or
+  driver no longer hangs `record` before it can be interrupted.
+- A recorder's captured stderr is bounded, so a device-stall log flood over a long
+  session cannot exhaust memory and orphan the recorders.
+- Voice-recording conversion writes to a temp file and renames on success, so an
+  interrupted or crashed `ffmpeg` never leaves a partial `audio.wav` a later run
+  would transcribe as if complete.
+- A recorder that had to be force-stopped (it missed the finalisation grace) is
+  flagged, so a truncated, unplayable `screen.mp4` is no longer reported as good.
+
+### Changed
+
+- **Behaviour:** `analyze -ingest` and `analyze -out` now require a regular file
+  and reject named pipes, shell process substitution (`-ingest <(…)`), and
+  `/dev/stdout`. Use `-ingest -` to read the answer from stdin, and omit `-out` to
+  write the request to stdout — the supported equivalents.
+
 ## [0.3.0] - 2026-07-22
 
 A robustness release. No new commands: the pipeline gains no surface, but the

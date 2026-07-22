@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,65 @@ import (
 
 	"github.com/REPPL/Testimony/internal/session"
 )
+
+// failAfterWriter is a findingsFile whose Write fails, recording whether the
+// caller truncated back to 0 *after* the failed write — the rollback writeFindings
+// must perform so a partial write never bricks findings.jsonl against its own
+// recovery. The post-write ordering matters: writeFindings also truncates to 0
+// before writing, so only a truncate that follows the write attempt proves the
+// rollback ran.
+type failAfterWriter struct {
+	wrote      bool
+	rolledBack bool
+}
+
+func (w *failAfterWriter) Write(p []byte) (int, error) {
+	w.wrote = true
+	return 0, errors.New("no space left on device")
+}
+func (w *failAfterWriter) Truncate(size int64) error {
+	if w.wrote && size == 0 {
+		w.rolledBack = true
+	}
+	return nil
+}
+func (w *failAfterWriter) Seek(offset int64, whence int) (int64, error) { return 0, nil }
+
+// TestWriteFindingsRollsBackOnWriteError is the corrupt-on-failure regression for
+// commitFindings. It runs f.Truncate(0) before writing, so a short write (ENOSPC)
+// used to leave a truncated JSON fragment that not only broke every reader but
+// blocked the recovery path — the next analyze -ingest's holdsVerdicts errors on
+// the fragment before it can rewrite. writeFindings must roll the file back to
+// empty (parseable, re-ingestable) on any write error. Pre-fix (neutralise the
+// `f.Truncate(0)` in writeFindings' error path to demonstrate) no truncate follows
+// the failed write and this fails.
+func TestWriteFindingsRollsBackOnWriteError(t *testing.T) {
+	w := &failAfterWriter{}
+	err := writeFindings(w, []Finding{{ID: "F-001", T: 1, Type: "bug", Severity: 3, Quote: "x", Evidence: []string{"utt-001"}, Status: "unverified"}})
+	if err == nil {
+		t.Fatal("writeFindings returned nil on a failing write; want the write error")
+	}
+	if !w.rolledBack {
+		t.Fatal("writeFindings did not truncate back to empty after the failed write; a partial line would survive and brick re-ingest")
+	}
+}
+
+// TestIngestRejectsQuoteThatSanitisesToEmpty is the verbatim-bypass regression. A
+// quote of only stripped characters (a lone U+202E) is raw-non-empty but SafeText
+// reduces it to "", and strings.Contains(text, "") is always true, so pre-fix the
+// verbatim-substring gate passed for a quote never spoken and the finding was
+// written. Ingest must now refuse it.
+func TestIngestRejectsQuoteThatSanitisesToEmpty(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	answer := "{\"findings\":[{\"id\":\"F-001\",\"t\":22,\"type\":\"bug\",\"severity\":3,\"quote\":\"‮\",\"evidence\":[\"utt-004\"]}]}"
+	_, err := Ingest(dir, strings.NewReader(answer))
+	if err == nil || !strings.Contains(err.Error(), "quote must be non-empty") {
+		t.Fatalf("expected a sanitised-empty quote refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.FindingsFile)); statErr == nil {
+		t.Fatalf("findings.jsonl was written despite a quote that sanitises to nothing")
+	}
+}
 
 // timelineFixture is a minimal merged timeline: one spoken utterance and two
 // events, enough to exercise every validation rule. sessionEnd is 28 (utt-004
@@ -143,6 +203,28 @@ func TestIngestDuplicateID(t *testing.T) {
 	_, err := Ingest(dir, strings.NewReader(dup))
 	if err == nil || !strings.Contains(err.Error(), "duplicate id") {
 		t.Fatalf("expected duplicate id error, got %v", err)
+	}
+}
+
+// TestLoadRejectsDuplicateFindingID is the display-collapse regression on the read
+// side. Ingest already blocks duplicate ids in an answer, but a hand-edited or
+// exchanged findings.jsonl can carry two findings sharing one id; every id-keyed
+// consumer (EffectiveStatus, review.findByID) then silently misbehaves. ParseRecords
+// must refuse the file and name the offending line so the id-uniqueness those
+// consumers assume is actually enforced on every load path.
+func TestLoadRejectsDuplicateFindingID(t *testing.T) {
+	dir := t.TempDir()
+	dup := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"a","evidence":["utt-004"],"status":"unverified"}` + "\n" +
+		`{"id":"F-001","t":23,"type":"friction","severity":2,"quote":"b","evidence":["utt-004"],"status":"unverified"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(dup), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	_, _, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "duplicate finding id") {
+		t.Fatalf("expected a duplicate-finding-id refusal naming line 2, got %v", err)
+	}
+	if !strings.Contains(err.Error(), ":2:") {
+		t.Fatalf("refusal should name the offending line, got %v", err)
 	}
 }
 

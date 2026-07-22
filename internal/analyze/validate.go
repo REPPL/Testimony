@@ -195,7 +195,14 @@ func validate(findings []positioned, idx timelineIndex) []error {
 		// already sanitised via the index): the agent copies the quote from the
 		// sanitised request, so validating against the raw utterance would reject an
 		// honest verbatim copy whenever the utterance carried a stripped character.
-		if f.Quote == "" {
+		// The quote is compared in SafeText form, so its emptiness must be judged
+		// there too. A raw quote of only stripped characters (e.g. a lone U+202E) is
+		// non-empty and clears the first check, but SafeText reduces it to "" and
+		// strings.Contains(anyText, "") is always true — so the verbatim-substring
+		// gate would pass for a quote the participant never spoke, and the finding
+		// would carry a quote that sanitises to nothing. Reject the sanitised-empty
+		// quote explicitly, before the substring test that "" trivially satisfies.
+		if session.SafeText(f.Quote) == "" {
 			errs = append(errs, fmt.Errorf("%s: quote must be non-empty", label))
 		} else if !containsAny(uttTexts, session.SafeText(f.Quote)) {
 			errs = append(errs, fmt.Errorf("%s: quote is not a verbatim substring of any cited evidence utterance", label))

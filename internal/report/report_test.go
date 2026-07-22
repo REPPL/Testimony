@@ -238,6 +238,90 @@ func TestReportClockRoundsSymmetrically(t *testing.T) {
 	}
 }
 
+// TestReportAttachesEventsByPositionNotDuplicateID is the event-side twin of
+// TestReportAttachesEventsPerUtteranceWithoutIDs. report reads timeline.jsonl
+// directly, so an exchanged or hand-edited one can carry two events sharing an id
+// that merge would have made unique. Pre-fix the attach loop matched events by id,
+// so an in-window event pulled its far-away same-id twin under the utterance too and
+// the id-keyed standalone dedup then hid it — fabricating what the participant did
+// while speaking. Attaching by position must keep the far event standalone, at its
+// own time, and off the utterance.
+func TestReportAttachesEventsByPositionNotDuplicateID(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: "app", Participant: "Alice"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// Two events share id "ev-001": one at 10.5 s (inside the utterance window at
+	// 10 s), one at 9000 s (far outside). Only the near one may attach.
+	tl := `{"t":10,"src":"speech","id":"utt-001","payload":{"speaker":"Alice","t1":11,"text":"spoke here"}}
+{"t":10.5,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"near"}}
+{"t":9000,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"far"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// The far event renders exactly once, as a standalone at its own [150:00] stamp,
+	// never nested under the utterance. Pre-fix it appeared under the utterance and
+	// was suppressed from the standalone flush.
+	if n := strings.Count(md, "`far`"); n != 1 {
+		t.Fatalf("far event rendered %d times, want exactly 1:\n%s", n, md)
+	}
+	// It renders as a top-level standalone ("- ", column 0), never nested under the
+	// utterance ("  - ", indented) — the pre-fix bug attached it under the utterance.
+	if !strings.Contains(md, "\n- [150:00] click `far`") {
+		t.Fatalf("far same-id event was not rendered as a standalone at its own time:\n%s", md)
+	}
+	if strings.Contains(md, "  - [150:00]") {
+		t.Fatalf("far same-id event was wrongly nested under the utterance:\n%s", md)
+	}
+	// The near one attaches under the utterance (indented list item at its own 00:11).
+	if !strings.Contains(md, "  - [00:11] click `near`") {
+		t.Fatalf("near event did not attach to its utterance:\n%s", md)
+	}
+}
+
+// TestReportNeutralisesInlineMarkdown is the beacon-injection regression. report.md
+// is the shareable evidence artefact; an attacker-authored quote or event text of
+// `![x](http://evil/beacon.png)` used to survive verbatim, so opening the report in
+// any Markdown viewer fired a remote-image request — a tracking/exfil beacon. The
+// active image/link markup must be neutralised (backslash-escaped) so it renders as
+// literal text, while the words stay legible.
+func TestReportNeutralisesInlineMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: "app", Participant: "Alice"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// An utterance whose text is an image-beacon, and a finding whose quote is one.
+	tl := "{\"t\":1,\"src\":\"speech\",\"id\":\"utt-001\",\"payload\":{\"speaker\":\"Alice\",\"t1\":2,\"text\":\"![t](http://evil/a.png)\"}}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	findings := "{\"id\":\"F-001\",\"t\":1,\"type\":\"bug\",\"severity\":3,\"quote\":\"![q](http://evil/b.png)\",\"evidence\":[\"utt-001\"],\"status\":\"unverified\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// No active image markup survives: the `!` immediately followed by `[` and the
+	// `](` link opener are the beacon triggers, and neither may appear unescaped.
+	if strings.Contains(md, "![t](http://evil/a.png)") || strings.Contains(md, "![q](http://evil/b.png)") {
+		t.Fatalf("active image-beacon markdown survived into report.md:\n%s", md)
+	}
+	if strings.Contains(md, "](http://evil") {
+		t.Fatalf("an unescaped link/image opener survived into report.md:\n%s", md)
+	}
+	// The words are still present (escaped, not stripped), so the evidence stays legible.
+	if !strings.Contains(md, "evil/a.png") || !strings.Contains(md, "evil/b.png") {
+		t.Fatalf("neutralisation dropped the text instead of escaping it:\n%s", md)
+	}
+}
+
 func findingLines(t *testing.T, dir string) []string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))

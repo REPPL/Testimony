@@ -821,6 +821,92 @@ func TestStopChildEscalatesToSIGKILL(t *testing.T) {
 	}
 }
 
+// TestLockedBufferBoundsMemory is the OOM regression: a device-stall stderr flood
+// over a long session used to grow lockedBuffer without bound, and an OOM parent
+// orphans the ffmpeg children still recording. The buffer must retain only a bounded
+// trailing window while still surfacing the most recent (diagnostic) bytes.
+func TestLockedBufferBoundsMemory(t *testing.T) {
+	var b lockedBuffer
+	// Simulate a flood far larger than the retention window: 4 MiB in 4 KiB writes.
+	chunk := bytes.Repeat([]byte("frame dropped\n"), 300) // ~4 KiB
+	total := 0
+	for i := 0; i < 1024; i++ {
+		n, err := b.Write(chunk)
+		if err != nil || n != len(chunk) {
+			t.Fatalf("Write returned (%d,%v), want (%d,nil)", n, err, len(chunk))
+		}
+		total += len(chunk)
+	}
+	if total <= stderrRetain {
+		t.Fatalf("test wrote %d bytes, not enough to exceed the %d retention cap", total, stderrRetain)
+	}
+	// Retained bytes are bounded regardless of how much was written.
+	if len(b.buf) > stderrRetain {
+		t.Fatalf("lockedBuffer retained %d bytes, exceeding the %d cap", len(b.buf), stderrRetain)
+	}
+	// The tail is still available and marks the elision, so diagnostics survive.
+	tail := b.tail()
+	if !strings.HasPrefix(tail, "…") {
+		t.Fatalf("tail after a flood must mark the dropped prefix with an ellipsis, got %q…", tail[:min(20, len(tail))])
+	}
+	if !strings.Contains(tail, "frame dropped") {
+		t.Fatalf("tail must retain the most recent stderr content, got %q", tail)
+	}
+
+	// A small total (under the cap) is retained verbatim with no ellipsis.
+	var s lockedBuffer
+	s.Write([]byte("short output"))
+	if got := s.tail(); got != "short output" {
+		t.Fatalf("under-cap tail must be verbatim, got %q", got)
+	}
+}
+
+// TestFinaliseOutputsFlagsSIGKILLedRecorder is the truncated-artefact regression: a
+// recorder force-stopped after missing the finalisation grace can leave a non-empty
+// but unplayable file (an MP4 with no moov atom), which the size-only check used to
+// bless as good. finaliseOutputs must flag a killed recorder even when its file has
+// bytes; a killed PCM audio.wav (which survives a kill) is still offered.
+func TestFinaliseOutputsFlagsSIGKILLedRecorder(t *testing.T) {
+	dir := t.TempDir()
+	// Both streams left a non-empty file, but both were SIGKILLed at stop.
+	if err := os.WriteFile(filepath.Join(dir, session.AudioFile), []byte("RIFF....partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.ScreenFile), []byte("\x00\x00\x00\x18ftyp....truncated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGKILL), &lockedBuffer{})
+	scr := newLiveChild(streamScreen, newFakeProc(syscall.SIGKILL), &lockedBuffer{})
+	// Force the SIGKILL escalation (short grace) so both are marked killed.
+	stopChild(mic, 5*time.Millisecond)
+	stopChild(scr, 5*time.Millisecond)
+	if !mic.killed || !scr.killed {
+		t.Fatalf("stopChild must mark a SIGKILLed recorder killed: mic=%v scr=%v", mic.killed, scr.killed)
+	}
+
+	audioReady, problems := finaliseOutputs(dir, []*liveChild{mic, scr})
+	// Both killed recorders are flagged despite non-empty files.
+	if len(problems) != 2 {
+		t.Fatalf("both SIGKILLed recorders must be flagged, got %d problems: %v", len(problems), problems)
+	}
+	var sawAudio, sawScreen bool
+	for _, p := range problems {
+		if strings.Contains(p, session.AudioFile) && strings.Contains(p, "force-stopped") {
+			sawAudio = true
+		}
+		if strings.Contains(p, session.ScreenFile) && strings.Contains(p, "truncated") {
+			sawScreen = true
+		}
+	}
+	if !sawAudio || !sawScreen {
+		t.Fatalf("expected force-stop warnings for both streams, got %v", problems)
+	}
+	// A killed WAV that has bytes is still offered for transcription (PCM survives a kill).
+	if !audioReady {
+		t.Fatalf("a present (if kill-truncated) audio.wav should still be offered for transcription")
+	}
+}
+
 func TestAnyExitReportsDeadChild(t *testing.T) {
 	live := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
 	dead := newLiveChild(streamScreen, newFakeProc(syscall.SIGINT), &lockedBuffer{})

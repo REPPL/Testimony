@@ -140,28 +140,60 @@ func commitFindings(dir string, findings []Finding) error {
 		f.Close()
 		return fmt.Errorf("refusing to overwrite %s: it already holds verdict records (the retained precision record)", session.FindingsFile)
 	}
-	if err := f.Truncate(0); err != nil {
+	if err := writeFindings(f, findings); err != nil {
 		f.Close()
-		return fmt.Errorf("write findings: %w", err)
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		f.Close()
-		return fmt.Errorf("write findings: %w", err)
-	}
-	w := bufio.NewWriter(f)
-	enc := json.NewEncoder(w)
-	for _, v := range findings {
-		if err := enc.Encode(v); err != nil {
-			f.Close()
-			return fmt.Errorf("write findings: %w", err)
-		}
-	}
-	if err := w.Flush(); err != nil {
-		f.Close()
-		return fmt.Errorf("write findings: %w", err)
+		return err
 	}
 	// Close releases the lock with the descriptor.
 	if err := f.Close(); err != nil {
+		return fmt.Errorf("write findings: %w", err)
+	}
+	return nil
+}
+
+// findingsFile is the subset of *os.File writeFindings needs; a fake satisfies it
+// in tests to exercise the truncate-then-write rollback.
+type findingsFile interface {
+	io.Writer
+	Truncate(size int64) error
+	Seek(offset int64, whence int) (int64, error)
+}
+
+// writeFindings replaces f's contents with the findings, one JSON object per line,
+// rolling the file back to empty if the write only partly lands.
+//
+// The whole set is encoded into one buffer before f is truncated, so the truncate
+// and the write are a single Write of pre-built bytes rather than a streamed series
+// of encodes that a mid-way I/O error (ENOSPC) could leave half-flushed. That
+// matters because commitFindings ran f.Truncate(0) first: without the rollback a
+// short write left findings.jsonl holding a truncated, newline-less JSON fragment,
+// which not only breaks every reader but blocks the tool's own recovery — the next
+// analyze -ingest calls holdsVerdicts, which json.Unmarshals every line and errors
+// on the fragment before it can conclude "no verdicts" and rewrite. On any write
+// error the file is therefore truncated back to empty: an empty findings.jsonl is
+// parseable (zero findings, zero verdicts) and re-ingestable, so the failure state
+// no longer forecloses its own repair. This is the same partial-write rollback
+// review.writeVerdict and demo.appendRecords already apply; commitFindings was the
+// one writer without it. The set is bounded by oversizedFindings before this runs,
+// so buffering it whole holds one bounded answer, not an unbounded stream.
+func writeFindings(f findingsFile, findings []Finding) error {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, v := range findings {
+		if err := enc.Encode(v); err != nil {
+			return fmt.Errorf("write findings: %w", err)
+		}
+	}
+	if err := f.Truncate(0); err != nil {
+		return fmt.Errorf("write findings: %w", err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("write findings: %w", err)
+	}
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		// Best-effort roll back to an empty (parseable, re-ingestable) file, then
+		// surface the original error.
+		f.Truncate(0)
 		return fmt.Errorf("write findings: %w", err)
 	}
 	return nil
@@ -291,7 +323,7 @@ func decodeFinding(raw json.RawMessage) (Finding, error) {
 // the precision history the guard exists to protect.
 func holdsVerdicts(f io.Reader, path string) (bool, error) {
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	sc.Buffer(make([]byte, 0, 64*1024), session.MaxJSONLLine)
 	for sc.Scan() {
 		raw := sc.Bytes()
 		if len(bytes.TrimSpace(raw)) == 0 {

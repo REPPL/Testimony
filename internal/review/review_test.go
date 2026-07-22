@@ -323,6 +323,37 @@ func TestAppendVerdictTerminatesAnUnterminatedLastLine(t *testing.T) {
 	}
 }
 
+// TestVerifyTargetErrorSanitisesFindingID is the terminal-injection regression for
+// verifyTarget's error strings. A finding id in a hand-authored or exchanged
+// findings.jsonl is attacker-controlled; review SafeTexts it at every other terminal
+// sink (printFinding, describe), but the verifyTarget/AppendVerdict error strings
+// embedded it raw via %s, and cli.fail prints those to stderr — so an ESC-bearing id
+// drove ANSI escape sequences into the operator's terminal. Every finding-id error
+// path must route the id through session.SafeText. Here the verdict targets an id not
+// present in the file (cur == nil), firing the "no longer in" error.
+func TestVerifyTargetErrorSanitisesFindingID(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findingsFixture), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	// An id carrying an ESC (0x1b) and a bell (0x07) — an ANSI/OSC sequence — that is
+	// not present in the file, so verifyTarget takes its cur==nil branch.
+	evilID := "\x1b]0;pwned\x07F-404"
+	rec := analyze.Verdict{Kind: "verdict", Finding: evilID, Verdict: "confirmed", At: "2026-07-17"}
+	expect := &analyze.Finding{ID: evilID, T: 1, Type: "bug", Severity: 3, Quote: "x", Evidence: []string{"utt-001"}}
+	err := AppendVerdict(dir, rec, expect)
+	if err == nil {
+		t.Fatal("AppendVerdict accepted a verdict for an absent finding; want a mismatch error")
+	}
+	if strings.ContainsRune(err.Error(), '\x1b') || strings.ContainsRune(err.Error(), '\x07') {
+		t.Fatalf("verifyTarget error carries raw terminal-control bytes from the finding id: %q", err.Error())
+	}
+	// The id's printable tail still identifies the finding to the operator.
+	if !strings.Contains(err.Error(), "F-404") {
+		t.Fatalf("sanitised error dropped the finding id entirely: %q", err.Error())
+	}
+}
+
 // shortWriteFile is a verdictFile whose Write persists a prefix and then errors,
 // standing in for a full disk (write(2) fills the remaining space, returns a
 // short count, and the next write returns ENOSPC — os.File.Write persists the

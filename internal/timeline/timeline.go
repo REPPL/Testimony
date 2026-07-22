@@ -141,7 +141,10 @@ func SpeechEnd(e Entry) float64 {
 }
 
 // EventsNear returns the IDs of event entries that fall inside the utterance
-// span [u.T0-window, u.T1+window]. Used by the report's join step.
+// span [u.T0-window, u.T1+window]. report inlines this same window test in its
+// join step (indexing events by position, not id, so duplicate ids in an
+// exchanged timeline cannot misattribute); this remains the documented statement
+// of the join window.
 func EventsNear(entries []Entry, u Entry, window float64) []string {
 	lo := u.T - window
 	hi := SpeechEnd(u) + window
@@ -192,7 +195,7 @@ const maxUtteranceSeconds = 1e9
 // for the same reason: it would join the timeline naming no observed action.
 // Refusing the whole merge names the offending line so the operator repairs the
 // capture instead of reading a corrupted account of the session.
-func checkedInteractions(path string, raw []rawInteraction) ([]Interaction, error) {
+func checkedInteractions(path string, t0EpochMS int64, raw []rawInteraction) ([]Interaction, error) {
 	out := make([]Interaction, 0, len(raw))
 	for i, r := range raw {
 		if r.T == nil {
@@ -206,6 +209,19 @@ func checkedInteractions(path string, raw []rawInteraction) ([]Interaction, erro
 		// session start, inflating the report's span while Merge still exits 0.
 		if *r.T <= 0 {
 			return nil, fmt.Errorf("%s: interaction %d has t %d; an epoch-millisecond time must be positive", path, i+1, *r.T)
+		}
+		// Bound the resulting session-relative magnitude, the epoch-ms twin of
+		// checkedUtterances' |t0| ≤ maxUtteranceSeconds check. The sign check above
+		// rules out the negative extreme, but a huge positive t (up to MaxInt64) still
+		// yields rel = (t − t0)/1000 of ~9e15 s — no session time — which merge writes
+		// while exiting 0, then report's end() reports as the session span and clock()
+		// renders as the broken "--:--", and it also inflates analyze.indexTimeline's
+		// idx.end so a finding may be anchored anywhere up to it. checkedUtterances
+		// refuses the same absurd magnitude on the speech side; without this the
+		// interaction side was the asymmetric gap, admitting a session-relative time
+		// its own twin rejects. t0 is the manifest anchor Merge resolved for this call.
+		if rel := float64(*r.T-t0EpochMS) / 1000.0; math.Abs(rel) > maxUtteranceSeconds {
+			return nil, fmt.Errorf("%s: interaction %d has t %d, a session-relative time of %gs that exceeds %g in magnitude", path, i+1, *r.T, rel, maxUtteranceSeconds)
 		}
 		if r.Kind == "" {
 			return nil, fmt.Errorf("%s: interaction %d is missing kind; an event must name what happened", path, i+1)
@@ -330,7 +346,7 @@ func Merge(dir string) (speech, events int, err error) {
 		}
 	}
 
-	ints, err := checkedInteractions(intsPath, raw)
+	ints, err := checkedInteractions(intsPath, t0, raw)
 	if err != nil {
 		return 0, 0, err
 	}

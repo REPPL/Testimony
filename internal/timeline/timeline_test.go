@@ -209,6 +209,34 @@ func TestMergeRejectsInteractionMissingKind(t *testing.T) {
 	}
 }
 
+// TestMergeRejectsInteractionHugeT is the magnitude twin the interaction side was
+// missing: the sign check refuses t <= 0, but a huge positive t (here ~9e18 ms)
+// passes it and yields a session-relative time of ~9e15 s — no session time. Pre-fix
+// merge wrote it and exited 0, then report rendered the span as the broken "--:--"
+// and analyze.indexTimeline's idx.end inflated to admit findings anchored anywhere up
+// to it. checkedUtterances already bounds the same magnitude on the speech side
+// (TestMergeRejectsUtteranceHugeT0); checkedInteractions must too, naming the line and
+// writing no timeline.
+func TestMergeRejectsInteractionHugeT(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	lines := "" +
+		`{"t":` + strconv.FormatInt(t0+9_500, 10) + `,"kind":"click","selector":"[data-testid=save-btn]"}` + "\n" +
+		`{"t":9000000000000000000,"kind":"click","selector":"[data-testid=tab-appearance]"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.InteractionsFile), []byte(lines), 0o644); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+	_, _, err := Merge(dir)
+	if err == nil || !strings.Contains(err.Error(), "interaction 2") {
+		t.Fatalf("expected an out-of-range-magnitude error naming interaction 2, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the out-of-range interaction time")
+	}
+}
+
 // TestMergeAcceptsInteractionAtT0 guards the other half of the required-field
 // check: an interaction captured at exactly t0 has a relative time of 0, which a
 // value-typed decode cannot distinguish from an absent "t". Alice clicking the

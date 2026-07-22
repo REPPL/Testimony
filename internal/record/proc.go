@@ -1,7 +1,6 @@
 package record
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"sync"
@@ -35,27 +34,59 @@ func (e *execProc) Signal(sig os.Signal) error {
 
 func (e *execProc) Wait() error { return e.cmd.Wait() }
 
-// lockedBuffer is a concurrency-safe sink for a child's stderr: os/exec copies
-// stderr on its own goroutine while the lifecycle reads the tail from another.
+// stderrRetain caps how much of a child's stderr lockedBuffer keeps. A record
+// session is long-running by design, and avfoundation floods stderr when a device
+// stalls ("frame dropped", mux-queue warnings), so an unbounded buffer could grow by
+// hundreds of MB over a session and OOM the parent — which, because each recorder is
+// in its own process group with the parent as the only signaller, would orphan the
+// ffmpeg children still recording. Only the trailing bytes are ever read (tail() uses
+// ≤1200), so retaining a bounded window loses nothing diagnostic while bounding memory.
+const stderrRetain = 8 << 10
+
+// lockedBuffer is a concurrency-safe, memory-bounded sink for a child's stderr:
+// os/exec copies stderr on its own goroutine while the lifecycle reads the tail from
+// another. It keeps only the trailing stderrRetain bytes.
 type lockedBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+	mu      sync.Mutex
+	buf     []byte // trailing bytes only, len capped at stderrRetain
+	dropped bool   // true once any earlier bytes were discarded
 }
 
 func (l *lockedBuffer) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.buf.Write(p)
+	n := len(p)
+	if n >= stderrRetain {
+		// This write alone overflows the window; keep only its own tail, without
+		// growing the backing array.
+		l.buf = append(l.buf[:0], p[n-stderrRetain:]...)
+		l.dropped = true
+		return n, nil
+	}
+	l.buf = append(l.buf, p...)
+	if len(l.buf) > stderrRetain {
+		// Compact the trailing window to the front of the same backing array
+		// (overlapping forward copy, which append/copy handle), so memory stays bounded.
+		drop := len(l.buf) - stderrRetain
+		l.buf = append(l.buf[:0], l.buf[drop:]...)
+		l.dropped = true
+	}
+	return n, nil
 }
 
-// tail returns the trailing portion of the captured stderr for error messages.
+// tail returns the trailing portion of the captured stderr for error messages,
+// prefixing an ellipsis whenever earlier bytes were dropped (by the retention cap or
+// the tail bound), so a truncation is visible rather than silent.
 func (l *lockedBuffer) tail() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	const max = 1200
-	b := l.buf.Bytes()
+	b := l.buf
 	if len(b) > max {
 		return "…" + string(b[len(b)-max:])
+	}
+	if l.dropped {
+		return "…" + string(b)
 	}
 	return string(b)
 }
@@ -68,6 +99,7 @@ type liveChild struct {
 	started time.Time     // when watching began; used to tell a start-up failure from a mid-session stop
 	done    chan struct{} // closed once, when Wait returns
 	err     error         // Wait result; read only after done is closed
+	killed  bool          // set by stopChild when the grace expired and SIGKILL was sent; read after stopAll
 }
 
 // watch starts the single reaper goroutine. It must be called exactly once,
@@ -94,7 +126,14 @@ func stopChild(c *liveChild, grace time.Duration) {
 	select {
 	case <-c.done:
 	case <-time.After(grace):
+		// The recorder did not finalise its container within the grace period. SIGKILL
+		// leaves whatever bytes were flushed — for an MP4, whose moov atom is written
+		// only on clean shutdown, that is very likely a truncated, unplayable file. Mark
+		// it so finaliseOutputs surfaces the risk instead of blessing the file by size.
+		// killed is written here on the caller's goroutine (stopAll, sequential) and
+		// read only after stopAll returns, so no synchronisation is needed.
 		_ = c.p.Signal(syscall.SIGKILL)
+		c.killed = true
 		<-c.done
 	}
 }

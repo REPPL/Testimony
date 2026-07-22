@@ -107,6 +107,16 @@ func Load(dir string) ([]Finding, []Verdict, error) {
 func ParseRecords(r io.Reader, name string) ([]Finding, []Verdict, error) {
 	var findings []Finding
 	var verdicts []Verdict
+	// Finding ids must be unique across the file. Ingest already rejects duplicates
+	// in an answer (validate), but a hand-edited or exchanged findings.jsonl can carry
+	// two findings sharing one id — and every id-keyed consumer then silently
+	// misbehaves: EffectiveStatus collapses them onto one status entry, so one verdict
+	// paints both findings in the report, and review's findByID only ever reaches the
+	// first. Refusing the file here, naming the offending line, turns that
+	// display-collapse into an honest error the operator can repair, and keeps the
+	// id-uniqueness EffectiveStatus/findByID assume true actually true on every path
+	// that loads findings.
+	seenID := map[string]bool{}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), session.MaxJSONLLine)
 	line := 0
@@ -144,6 +154,10 @@ func ParseRecords(r io.Reader, name string) ([]Finding, []Verdict, error) {
 		if err := json.Unmarshal(raw, &fnd); err != nil {
 			return nil, nil, fmt.Errorf("%s:%d: %w", name, line, err)
 		}
+		if seenID[fnd.ID] {
+			return nil, nil, fmt.Errorf("%s:%d: duplicate finding id %q; each finding must have a unique id", name, line, fnd.ID)
+		}
+		seenID[fnd.ID] = true
 		findings = append(findings, fnd)
 	}
 	if err := sc.Err(); err != nil {

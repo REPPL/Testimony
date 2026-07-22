@@ -228,7 +228,22 @@ func stopDemo(srv *http.Server) {
 func finaliseOutputs(dir string, children []*liveChild) (audioReady bool, problems []string) {
 	for _, c := range children {
 		out := expectedOutput(dir, c.stream)
-		if fi, err := os.Stat(out); err == nil && fi.Size() > 0 {
+		fi, err := os.Stat(out)
+		hasData := err == nil && fi.Size() > 0
+		if c.killed {
+			// The recorder was force-terminated because it did not finalise within the
+			// grace period, so even a non-empty file may be truncated/unplayable (an MP4
+			// missing its moov atom especially). Surface it rather than let the size
+			// check bless a broken artefact. A PCM WAV survives a kill largely intact
+			// (only the RIFF sizes go stale), so a present audio.wav is still offered for
+			// transcription; a killed screen.mp4 is not consumed downstream regardless.
+			problems = append(problems, classifyKilledOutput(c.stream, filepath.Base(out), hasData, c.stderr.tail()))
+			if c.stream == streamMicrophone && hasData {
+				audioReady = true
+			}
+			continue
+		}
+		if hasData {
 			if c.stream == streamMicrophone {
 				audioReady = true
 			}

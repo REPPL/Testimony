@@ -209,15 +209,20 @@ func record(opts Options, judged analyze.Finding, rec analyze.Verdict) error {
 // checkTargets validates that the finding exists and, for a duplicate, that the
 // target exists and differs.
 func checkTargets(findings []analyze.Finding, id, verdict, of string) error {
+	// id/of print through session.SafeText even though every current caller passes
+	// an operator flag or an IsFindingID-validated value: making the terminal-safety
+	// local here, rather than a property of caller invariants, keeps a future caller
+	// that passes an attacker-authored id straight from findings.jsonl from
+	// reintroducing the ANSI-injection this mirrors from the verdict-error paths.
 	if !contains(findings, id) {
-		return fmt.Errorf("finding %s not found", id)
+		return fmt.Errorf("finding %s not found", session.SafeText(id))
 	}
 	if verdict == "duplicate" {
 		if of == id {
 			return fmt.Errorf("a finding cannot be a duplicate of itself")
 		}
 		if !contains(findings, of) {
-			return fmt.Errorf("duplicate target %s not found", of)
+			return fmt.Errorf("duplicate target %s not found", session.SafeText(of))
 		}
 	}
 	return nil
@@ -266,7 +271,7 @@ func AppendVerdict(dir string, v analyze.Verdict, expect *analyze.Finding) error
 	// review, report, and holdsVerdicts would fail with "token too long".
 	if len(b)+1 > session.MaxJSONLLine {
 		return fmt.Errorf("verdict for %s encodes to %d bytes, over the %d-byte %s line limit",
-			v.Finding, len(b)+1, session.MaxJSONLLine, session.FindingsFile)
+			session.SafeText(v.Finding), len(b)+1, session.MaxJSONLLine, session.FindingsFile)
 	}
 	path := filepath.Join(dir, session.FindingsFile)
 	// O_RDWR rather than O_WRONLY because the record cannot be framed correctly
@@ -331,15 +336,15 @@ func verifyTarget(f *os.File, v analyze.Verdict, expect analyze.Finding) error {
 	cur := findByID(findings, v.Finding)
 	if cur == nil {
 		return fmt.Errorf("finding %s is no longer in %s; it changed since review started — re-run `testimony review`",
-			v.Finding, session.FindingsFile)
+			session.SafeText(v.Finding), session.FindingsFile)
 	}
 	if !analyze.SameIdentity(*cur, expect) {
 		return fmt.Errorf("finding %s changed since review started (a re-analysis rewrote %s); re-run `testimony review` before recording a verdict",
-			v.Finding, session.FindingsFile)
+			session.SafeText(v.Finding), session.FindingsFile)
 	}
 	if v.Verdict == "duplicate" && findByID(findings, v.Of) == nil {
 		return fmt.Errorf("duplicate target %s is no longer in %s; re-run `testimony review`",
-			v.Of, session.FindingsFile)
+			session.SafeText(v.Of), session.FindingsFile)
 	}
 	return nil
 }

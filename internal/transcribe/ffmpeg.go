@@ -40,9 +40,39 @@ func convertAudio(in, out string) error {
 	if err != nil {
 		return fmt.Errorf("ffmpeg not found on PATH (needed to produce the 16 kHz mono %s): brew install ffmpeg", session.AudioFile)
 	}
-	cmd := exec.Command(ffmpeg, "-y", "-i", in, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out)
-	if raw, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ffmpeg: %w\n%s", err, tail(raw))
+	// Convert into a temp file beside out, then rename over out only on success (see
+	// atomicConvert), so an interrupted or crashed ffmpeg (Ctrl+C, SIGKILL, ENOSPC)
+	// never leaves a partial audio.wav that a later bare `transcribe` would silently
+	// treat as the whole recording.
+	return atomicConvert(out, func(tmpPath string) error {
+		cmd := exec.Command(ffmpeg, "-y", "-i", in, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", tmpPath)
+		if raw, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("ffmpeg: %w\n%s", err, tail(raw))
+		}
+		return nil
+	})
+}
+
+// atomicConvert runs a producer that writes the converted audio to a temp file beside
+// out, then renames it over out only if the producer succeeded. If the producer
+// returns an error — including one raised after it has already written a partial temp,
+// as a signalled or ENOSPC-hit ffmpeg does — out is left untouched and the temp is
+// removed, so a failed conversion never leaves a truncated file that a later run would
+// mistake for the whole recording. The temp shares out's directory so the rename stays
+// on one filesystem and is atomic. The producer receives the temp path.
+func atomicConvert(out string, produce func(tmpPath string) error) error {
+	tmp, err := os.CreateTemp(filepath.Dir(out), ".audio-*.wav")
+	if err != nil {
+		return fmt.Errorf("audio convert: create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	tmp.Close() // the producer reopens by path; we only needed the reserved name
+	defer os.Remove(tmpPath)
+	if err := produce(tmpPath); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, out); err != nil {
+		return fmt.Errorf("audio convert: finalise %s: %w", out, err)
 	}
 	return nil
 }

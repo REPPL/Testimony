@@ -282,6 +282,35 @@ func TestResolveOffsetInPlaceRefusesBadSidecar(t *testing.T) {
 	}
 }
 
+// TestResolveOffsetRefusesOversizedSidecar is the offset-magnitude regression: a
+// hand-edited sidecar carrying an astronomical offset (finite, so it clears the
+// NaN/Inf check) would shift every re-run's utterance past the magnitude merge
+// accepts, so the corruption surfaces one command later at merge. Bounding the offset
+// at read time refuses with guidance naming the sidecar as the fault. A large-but-
+// in-bounds offset still round-trips.
+func TestResolveOffsetRefusesOversizedSidecar(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeOffsetSidecar(dir, 5e9, "derived: audio creation_time − manifest t0"); err != nil {
+		t.Fatalf("writeOffsetSidecar: %v", err)
+	}
+	_, _, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
+	if err == nil || !strings.Contains(err.Error(), "re-run with -audio") {
+		t.Fatalf("an oversized sidecar offset must refuse with guidance, got %v", err)
+	}
+
+	// A large but in-bounds offset (10 hours) is still accepted and round-trips.
+	if err := writeOffsetSidecar(dir, 36000, "derived: audio creation_time − manifest t0"); err != nil {
+		t.Fatalf("writeOffsetSidecar: %v", err)
+	}
+	off, _, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
+	if err != nil {
+		t.Fatalf("an in-bounds sidecar offset must be accepted: %v", err)
+	}
+	if off != 36000 {
+		t.Fatalf("offset: got %v, want 36000", off)
+	}
+}
+
 // TestResolveOffsetInPlaceNoSidecarIsRecordOrigin proves the record flow is
 // untouched: audio.wav with no sidecar is captured at t0, so the offset is 0.
 func TestResolveOffsetInPlaceNoSidecarIsRecordOrigin(t *testing.T) {
@@ -422,9 +451,56 @@ func TestConvertAudioIntegration(t *testing.T) {
 	if err != nil || fi.Size() == 0 {
 		t.Fatalf("expected non-empty %s: %v", session.AudioFile, err)
 	}
+	// Atomicity: a successful conversion leaves no `.audio-*.wav` temp behind (it was
+	// renamed over out, and the deferred cleanup is a no-op).
+	if temps, _ := filepath.Glob(filepath.Join(dir, ".audio-*.wav")); len(temps) != 0 {
+		t.Fatalf("conversion left temp files behind: %v", temps)
+	}
 
 	if err := convertAudio(filepath.Join(dir, "voice.mp3"), out); err == nil {
 		t.Fatal("unsupported extension must error")
+	}
+}
+
+// TestAtomicConvertLeavesNoPartialOnFailure is the interrupted-conversion regression,
+// hermetic (no ffmpeg): a producer that writes a partial temp and then fails — exactly
+// what a Ctrl+C'd or ENOSPC-hit ffmpeg does — must leave out untouched and the temp
+// removed, so a later bare `transcribe` never mistakes a truncated fragment for the
+// whole recording. Pre-fix (ffmpeg wrote straight to out) the fragment survived at out.
+func TestAtomicConvertLeavesNoPartialOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, session.AudioFile)
+
+	// Producer writes a partial WAV to the temp, then reports failure (interrupted).
+	err := atomicConvert(out, func(tmpPath string) error {
+		if werr := os.WriteFile(tmpPath, []byte("RIFF....partial fragment"), 0o644); werr != nil {
+			t.Fatalf("seed partial temp: %v", werr)
+		}
+		return errors.New("ffmpeg: killed by signal")
+	})
+	if err == nil {
+		t.Fatal("atomicConvert must surface the producer's error")
+	}
+	// out must not exist: the partial temp was never renamed into place.
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("a failed conversion left a partial %s behind (err=%v)", session.AudioFile, statErr)
+	}
+	// The temp must be cleaned up.
+	if temps, _ := filepath.Glob(filepath.Join(dir, ".audio-*.wav")); len(temps) != 0 {
+		t.Fatalf("a failed conversion left temp files behind: %v", temps)
+	}
+
+	// A succeeding producer renames its temp into place and leaves no temp.
+	if err := atomicConvert(out, func(tmpPath string) error {
+		return os.WriteFile(tmpPath, []byte("RIFF....complete"), 0o644)
+	}); err != nil {
+		t.Fatalf("atomicConvert on success: %v", err)
+	}
+	if b, rerr := os.ReadFile(out); rerr != nil || string(b) != "RIFF....complete" {
+		t.Fatalf("successful conversion did not land the full output: %q (err=%v)", b, rerr)
+	}
+	if temps, _ := filepath.Glob(filepath.Join(dir, ".audio-*.wav")); len(temps) != 0 {
+		t.Fatalf("successful conversion left temp files behind: %v", temps)
 	}
 }
 
@@ -572,6 +648,43 @@ func TestCheckSessionAudioRefusesFIFO(t *testing.T) {
 	}
 	if err := checkSessionAudio(wav, dir); err != nil {
 		t.Fatalf("a real audio.wav must be accepted, got %v", err)
+	}
+}
+
+// TestCheckSessionAudioRefusesSymlink is the read-side exfil regression. A session
+// is an exchange unit, so a received one can ship audio.wav as a symlink to a file
+// outside the session — a private recording. Pre-fix checkSessionAudio used os.Stat,
+// which resolves the link to its regular target and returns nil, so the engine
+// transcribes that out-of-session file into transcript.jsonl inside the re-shareable
+// session directory. os.Lstat must refuse the symlink, matching the read-side stance
+// session.OpenFileNoFollowRead takes everywhere else. A symlink to a genuinely absent
+// target must also be reported as a symlink, not misreported as "no audio.wav" — the
+// F9 half: the file exists, so re-recording is the wrong advice.
+func TestCheckSessionAudioRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	wav := filepath.Join(dir, session.AudioFile)
+
+	// (a) symlink to a real regular file outside the session.
+	outside := filepath.Join(t.TempDir(), "private.wav")
+	if err := os.WriteFile(outside, []byte("RIFF private audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, wav); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+	if err := checkSessionAudio(wav, dir); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("a symlinked audio.wav must be refused as a symlink (pre-fix it was silently followed), got %v", err)
+	}
+
+	// (b) symlink to an absent target must still be named a symlink, not "no audio.wav".
+	if err := os.Remove(wav); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "does-not-exist.wav"), wav); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := checkSessionAudio(wav, dir); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("a dangling symlink must be reported as a symlink, not as absence, got %v", err)
 	}
 }
 
