@@ -78,7 +78,10 @@ func Run(opts Options) (int, error) {
 		return 0, err
 	}
 
-	offset, provenance := resolveOffset(opts, man.T0EpochMS, external)
+	offset, provenance, err := resolveOffset(opts, man, external)
+	if err != nil {
+		return 0, err
+	}
 	fmt.Fprintf(opts.Log, "offset: %+.2fs (%s)\n", offset, provenance)
 
 	var segs []segment
@@ -126,19 +129,34 @@ func checkSessionAudio(wav, sessionDir string) error {
 // creation time vs manifest t0 when ffprobe makes that cheap; otherwise 0.
 // For an in-place session audio.wav there is no creation_time to derive from
 // and none is needed — capture starts at t0, so 0 is correct by construction.
-// Derivation failure is never fatal. The second return value is the
-// provenance, for the mandatory stdout report.
-func resolveOffset(opts Options, t0EpochMS int64, external bool) (float64, string) {
+// A failed ffprobe derivation is never fatal (default 0), but an unusable t0 on
+// the external path is: the manifest t0 is read through Manifest.T0 rather than
+// the raw T0EpochMS field, because an absent (0) or negative anchor decodes to a
+// value that deriveOffset would subtract from the recording's real epoch-second
+// creation time, yielding an offset of roughly the whole Unix epoch (~1.78e9 s)
+// that mapSegments then adds to every utterance — writing a transcript.jsonl
+// with times about fifty-seven years into the session and returning success,
+// silent corruption that reads as evidence. Refusing the run is the only honest
+// outcome, so an unusable t0 is surfaced as an error rather than fabricated
+// times. t0 is consulted only on this external-derivation path: the -offset flag
+// and the in-place audio.wav (captured at t0, offset 0) neither derive from nor
+// need an anchor, so a missing t0 must not fail them. The second return value is
+// the provenance, for the mandatory stdout report.
+func resolveOffset(opts Options, man session.Manifest, external bool) (float64, string, error) {
 	if opts.OffsetSet {
-		return opts.Offset, "from -offset flag"
+		return opts.Offset, "from -offset flag", nil
 	}
 	if external {
-		if off, ok := deriveOffset(opts.Audio, t0EpochMS); ok {
-			return off, "derived: audio creation_time − manifest t0"
+		t0, err := man.T0()
+		if err != nil {
+			return 0, "", fmt.Errorf("deriving audio offset: %w", err)
 		}
-		return 0, "default 0: audio creation time unavailable"
+		if off, ok := deriveOffset(opts.Audio, t0); ok {
+			return off, "derived: audio creation_time − manifest t0", nil
+		}
+		return 0, "default 0: audio creation time unavailable", nil
 	}
-	return 0, "default 0: session audio.wav captured at t0"
+	return 0, "default 0: session audio.wav captured at t0", nil
 }
 
 // mapSegments converts engine segments to the Utterance schema of

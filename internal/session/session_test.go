@@ -342,6 +342,97 @@ func TestWriteJSONLBoundaryLineRoundTrips(t *testing.T) {
 	}
 }
 
+// TestReadJSONLRefusesFIFO is the read-side hang regression: pre-fix ReadJSONL
+// opened its path with plain os.Open, so a FIFO planted at a JSONL artefact
+// (timeline.jsonl and friends, in a session Alice merely received from Bob)
+// blocked the read open in open(2) for ever waiting for a writer that never
+// came, hanging merge, report, or analyze. The read side now opens through the
+// O_NONBLOCK no-follow guard, which returns immediately and refuses the FIFO.
+// The read runs in a goroutine and the test fails on a timeout, so a regression
+// reports a failure rather than hanging the suite for ever.
+func TestReadJSONLRefusesFIFO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	if err := syscall.Mkfifo(path, 0o644); err != nil {
+		t.Skipf("FIFOs unavailable on this platform: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ReadJSONL[map[string]any](path)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("ReadJSONL read from a FIFO; want refusal")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ReadJSONL blocked on a FIFO instead of refusing it")
+	}
+}
+
+// TestLoadManifestRefusesFIFO is the same read-side hang regression for the
+// manifest: pre-fix LoadManifest used os.ReadFile, whose open(2) blocks for ever
+// on a FIFO planted at manifest.json in an exchanged session, hanging every
+// command that loads the manifest. LoadManifest now opens through the O_NONBLOCK
+// no-follow guard and refuses it immediately. The load runs in a goroutine with
+// a timeout so a regression fails rather than hangs.
+func TestLoadManifestRefusesFIFO(t *testing.T) {
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, ManifestFile), 0o644); err != nil {
+		t.Skipf("FIFOs unavailable on this platform: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := LoadManifest(dir)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("LoadManifest read from a FIFO; want refusal")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("LoadManifest blocked on a FIFO instead of refusing it")
+	}
+}
+
+// TestReadJSONLPlainFileStillWorks confirms the read-side guard leaves ordinary
+// regular-file reads untouched: an honest timeline.jsonl must still decode.
+func TestReadJSONLPlainFileStillWorks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	if err := os.WriteFile(path, []byte("{\"actor\":\"Carol\"}\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := ReadJSONL[map[string]any](path)
+	if err != nil {
+		t.Fatalf("ReadJSONL: %v", err)
+	}
+	if len(got) != 1 || got[0]["actor"] != "Carol" {
+		t.Fatalf("plain-file read disturbed by the guard: %v", got)
+	}
+}
+
+// TestLoadManifestPlainFileStillWorks confirms the manifest read guard leaves an
+// ordinary regular-file manifest.json readable.
+func TestLoadManifestPlainFileStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"session":"2026-07-17_153045","app":"settings prototype","participant":"Bob","t0_epoch_ms":1}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ManifestFile), []byte(body), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if m.App != "settings prototype" || m.Participant != "Bob" {
+		t.Fatalf("plain manifest read disturbed by the guard: %+v", m)
+	}
+}
+
 // TestSafeText strips control bytes (newline, CR, ESC, DEL, C1) that would
 // otherwise forge report structure or drive an ANSI terminal, while leaving
 // ordinary text intact.

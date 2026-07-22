@@ -1,6 +1,7 @@
 package timeline
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -97,6 +98,65 @@ func TestMergeRejectsMissingT0WithInteractions(t *testing.T) {
 	// The corrupt timeline must not have been written.
 	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
 		t.Fatalf("timeline.jsonl was written despite the missing t0")
+	}
+}
+
+// TestMergeRejectsNegativeT0WithInteractions is the negative-anchor regression:
+// Merge used to guard the anchor with an inline `man.T0EpochMS == 0` test, which
+// is narrower than the `<= 0` rule session.Manifest.T0 owns. A NEGATIVE
+// t0_epoch_ms therefore slipped through, and BuildEntries shifted every
+// interaction by +|t0| — placing each event decades into the session — while
+// Merge wrote that silently corrupt timeline and exited 0. Routing through
+// man.T0 now refuses it with the ErrNoT0-based error, and no timeline is written.
+func TestMergeRejectsNegativeT0WithInteractions(t *testing.T) {
+	dir := t.TempDir()
+	// A negative anchor: it would place the session before the epoch, which no
+	// capture can produce.
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: -1}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	ints := []Interaction{{T: t0 + 9_500, Kind: "click", Selector: "[data-testid=save-btn]"}}
+	if err := session.WriteJSONL(filepath.Join(dir, session.InteractionsFile), ints); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+	_, _, err := Merge(dir)
+	if err == nil || !errors.Is(err, session.ErrNoT0) {
+		t.Fatalf("expected an ErrNoT0-based error for a negative anchor, got %v", err)
+	}
+	// The corrupt, +|t0|-shifted timeline must not have been written.
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the negative t0")
+	}
+}
+
+// TestMergeTranscriptOnlyWithoutT0 pins the exemption the anchor guard must
+// preserve: a transcript-only session (no interactions.jsonl) carries no
+// epoch-ms times, is already session-relative, and legitimately needs no anchor,
+// so it must still merge even when the manifest omits t0_epoch_ms. Routing the
+// guard through man.T0 could have over-tightened Merge into demanding an anchor
+// no transcript-only session has any use for; keeping the guard conditional on
+// interactions being present is what this test defends. It differs from
+// TestMergeAudioOnlySession, which supplies a valid t0: here t0 is absent.
+func TestMergeTranscriptOnlyWithoutT0(t *testing.T) {
+	dir := t.TempDir()
+	// Manifest without t0_epoch_ms (left at the zero value); no interactions file.
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	utts := []Utterance{{ID: "utt-001", T0: 1, T1: 2, Speaker: "P1", Text: "hello"}}
+	if err := session.WriteJSONL(filepath.Join(dir, session.TranscriptFile), utts); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	speech, events, err := Merge(dir)
+	if err != nil {
+		t.Fatalf("Merge on a transcript-only session without t0: %v", err)
+	}
+	if speech != 1 || events != 0 {
+		t.Fatalf("want speech=1 events=0, got speech=%d events=%d", speech, events)
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.TimelineFile)); err != nil {
+		t.Fatalf("timeline.jsonl not written: %v", err)
 	}
 }
 

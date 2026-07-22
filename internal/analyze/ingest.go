@@ -236,7 +236,10 @@ func decodeFinding(raw json.RawMessage) (Finding, error) {
 // a re-ingest — exactly the precision history the guard exists to protect.
 func holdsVerdicts(dir string) (bool, error) {
 	path := filepath.Join(dir, session.FindingsFile)
-	f, err := os.Open(path)
+	// Read-side no-follow guard rather than plain os.Open: a FIFO planted at
+	// findings.jsonl in an exchanged session would otherwise hang this open for
+	// ever. A missing file still satisfies os.ErrNotExist and is not an error here.
+	f, err := session.OpenFileNoFollowRead(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil

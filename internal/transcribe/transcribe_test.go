@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -200,7 +201,10 @@ func TestMapSegmentsNegativeOffset(t *testing.T) {
 }
 
 func TestResolveOffsetFlagWins(t *testing.T) {
-	off, prov := resolveOffset(Options{Offset: 4.25, OffsetSet: true}, 0, true)
+	off, prov, err := resolveOffset(Options{Offset: 4.25, OffsetSet: true}, session.Manifest{T0EpochMS: 0}, true)
+	if err != nil {
+		t.Fatalf("explicit -offset must not consult t0: got error %v", err)
+	}
 	if off != 4.25 || prov != "from -offset flag" {
 		t.Fatalf("explicit -offset must win: got %v (%s)", off, prov)
 	}
@@ -209,12 +213,73 @@ func TestResolveOffsetFlagWins(t *testing.T) {
 // TestResolveOffsetInPlace covers a record session: no external -audio, so the
 // offset is 0 by construction (capture starts at t0) with no ffprobe involved.
 func TestResolveOffsetInPlace(t *testing.T) {
-	off, prov := resolveOffset(Options{}, 1_700_000_000_000, false)
+	off, prov, err := resolveOffset(Options{}, session.Manifest{T0EpochMS: 1_700_000_000_000}, false)
+	if err != nil {
+		t.Fatalf("in-place path must not fail: got error %v", err)
+	}
 	if off != 0 {
 		t.Fatalf("in-place audio.wav offset must be 0, got %v", off)
 	}
 	if prov != "default 0: session audio.wav captured at t0" {
 		t.Fatalf("unexpected provenance: %q", prov)
+	}
+}
+
+// TestResolveOffsetInPlaceNoT0 proves the crucial constraint's in-place half: the
+// record flow transcribes the session's own audio.wav (captured at t0, offset 0)
+// and never derives an offset from t0, so a missing t0_epoch_ms must not fail it.
+// Pre-fix resolveOffset returned no error at all, so this succeeded incidentally;
+// the guard added for the external path must not leak into this branch.
+func TestResolveOffsetInPlaceNoT0(t *testing.T) {
+	off, prov, err := resolveOffset(Options{}, session.Manifest{T0EpochMS: 0}, false)
+	if err != nil {
+		t.Fatalf("in-place audio.wav with no t0 must still succeed, got error %v", err)
+	}
+	if off != 0 {
+		t.Fatalf("in-place audio.wav offset must be 0, got %v", off)
+	}
+	if prov != "default 0: session audio.wav captured at t0" {
+		t.Fatalf("unexpected provenance: %q", prov)
+	}
+}
+
+// TestResolveOffsetExternalNoT0 is the silent-transcript-corruption regression:
+// pre-fix resolveOffset took the raw man.T0EpochMS and, on the external
+// recording path, handed it to deriveOffset unchecked. A received or hand-edited
+// session whose manifest omits t0_epoch_ms decodes that field to 0 (a negative
+// value is likewise unusable), so deriveOffset returned the recording's real
+// epoch-second creation time — roughly the whole Unix epoch, ~1.78e9 s — as the
+// offset, mapSegments added it to every utterance, and transcript.jsonl was
+// written with times about fifty-seven years into the session while Run returned
+// success. The fix reads t0 through Manifest.T0, so an unusable anchor now surfaces
+// as an ErrNoT0-based error and the run refuses rather than fabricating times.
+func TestResolveOffsetExternalNoT0(t *testing.T) {
+	for _, m := range []session.Manifest{
+		{Session: "2026-07-22_bob-received", T0EpochMS: 0},
+		{Session: "2026-07-22_carol-edited", T0EpochMS: -1},
+	} {
+		_, _, err := resolveOffset(Options{Audio: "bob-interview.m4a"}, m, true)
+		if err == nil {
+			t.Fatalf("external recording with unusable t0 (%d) must fail, got nil error", m.T0EpochMS)
+		}
+		if !errors.Is(err, session.ErrNoT0) {
+			t.Fatalf("want an ErrNoT0-based error, got %v", err)
+		}
+	}
+}
+
+// TestResolveOffsetExternalOffsetFlagNoT0 proves the crucial constraint that an
+// explicit -offset short-circuits before t0 is consulted: an operator who states
+// the offset needs no anchor, so a missing t0_epoch_ms must not fail the run even
+// on the external path. Pre-fix the raw field was passed through regardless; the
+// flag branch now returns before Manifest.T0 is called at all.
+func TestResolveOffsetExternalOffsetFlagNoT0(t *testing.T) {
+	off, prov, err := resolveOffset(Options{Audio: "bob-interview.m4a", Offset: 3.0, OffsetSet: true}, session.Manifest{T0EpochMS: 0}, true)
+	if err != nil {
+		t.Fatalf("explicit -offset must succeed without a t0, got error %v", err)
+	}
+	if off != 3.0 || prov != "from -offset flag" {
+		t.Fatalf("explicit -offset must win without consulting t0: got %v (%s)", off, prov)
 	}
 }
 

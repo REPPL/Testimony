@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,7 +124,16 @@ func (m Manifest) T0() (int64, error) {
 // LoadManifest reads manifest.json from dir.
 func LoadManifest(dir string) (Manifest, error) {
 	var m Manifest
-	b, err := os.ReadFile(filepath.Join(dir, ManifestFile))
+	// Read through the no-follow guard rather than os.ReadFile: manifest.json in
+	// an exchanged session is attacker-controllable, and a FIFO planted there
+	// would block os.ReadFile in open(2) for ever waiting for a writer, hanging
+	// any command that loads the manifest.
+	f, err := OpenFileNoFollowRead(filepath.Join(dir, ManifestFile))
+	if err != nil {
+		return m, fmt.Errorf("load manifest: %w", err)
+	}
+	defer f.Close()
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return m, fmt.Errorf("load manifest: %w", err)
 	}
@@ -142,31 +152,41 @@ func SaveManifest(dir string, m Manifest) error {
 	return WriteFileNoFollow(filepath.Join(dir, ManifestFile), append(b, '\n'), 0o644)
 }
 
-// OpenFileNoFollow opens path for writing with O_NOFOLLOW, so a symlink planted
-// at the final path component is refused rather than followed, and refuses any
-// opened path that is not a regular file. A session directory is an exchange
-// unit (a shared or downloaded session may be attacker-authored); without the
-// symlink guard a planted symlink — e.g. a timeline.jsonl pointing at
-// ~/.ssh/authorized_keys — would redirect a write to an arbitrary file outside
+// openNoFollow is the single symlink-and-regular-file guard shared by every
+// session-artefact open, read or write. It opens path with O_NOFOLLOW, so a
+// symlink planted at the final path component is refused rather than followed,
+// and refuses any opened path that is not a regular file. A session directory is
+// an exchange unit (a shared or downloaded session may be attacker-authored);
+// without the symlink guard a planted symlink — e.g. a timeline.jsonl pointing
+// at a private key file — would redirect a write to an arbitrary file outside
 // the session directory, and without the regular-file guard a FIFO planted at
-// the same path would hold the write open for ever, waiting for a reader that
-// never arrives, hanging merge or report on a session the operator merely
-// received. O_NONBLOCK is set so that the FIFO open itself returns instead of
-// blocking before the check can run; it has no effect on the ordinary case,
-// because opening a regular file never blocks and the flag does not alter
-// subsequent reads or writes on one. flag is OR-ed with O_NOFOLLOW and
-// O_NONBLOCK; callers pass the usual O_CREATE/O_TRUNC/O_APPEND/O_WRONLY set.
-func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
+// the same path would hang the CLI in open(2) for ever: on the write side
+// waiting for a reader that never arrives, and on the read side waiting for a
+// writer that never arrives, so merge, report, or analyze never returns on a
+// session the operator merely received.
+//
+// O_NONBLOCK is what makes the regular-file check reachable at all: opening a
+// FIFO — for reading or for writing — normally blocks until the other end is
+// present, but with O_NONBLOCK the open returns immediately (a read-only FIFO
+// open succeeds at once; a write-only one fails with ENXIO), so fstat can then
+// run and refuse it. It has no effect on the ordinary case, because opening a
+// regular file never blocks and the flag does not alter subsequent reads or
+// writes on one. flag is OR-ed with O_NOFOLLOW and O_NONBLOCK.
+//
+// verb ("read"/"write") is woven into the refusal messages so they name the
+// direction; OpenFileNoFollow keeps verb="write" verbatim so callers and tests
+// that assert "refusing to write ..." are undisturbed.
+func openNoFollow(path string, flag int, perm os.FileMode, verb string) (*os.File, error) {
 	f, err := os.OpenFile(path, flag|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, perm)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {
-			return nil, fmt.Errorf("refusing to write %s: it is a symlink", path)
+			return nil, fmt.Errorf("refusing to %s %s: it is a symlink", verb, path)
 		}
 		return nil, err
 	}
 	// Stat the descriptor rather than the path, so the answer describes the file
 	// that was actually opened and cannot be swapped between the check and the
-	// write.
+	// read or write.
 	fi, err := f.Stat()
 	if err != nil {
 		f.Close()
@@ -174,9 +194,28 @@ func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error)
 	}
 	if !fi.Mode().IsRegular() {
 		f.Close()
-		return nil, fmt.Errorf("refusing to write %s: it is not a regular file", path)
+		return nil, fmt.Errorf("refusing to %s %s: it is not a regular file", verb, path)
 	}
 	return f, nil
+}
+
+// OpenFileNoFollow opens path for writing under the shared openNoFollow guard,
+// refusing a planted symlink or non-regular file (see openNoFollow for the full
+// threat model). Callers pass the usual O_CREATE/O_TRUNC/O_APPEND/O_WRONLY set;
+// O_NOFOLLOW and O_NONBLOCK are added by the guard.
+func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
+	return openNoFollow(path, flag, perm, "write")
+}
+
+// OpenFileNoFollowRead opens path read-only under the same guard, so the read
+// side of the pipeline is protected too: a FIFO planted at timeline.jsonl,
+// interactions.jsonl, transcript.jsonl, findings.jsonl, or manifest.json in an
+// exchanged session is refused immediately rather than blocking ReadJSONL or
+// LoadManifest in open(2) for ever, and a symlink is refused rather than
+// followed out of the session directory. The caller owns the returned file and
+// must Close it.
+func OpenFileNoFollowRead(path string) (*os.File, error) {
+	return openNoFollow(path, os.O_RDONLY, 0, "read")
 }
 
 // WriteFileNoFollow is os.WriteFile that refuses to follow a symlink at path
@@ -239,7 +278,11 @@ const MaxJSONLLine = 4 << 20 // 4 MiB
 // ReadJSONL decodes a JSON-Lines file into a slice of T. Blank lines are
 // skipped. A missing file is an error; an empty file yields an empty slice.
 func ReadJSONL[T any](path string) ([]T, error) {
-	f, err := os.Open(path)
+	// Open through the no-follow guard rather than os.Open: a session's JSONL
+	// artefacts are attacker-controllable when the session was exchanged, and a
+	// FIFO planted at one would block os.Open in open(2) for ever waiting for a
+	// writer, hanging merge, report, or analyze on a session merely received.
+	f, err := OpenFileNoFollowRead(path)
 	if err != nil {
 		return nil, err
 	}

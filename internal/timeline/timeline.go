@@ -270,14 +270,22 @@ func Merge(dir string) (speech, events int, err error) {
 		return 0, 0, fmt.Errorf("read interactions: %w", err)
 	}
 
-	// Interaction times are epoch milliseconds; without t0 they cannot be placed
-	// on the session clock. A manifest lacking t0_epoch_ms leaves T0EpochMS at the
-	// zero value, which would turn each epoch-ms timestamp into a ~55-year offset
-	// and write a silently corrupt timeline. Reject it rather than emit nonsense.
-	// A transcript-only session carries no interactions and is already
-	// session-relative, so it is unaffected.
-	if len(raw) > 0 && man.T0EpochMS == 0 {
-		return 0, 0, fmt.Errorf("manifest is missing t0_epoch_ms; cannot place interactions on the session clock")
+	// Interaction times are epoch milliseconds; without a usable t0 they cannot be
+	// placed on the session clock. The anchor is obtained through session.Manifest.T0
+	// rather than read from the field directly, so this call site honours the single
+	// rule that accessor owns: it treats a zero anchor as absent and, crucially,
+	// also refuses a NEGATIVE t0_epoch_ms — a case an inline `== 0` test missed, so a
+	// negative anchor slipped through and BuildEntries shifted every interaction by
+	// +|t0|, writing a silently corrupt timeline while Merge exited 0. The guard
+	// stays conditional on interactions being present: a transcript-only session
+	// carries no epoch-ms times, is already session-relative, and legitimately needs
+	// no anchor, so it must still merge without one.
+	t0 := man.T0EpochMS
+	if len(raw) > 0 {
+		t0, err = man.T0()
+		if err != nil {
+			return 0, 0, err
+		}
 	}
 
 	ints, err := checkedInteractions(intsPath, raw)
@@ -285,7 +293,7 @@ func Merge(dir string) (speech, events int, err error) {
 		return 0, 0, err
 	}
 
-	entries := BuildEntries(man.T0EpochMS, utts, ints)
+	entries := BuildEntries(t0, utts, ints)
 	if err := session.WriteJSONL(filepath.Join(dir, session.TimelineFile), entries); err != nil {
 		return 0, 0, fmt.Errorf("write timeline: %w", err)
 	}
