@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -293,7 +294,7 @@ func TestAppendVerdictTerminatesAnUnterminatedLastLine(t *testing.T) {
 	}
 
 	rec := analyze.Verdict{Kind: "verdict", Finding: "F-003", Verdict: "confirmed", At: "2026-07-17"}
-	if err := AppendVerdict(dir, rec); err != nil {
+	if err := AppendVerdict(dir, rec, nil); err != nil {
 		t.Fatalf("AppendVerdict: %v", err)
 	}
 
@@ -420,7 +421,7 @@ func TestAppendVerdictRefusesSymlink(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, session.FindingsFile)); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
-	err := AppendVerdict(dir, analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"})
+	err := AppendVerdict(dir, analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"}, nil)
 	if err == nil {
 		t.Fatal("AppendVerdict followed a symlink; want refusal")
 	}
@@ -471,9 +472,119 @@ func TestClockRoundsSymmetrically(t *testing.T) {
 		{-61.5, "-01:02"},
 		{-90, "-01:30"},
 		{-3600, "-60:00"},
+		// Out-of-range and non-finite times (from a hand-authored findings.jsonl
+		// f.T that analyze.Load does not bound) must render a placeholder, never an
+		// implementation-defined out-of-range int conversion. Sibling of
+		// report.TestClockRefusesOutOfRangeTime.
+		{1e300, "--:--"},
+		{-1e300, "--:--"},
+		{math.Inf(1), "--:--"},
+		{math.NaN(), "--:--"},
 	} {
 		if got := clock(tc.sec); got != tc.want {
 			t.Fatalf("clock(%g) = %q, want %q", tc.sec, got, tc.want)
 		}
+	}
+}
+
+// TestAppendVerdictRefusesOversizedLine is the write-side twin of
+// analyze.oversizedFindings. Every JSONL reader scans with a MaxJSONLLine-capped
+// buffer, so a verdict line past that cap is durably unreadable and bricks the
+// whole findings.jsonl — the verdict history this package exists to protect — on
+// the next Load/review/report. A finding id can arrive just under the cap from an
+// exchanged or hand-edited file (the finding line loads; the verdict's framing
+// tips it over). AppendVerdict must refuse rather than append. Pre-fix it wrote
+// the line unchecked.
+func TestAppendVerdictRefusesOversizedLine(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findingsFixture), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	hugeID := "F-" + strings.Repeat("9", session.MaxJSONLLine)
+	rec := analyze.Verdict{Kind: "verdict", Finding: hugeID, Verdict: "confirmed", At: "2026-07-17"}
+	err := AppendVerdict(dir, rec, nil)
+	if err == nil || !strings.Contains(err.Error(), "line limit") {
+		t.Fatalf("expected an over-limit refusal, got %v", err)
+	}
+	// The refusal is pre-write: the existing findings.jsonl is byte-unchanged.
+	b, rerr := os.ReadFile(filepath.Join(dir, session.FindingsFile))
+	if rerr != nil {
+		t.Fatalf("read findings: %v", rerr)
+	}
+	if string(b) != findingsFixture {
+		t.Fatalf("findings.jsonl was modified despite the refusal")
+	}
+}
+
+// TestAppendVerdictRefusesReingestedFinding is the verdict-misattribution
+// regression. review.Run snapshots findings once and then blocks on the operator
+// for the whole interactive walk; a concurrent `analyze -ingest` may
+// truncate-and-rewrite findings.jsonl in that gap (permitted until the first
+// verdict exists), and because finding ids restart at F-001 the verdict the
+// analyst gives to the finding they were shown would otherwise attach to a
+// different finding now holding the same id — silent corruption of the human
+// decision record. AppendVerdict now re-reads under its lock and refuses when the
+// targeted id no longer names the finding that was judged. Pre-fix (no re-check)
+// the verdict was appended and misattributed.
+func TestAppendVerdictRefusesReingestedFinding(t *testing.T) {
+	dir := writeSession(t)
+	path := filepath.Join(dir, session.FindingsFile)
+
+	// The finding the analyst was shown (F-001 from the fixture).
+	shown := analyze.Finding{
+		ID: "F-001", T: 22, Type: "bug", Severity: 3,
+		Quote:    "I clicked save and nothing happened",
+		Evidence: []string{"utt-004", "ev-003"},
+		UI:       &analyze.UI{Selector: "[data-testid=save-btn]", Route: "#general"},
+		Status:   "unverified",
+	}
+
+	// A concurrent re-ingest rewrote findings.jsonl: F-001 now names a DIFFERENT
+	// finding (same id, different content), exactly what commitFindings permits
+	// before any verdict exists.
+	const reingested = `{"id":"F-001","t":48,"type":"friction","severity":2,"quote":"The menu ordering confused me","evidence":["utt-009"],"status":"unverified"}
+`
+	if err := os.WriteFile(path, []byte(reingested), 0o644); err != nil {
+		t.Fatalf("rewrite findings: %v", err)
+	}
+
+	rec := analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"}
+	err := AppendVerdict(dir, rec, &shown)
+	if err == nil || !strings.Contains(err.Error(), "changed since review started") {
+		t.Fatalf("expected a changed-finding refusal, got %v", err)
+	}
+	// No verdict was written: the re-ingested file is byte-unchanged, so the
+	// analyst's confirmation cannot be silently pinned to the wrong finding.
+	b, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatalf("read findings: %v", rerr)
+	}
+	if string(b) != reingested {
+		t.Fatalf("findings.jsonl was modified despite the refusal:\n%s", b)
+	}
+}
+
+// TestAppendVerdictAcceptsUnchangedFinding is the positive control: when the
+// finding still matches what was judged, the verdict is recorded normally, so
+// the new guard does not block the ordinary path.
+func TestAppendVerdictAcceptsUnchangedFinding(t *testing.T) {
+	dir := writeSession(t)
+	shown := analyze.Finding{
+		ID: "F-001", T: 22, Type: "bug", Severity: 3,
+		Quote:    "I clicked save and nothing happened",
+		Evidence: []string{"utt-004", "ev-003"},
+		UI:       &analyze.UI{Selector: "[data-testid=save-btn]", Route: "#general"},
+		Status:   "unverified",
+	}
+	rec := analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"}
+	if err := AppendVerdict(dir, rec, &shown); err != nil {
+		t.Fatalf("AppendVerdict on an unchanged finding: %v", err)
+	}
+	_, verdicts, err := analyze.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(verdicts) != 1 || verdicts[0].Finding != "F-001" || verdicts[0].Verdict != "confirmed" {
+		t.Fatalf("verdict not recorded as expected: %+v", verdicts)
 	}
 }

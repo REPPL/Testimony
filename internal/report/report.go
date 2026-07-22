@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,6 +16,14 @@ import (
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
 )
+
+// maxClockSeconds bounds a value clock will format. A real session stamp is
+// minutes to hours; 1e9 seconds (~31 years) is far past any genuine one while
+// staying well inside int64 so the float64→int conversion below can never go
+// out of range. timeline.jsonl and findings.jsonl are attacker-authorable and
+// reach clock without passing timeline.checkedUtterances, so this sink must
+// defend itself rather than trust its input.
+const maxClockSeconds = 1e9
 
 // Render reads manifest + timeline from dir and returns the Markdown report.
 // window is the utterance↔event join window in seconds.
@@ -90,7 +99,12 @@ func Render(dir string, window float64) (string, error) {
 			fmt.Fprintf(&b, "  - [%s] %s\n", clock(e.T), eventLine(e))
 		}
 	}
-	flushStandaloneBefore(1e18)
+	// Flush every remaining standalone event. The sentinel is +Inf, not a finite
+	// literal: an earlier 1e18 bound silently dropped any event whose t was at or
+	// past it (reachable from a hand-authored timeline.jsonl), omitting evidence
+	// from the report while merge and report both exited 0. Every JSON-decodable t
+	// is finite and so strictly less than +Inf, so this flushes all of them.
+	flushStandaloneBefore(math.Inf(1))
 
 	b.WriteString("\n## Findings\n\n")
 	renderFindings(&b, dir)
@@ -107,7 +121,14 @@ func renderFindings(b *strings.Builder, dir string) {
 			b.WriteString("_No findings yet — run `testimony analyze` then `testimony review`._\n")
 			return
 		}
-		fmt.Fprintf(b, "_Findings unavailable: %v_\n", err)
+		// The raw error carries the joined filesystem path (an absolute one when the
+		// operator passed an absolute -session), which on macOS embeds the username,
+		// and it is the one string in this function not passed through SafeText. The
+		// report is the human-facing artefact a session directory is built to share,
+		// so leaking that path — or unescaped control bytes from a malformed line —
+		// into it is an info-disclosure the generic notice avoids; the detailed error
+		// still surfaces on stderr when the operator re-runs analyze or review.
+		b.WriteString("_Findings unavailable: findings.jsonl could not be read (run `testimony analyze`/`review` to see why)._\n")
 		return
 	}
 
@@ -192,6 +213,17 @@ func end(entries []timeline.Entry) float64 {
 // arithmetic because %02d over a negative integer division renders garbage such
 // as "-1:-30".
 func clock(sec float64) string {
+	// Defend the float64→int conversion below. A non-finite or astronomically
+	// large sec — reachable from a hand-authored timeline.jsonl or findings.jsonl,
+	// which bypass timeline.checkedUtterances — makes int(sec+0.5) an out-of-range
+	// conversion the Go spec leaves implementation-defined: on arm64 it saturates
+	// to MaxInt64 and prints a nonsensical duration like "153722867280912930:07";
+	// on amd64 it wraps negative, defeating the sign handling below. Such a value
+	// is not a time, so render a visibly-broken placeholder rather than fabricate a
+	// precise-looking wrong stamp in the human evidence artefact.
+	if math.IsNaN(sec) || math.Abs(sec) > maxClockSeconds {
+		return "--:--"
+	}
 	neg := sec < 0
 	if neg {
 		sec = -sec

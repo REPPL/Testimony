@@ -43,6 +43,7 @@ type Manifest struct {
 const (
 	ManifestFile     = "manifest.json"
 	AudioFile        = "audio.wav"
+	AudioOffsetFile  = "audio.offset.json"
 	ScreenFile       = "screen.mp4"
 	RawEventsFile    = "events.rrweb.jsonl"
 	InteractionsFile = "interactions.jsonl"
@@ -121,6 +122,18 @@ func (m Manifest) T0() (int64, error) {
 	return m.T0EpochMS, nil
 }
 
+// maxManifestBytes caps LoadManifest's read of manifest.json. A genuine manifest
+// is a few hundred bytes; 1 MiB is generous for one carrying long notes or a big
+// task list. The cap matters because manifest.json in an exchanged session is
+// attacker-controllable (see Manifest.T0's threat note), and it is the last
+// untrusted read on the session surface that was still unbounded: an attacker
+// ships a multi-gigabyte manifest (a few KB once zipped) and any command that
+// loads it — merge, report, analyze, transcribe — would otherwise buffer the
+// whole file into memory before parsing and drive the process into OOM. Every
+// sibling reader of untrusted session files is already bounded (ReadJSONL caps a
+// line at MaxJSONLLine, analyze.Ingest at maxAnswerBytes, the demo body caps).
+const maxManifestBytes = 1 << 20 // 1 MiB
+
 // LoadManifest reads manifest.json from dir.
 func LoadManifest(dir string) (Manifest, error) {
 	var m Manifest
@@ -133,9 +146,14 @@ func LoadManifest(dir string) (Manifest, error) {
 		return m, fmt.Errorf("load manifest: %w", err)
 	}
 	defer f.Close()
-	b, err := io.ReadAll(f)
+	// Read one byte past the cap so an over-large manifest is refused as too big
+	// rather than silently truncated and then misreported as malformed JSON.
+	b, err := io.ReadAll(io.LimitReader(f, maxManifestBytes+1))
 	if err != nil {
 		return m, fmt.Errorf("load manifest: %w", err)
+	}
+	if len(b) > maxManifestBytes {
+		return m, fmt.Errorf("load manifest: %s exceeds %d bytes; refusing to read", ManifestFile, maxManifestBytes)
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
 		return m, fmt.Errorf("parse manifest: %w", err)

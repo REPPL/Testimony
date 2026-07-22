@@ -16,7 +16,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
+	"reflect"
 	"regexp"
 
 	"github.com/REPPL/Testimony/internal/session"
@@ -92,11 +94,21 @@ func Load(dir string) ([]Finding, []Verdict, error) {
 		return nil, nil, err
 	}
 	defer f.Close()
+	return ParseRecords(f, path)
+}
 
+// ParseRecords splits a findings.jsonl stream into finding and verdict records,
+// applying the same rules Load documents: blank lines are skipped and a verdict
+// carrying an out-of-enum value is ignored rather than applied. name labels
+// errors. Load is ParseRecords over the on-disk file opened through the
+// no-follow guard; review.AppendVerdict reuses it to re-read the current
+// findings through its own already-locked descriptor, so the re-check and the
+// append observe the same file under one lock.
+func ParseRecords(r io.Reader, name string) ([]Finding, []Verdict, error) {
 	var findings []Finding
 	var verdicts []Verdict
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), session.MaxJSONLLine)
 	line := 0
 	for sc.Scan() {
 		line++
@@ -108,12 +120,12 @@ func Load(dir string) ([]Finding, []Verdict, error) {
 			Kind string `json:"kind"`
 		}
 		if err := json.Unmarshal(raw, &probe); err != nil {
-			return nil, nil, fmt.Errorf("%s:%d: %w", path, line, err)
+			return nil, nil, fmt.Errorf("%s:%d: %w", name, line, err)
 		}
 		if probe.Kind == "verdict" {
 			var v Verdict
 			if err := json.Unmarshal(raw, &v); err != nil {
-				return nil, nil, fmt.Errorf("%s:%d: %w", path, line, err)
+				return nil, nil, fmt.Errorf("%s:%d: %w", name, line, err)
 			}
 			// The verdict enum is closed (confirmed|rejected|duplicate). A verdict
 			// carrying any other value — a typo, an empty string, or a foreign
@@ -130,14 +142,25 @@ func Load(dir string) ([]Finding, []Verdict, error) {
 		}
 		var fnd Finding
 		if err := json.Unmarshal(raw, &fnd); err != nil {
-			return nil, nil, fmt.Errorf("%s:%d: %w", path, line, err)
+			return nil, nil, fmt.Errorf("%s:%d: %w", name, line, err)
 		}
 		findings = append(findings, fnd)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", path, err)
+		return nil, nil, fmt.Errorf("%s: %w", name, err)
 	}
 	return findings, verdicts, nil
+}
+
+// SameIdentity reports whether a and b are the same finding — equal in every
+// field a human verdict is recorded against. Status is excluded: it is the one
+// field a verdict is meant to change, and Ingest launders it to "unverified" on
+// every written finding regardless. review uses it under the append lock to
+// confirm a verdict still targets the finding the analyst was shown, rather than
+// a different finding a concurrent re-ingest slid under the same id.
+func SameIdentity(a, b Finding) bool {
+	a.Status, b.Status = "", ""
+	return reflect.DeepEqual(a, b)
 }
 
 // EffectiveStatus maps each finding id to its effective status: every finding

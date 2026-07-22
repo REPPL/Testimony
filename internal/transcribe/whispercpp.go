@@ -102,8 +102,16 @@ func parseWhisperCpp(raw []byte) ([]segment, error) {
 // resolveModel turns the -model value into a ggml model file path: an
 // existing file path is used as-is; otherwise common locations under $HOME
 // are tried, and the miss carries download guidance.
+// A candidate is accepted only when it is a regular file, not merely a
+// non-directory: the resolved path is handed to whisper-cli as -m and opened by
+// that subprocess, so a FIFO planted at the -model path (or at one of the
+// searched candidates in a shared home) would block whisper-cli's open(2) for
+// ever waiting for a writer — the same hang convertAudio, checkPlainOutput, and
+// checkSessionAudio refuse at the package's other subprocess-input sites. A
+// symlink to a real model still resolves, because os.Stat follows it to the
+// regular file underneath.
 func resolveModel(model string) (string, error) {
-	if fi, err := os.Stat(model); err == nil && !fi.IsDir() {
+	if fi, err := os.Stat(model); err == nil && fi.Mode().IsRegular() {
 		return model, nil
 	}
 	name := "ggml-" + model + ".bin"
@@ -118,7 +126,7 @@ func resolveModel(model string) (string, error) {
 		filepath.Join(home, "models", name),
 	}
 	for _, c := range candidates {
-		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+		if fi, err := os.Stat(c); err == nil && fi.Mode().IsRegular() {
 			return c, nil
 		}
 	}

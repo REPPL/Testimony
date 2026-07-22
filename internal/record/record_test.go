@@ -54,10 +54,10 @@ func TestResolveVideo(t *testing.T) {
 // --- argv builders ---
 
 func TestMicArgs(t *testing.T) {
-	got := micArgs(0, "sessions/s1/audio.wav")
+	got := micArgs("sessions/s1/audio.wav")
 	want := []string{
 		"-f", "avfoundation",
-		"-i", ":0",
+		"-i", ":default",
 		"-ac", "1",
 		"-ar", "16000",
 		"-c:a", "pcm_s16le",
@@ -107,15 +107,18 @@ func TestParseAVDevices(t *testing.T) {
 func TestSelectDevices(t *testing.T) {
 	video, audio := parseAVDevices(sampleDevices)
 
-	mic, screen, err := selectDevices(video, audio, true)
+	screen, mics, err := selectDevices(video, audio, true)
 	if err != nil {
 		t.Fatalf("selectDevices: %v", err)
 	}
-	if mic != 0 {
-		t.Fatalf("mic index: got %d, want 0 (system default input)", mic)
-	}
 	if screen != 1 {
 		t.Fatalf("screen index: got %d, want 1 (Capture screen)", screen)
+	}
+	// The audio-input roster is returned for logging, in listing order. The mic
+	// itself is captured via avfoundation :default, not by this list.
+	wantMics := []string{"Studio Display Microphone", "USB audio CODEC"}
+	if !reflect.DeepEqual(mics, wantMics) {
+		t.Fatalf("audio roster: got %q, want %q", mics, wantMics)
 	}
 
 	// Audio-only: screen index is not resolved and no error.
@@ -131,6 +134,31 @@ func TestSelectDevices(t *testing.T) {
 	// No audio device at all → error.
 	if _, _, err := selectDevices(video, nil, false); err == nil {
 		t.Fatal("no audio device must error")
+	}
+}
+
+// TestOutputTail covers the ffmpeg-diagnostic surfacing: an empty listing paired
+// with real ffmpeg output must yield a bounded, trimmed tail so probeDevices can
+// tell the operator the true cause (e.g. an avfoundation-less build) instead of
+// misdirecting them to their microphone.
+func TestOutputTail(t *testing.T) {
+	if got := outputTail(nil); got != "" {
+		t.Fatalf("empty input must yield empty tail, got %q", got)
+	}
+	if got := outputTail([]byte("  \n ")); got != "" {
+		t.Fatalf("whitespace-only input must trim to empty, got %q", got)
+	}
+	short := []byte("Unknown input format: 'avfoundation'")
+	if got := outputTail(short); got != string(short) {
+		t.Fatalf("short output must pass through trimmed: got %q", got)
+	}
+	long := make([]byte, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		long = append(long, 'x')
+	}
+	got := outputTail(long)
+	if len(got) > 420 || !strings.HasPrefix(got, "...") {
+		t.Fatalf("long output must be bounded and elided, got len %d prefix %.3q", len(got), got)
 	}
 }
 
@@ -306,7 +334,7 @@ func TestRunInstallsSignalHandlerBeforeSpawning(t *testing.T) {
 		cancel = c
 		return ctx, c
 	}
-	startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
 		note("spawn")
 		// A well-behaved recorder that finalises a real audio.wav and is reaped on
 		// SIGINT, so the lifecycle stops cleanly. cancel is non-nil only if notify
@@ -363,7 +391,7 @@ func TestRunClassifiesStartupExitDespiteSlowStop(t *testing.T) {
 	}
 
 	var stubborn *fakeProc
-	startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
 		buf := &lockedBuffer{}
 		_, _ = buf.Write([]byte("[AVFoundation indev @ 0x0] Failed to open device\nInput/output error"))
 		// The microphone recorder is denied by TCC and dies at once — well inside
@@ -467,7 +495,7 @@ func TestStartRecordersRefusesSymlinkedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	children, err := startRecorders(dir, []string{streamMicrophone})
+	children, err := startRecorders(dir, []string{streamMicrophone}, io.Discard)
 	if err == nil {
 		stopAll(children)
 		t.Fatal("startRecorders must refuse a symlinked audio output rather than spawn ffmpeg on it")
@@ -537,7 +565,7 @@ func TestRunReportsRecorderStoppedWithNoOutput(t *testing.T) {
 		cancel = c
 		return ctx, c
 	}
-	startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
 		buf := &lockedBuffer{}
 		_, _ = buf.Write([]byte("[AVFoundation indev @ 0x0] Failed to open device\nInput/output error"))
 		// A recorder that blocked on the TCC prompt all session: it never wrote
@@ -640,7 +668,7 @@ func TestRunStopsDemoServerThroughBoundedShutdown(t *testing.T) {
 				cancel = cf
 				return ctx, cf
 			}
-			startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+			startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
 				child := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
 				if c.interrupt {
 					// A well-behaved recorder that finalised a real audio.wav, so the

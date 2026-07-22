@@ -13,14 +13,22 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/REPPL/Testimony/internal/analyze"
 	"github.com/REPPL/Testimony/internal/session"
 )
+
+// maxClockSeconds bounds a value clock will format, mirroring report.maxClockSeconds:
+// a real session stamp is minutes to hours, and 1e9 seconds (~31 years) stays
+// well inside int64 so the float64→int conversion in clock can never go out of
+// range on an attacker-authored findings.jsonl time.
+const maxClockSeconds = 1e9
 
 // Options configures a review run.
 type Options struct {
@@ -72,11 +80,26 @@ func single(opts Options, findings []analyze.Finding) error {
 	if err := checkTargets(findings, opts.Finding, verdict, of); err != nil {
 		return err
 	}
+	// checkTargets passed, so the id is present in the snapshot; bind the verdict
+	// to that finding so AppendVerdict can confirm it is unchanged at write time.
+	target := findByID(findings, opts.Finding)
 	rec := analyze.Verdict{Kind: "verdict", Finding: opts.Finding, Verdict: verdict, Of: of, At: opts.Today}
-	if err := AppendVerdict(opts.Dir, rec); err != nil {
+	if err := AppendVerdict(opts.Dir, rec, target); err != nil {
 		return err
 	}
 	fmt.Fprintln(opts.Out, describe(rec))
+	return nil
+}
+
+// findByID returns a pointer to the finding with the given id, or nil. The
+// returned pointer is into a copy, safe to retain.
+func findByID(findings []analyze.Finding, id string) *analyze.Finding {
+	for i := range findings {
+		if findings[i].ID == id {
+			f := findings[i]
+			return &f
+		}
+	}
 	return nil
 }
 
@@ -146,9 +169,9 @@ func walk(opts Options, findings []analyze.Finding, verdicts []analyze.Verdict) 
 func applyChoice(opts Options, findings []analyze.Finding, f analyze.Finding, choice string, r *bufio.Reader) (done, quit bool, err error) {
 	switch strings.ToLower(strings.TrimSpace(choice)) {
 	case "c":
-		return true, false, record(opts, analyze.Verdict{Kind: "verdict", Finding: f.ID, Verdict: "confirmed", At: opts.Today})
+		return true, false, record(opts, f, analyze.Verdict{Kind: "verdict", Finding: f.ID, Verdict: "confirmed", At: opts.Today})
 	case "r":
-		return true, false, record(opts, analyze.Verdict{Kind: "verdict", Finding: f.ID, Verdict: "rejected", At: opts.Today})
+		return true, false, record(opts, f, analyze.Verdict{Kind: "verdict", Finding: f.ID, Verdict: "rejected", At: opts.Today})
 	case "d":
 		fmt.Fprint(opts.Out, "  duplicate of (F-NNN): ")
 		target, rerr := readLine(r)
@@ -162,7 +185,7 @@ func applyChoice(opts Options, findings []analyze.Finding, f analyze.Finding, ch
 		if err := checkTargets(findings, f.ID, "duplicate", target); err != nil {
 			return false, false, err
 		}
-		return true, false, record(opts, analyze.Verdict{Kind: "verdict", Finding: f.ID, Verdict: "duplicate", Of: target, At: opts.Today})
+		return true, false, record(opts, f, analyze.Verdict{Kind: "verdict", Finding: f.ID, Verdict: "duplicate", Of: target, At: opts.Today})
 	case "s", "":
 		fmt.Fprintln(opts.Out, "  skipped.")
 		return true, false, nil
@@ -173,8 +196,8 @@ func applyChoice(opts Options, findings []analyze.Finding, f analyze.Finding, ch
 	}
 }
 
-func record(opts Options, rec analyze.Verdict) error {
-	if err := AppendVerdict(opts.Dir, rec); err != nil {
+func record(opts Options, judged analyze.Finding, rec analyze.Verdict) error {
+	if err := AppendVerdict(opts.Dir, rec, &judged); err != nil {
 		// Wrapped so walk can distinguish a lost verdict from a mistyped
 		// keystroke; see errPersist.
 		return fmt.Errorf("%w: %v", errPersist, err)
@@ -221,10 +244,29 @@ func ParseVerdictFlag(s string) (verdict, of string, err error) {
 
 // AppendVerdict appends one verdict record to findings.jsonl without touching
 // any existing line (append-only; latest verdict wins for display).
-func AppendVerdict(dir string, v analyze.Verdict) error {
+//
+// expect, when non-nil, is the finding the analyst was shown when they made this
+// decision. AppendVerdict re-reads the current findings under its lock and
+// refuses if the targeted id is gone or now names a different finding — see
+// verifyTarget. Callers pass nil only when there is no snapshot to bind against
+// (there are none in production; the review paths always pass the judged
+// finding).
+func AppendVerdict(dir string, v analyze.Verdict, expect *analyze.Finding) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
+	}
+	// Hold the verdict to MaxJSONLLine, the shared read-side invariant every other
+	// JSONL writer respects (session.WriteJSONL, analyze.oversizedFindings,
+	// demo.tooLongForJSONL). A verdict carries its finding id verbatim, and in an
+	// exchanged or hand-edited findings.jsonl that id can be just under the 4 MiB
+	// scanner cap — small enough that the finding line loads, large enough that the
+	// verdict's own framing tips the line over it. Appending it would durably brick
+	// the verdict history this package exists to protect: every later analyze.Load,
+	// review, report, and holdsVerdicts would fail with "token too long".
+	if len(b)+1 > session.MaxJSONLLine {
+		return fmt.Errorf("verdict for %s encodes to %d bytes, over the %d-byte %s line limit",
+			v.Finding, len(b)+1, session.MaxJSONLLine, session.FindingsFile)
 	}
 	path := filepath.Join(dir, session.FindingsFile)
 	// O_RDWR rather than O_WRONLY because the record cannot be framed correctly
@@ -233,6 +275,34 @@ func AppendVerdict(dir string, v analyze.Verdict) error {
 	if err != nil {
 		return err
 	}
+	// Take an exclusive advisory lock across the probe → write → rollback sequence.
+	// Two `testimony review` processes appending to one session's findings.jsonl
+	// would otherwise race: A measures the end, B appends a full verdict past it, A's
+	// write fails part-way (ENOSPC — the case the rollback exists for), and A's
+	// Truncate then cuts the file back below B's committed record, deleting it.
+	// writeVerdict re-measuring the end only shrinks that window; the lock closes it,
+	// so the length A rolls back to is the true end before A's own bytes. The lock
+	// releases with the descriptor on Close.
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return err
+	}
+	// Under the lock, confirm the verdict still targets the finding the analyst
+	// judged. review.Run snapshots findings once (analyze.Load) and then blocks on
+	// the operator for the whole interactive walk; a concurrent `analyze -ingest`
+	// can truncate-and-rewrite findings.jsonl in that gap — permitted until the
+	// first verdict exists — and because finding ids restart at F-001 the verdict
+	// would otherwise attach to a different finding under the same id, silently
+	// misattributing the human decision this file exists to hold. The re-check runs
+	// under the same exclusive lock analyze.commitFindings takes, so the re-ingest
+	// is either already visible here (mismatch → refuse, no verdict written) or
+	// serialised after this append and then blocked by its own verdict-guard.
+	if expect != nil {
+		if err := verifyTarget(f, v, *expect); err != nil {
+			f.Close()
+			return err
+		}
+	}
 	if err := writeVerdict(f, append(b, '\n')); err != nil {
 		f.Close()
 		return err
@@ -240,6 +310,38 @@ func AppendVerdict(dir string, v analyze.Verdict) error {
 	// Return the Close error so a verdict is never reported recorded when its
 	// bytes did not reach disk (write-back deferred to close on NFS/full device).
 	return f.Close()
+}
+
+// verifyTarget re-reads the findings currently in f (the locked findings.jsonl
+// descriptor) and confirms the verdict v still applies to the finding expect —
+// the one the analyst was shown. It refuses if the id has vanished or now names
+// a different finding, and for a duplicate verdict if the "of" target has
+// vanished. f is read via a SectionReader over ReadAt, which leaves the file
+// offset untouched, and the descriptor is O_APPEND, so the subsequent write
+// still lands at the true end of file.
+func verifyTarget(f *os.File, v analyze.Verdict, expect analyze.Finding) error {
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	findings, _, err := analyze.ParseRecords(io.NewSectionReader(f, 0, info.Size()), session.FindingsFile)
+	if err != nil {
+		return err
+	}
+	cur := findByID(findings, v.Finding)
+	if cur == nil {
+		return fmt.Errorf("finding %s is no longer in %s; it changed since review started — re-run `testimony review`",
+			v.Finding, session.FindingsFile)
+	}
+	if !analyze.SameIdentity(*cur, expect) {
+		return fmt.Errorf("finding %s changed since review started (a re-analysis rewrote %s); re-run `testimony review` before recording a verdict",
+			v.Finding, session.FindingsFile)
+	}
+	if v.Verdict == "duplicate" && findByID(findings, v.Of) == nil {
+		return fmt.Errorf("duplicate target %s is no longer in %s; re-run `testimony review`",
+			v.Of, session.FindingsFile)
+	}
+	return nil
 }
 
 // verdictFile is the subset of *os.File that writeVerdict needs; a fake
@@ -365,6 +467,15 @@ func readLine(r *bufio.Reader) (string, error) {
 // moment on the very surface where they record the verdict. This mirrors
 // report.clock; see the note in review_test.go about the duplication.
 func clock(sec float64) string {
+	// Defend the float64→int conversion below against a non-finite or
+	// astronomically large sec from a hand-authored findings.jsonl (printFinding
+	// renders f.T, and analyze.Load does not bound it): int(sec+0.5) would be an
+	// out-of-range conversion the Go spec leaves implementation-defined, printing a
+	// nonsensical stamp on the surface where the analyst records a verdict. Mirrors
+	// report.clock's guard — the class fix for both copies of this function.
+	if math.IsNaN(sec) || math.Abs(sec) > maxClockSeconds {
+		return "--:--"
+	}
 	neg := sec < 0
 	if neg {
 		sec = -sec

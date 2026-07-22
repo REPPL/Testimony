@@ -136,7 +136,7 @@ func Run(opts Options) error {
 	ctx, stop := notifyContext()
 	defer stop()
 
-	children, err := startRecordersFn(dir, recorders)
+	children, err := startRecordersFn(dir, recorders, opts.Log)
 	if err != nil {
 		return err
 	}
@@ -280,7 +280,7 @@ func checkPlainOutput(path string) error {
 // ffmpeg subprocess per requested stream, each in its own process group with
 // captured stderr. On darwin the streams are non-empty; elsewhere they are, so
 // this is a no-op returning no children.
-func startRecorders(dir string, streams []string) ([]*liveChild, error) {
+func startRecorders(dir string, streams []string, log io.Writer) ([]*liveChild, error) {
 	if len(streams) == 0 {
 		return nil, nil
 	}
@@ -288,9 +288,16 @@ func startRecorders(dir string, streams []string) ([]*liveChild, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg not found on PATH (needed to capture audio/screen): brew install ffmpeg")
 	}
-	micIndex, screenIndex, err := probeDevices(ffmpeg, contains(streams, streamScreen))
+	screenIndex, mics, err := probeDevices(ffmpeg, contains(streams, streamScreen))
 	if err != nil {
 		return nil, err
+	}
+	// The microphone is captured via avfoundation ":default" (micArgs), so ffmpeg
+	// resolves the system default at capture time. Log the detected input roster
+	// so a virtual audio driver shadowing the real mic is visible before a session
+	// is recorded to silence.
+	if contains(streams, streamMicrophone) && len(mics) > 0 {
+		fmt.Fprintf(log, "  audio inputs: %s\n  microphone  : system default (avfoundation :default)\n", strings.Join(mics, ", "))
 	}
 
 	var children []*liveChild
@@ -303,7 +310,7 @@ func startRecorders(dir string, streams []string) ([]*liveChild, error) {
 		var args []string
 		switch stream {
 		case streamMicrophone:
-			args = micArgs(micIndex, out)
+			args = micArgs(out)
 		case streamScreen:
 			args = screenArgs(screenIndex, out)
 		}

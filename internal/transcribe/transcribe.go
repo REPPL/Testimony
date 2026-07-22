@@ -10,6 +10,8 @@
 package transcribe
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -81,6 +83,17 @@ func Run(opts Options) (int, error) {
 	offset, provenance, err := resolveOffset(opts, man, external)
 	if err != nil {
 		return 0, err
+	}
+	// An external recording's audio.wav is NOT captured at t0, and disk bytes
+	// cannot distinguish it from a record-origin audio.wav. Persist the offset
+	// beside audio.wav so a later bare `transcribe` (a re-run with a different
+	// model, reusing audio.wav) reads it back instead of silently assuming 0 and
+	// shifting every utterance by the forgotten offset. record-origin audio.wav
+	// writes no sidecar and correctly defaults to 0.
+	if external {
+		if err := writeOffsetSidecar(opts.SessionDir, offset, provenance); err != nil {
+			return 0, fmt.Errorf("persist audio offset: %w", err)
+		}
 	}
 	fmt.Fprintf(opts.Log, "offset: %+.2fs (%s)\n", offset, provenance)
 
@@ -156,7 +169,80 @@ func resolveOffset(opts Options, man session.Manifest, external bool) (float64, 
 		}
 		return 0, "default 0: audio creation time unavailable", nil
 	}
+	// In-place: audio.wav is reused. A prior external -audio run persists the
+	// offset it derived in a sidecar (see writeOffsetSidecar); honour it so the
+	// re-run does not silently drop the offset. A record-origin audio.wav has no
+	// sidecar and correctly defaults to 0 (captured at t0).
+	if off, provenance, ok, err := readOffsetSidecar(opts.SessionDir); err != nil {
+		return 0, "", err
+	} else if ok {
+		return off, provenance, nil
+	}
 	return 0, "default 0: session audio.wav captured at t0", nil
+}
+
+// offsetSidecar is the persisted audio→session offset written beside audio.wav
+// after an external -audio conversion, so a later in-place re-run recovers it.
+type offsetSidecar struct {
+	OffsetSeconds float64 `json:"offset_seconds"`
+	Provenance    string  `json:"provenance,omitempty"`
+}
+
+// maxOffsetSidecarBytes caps the sidecar read: a genuine one is well under a
+// kilobyte, and the session directory is attacker-authorable, so an oversized
+// file is refused rather than buffered.
+const maxOffsetSidecarBytes = 64 << 10
+
+// writeOffsetSidecar persists offset (with its provenance, for the operator)
+// beside audio.wav via the no-follow write guard, so a session's own directory
+// cannot redirect the write through a planted symlink.
+func writeOffsetSidecar(dir string, offset float64, provenance string) error {
+	b, err := json.Marshal(offsetSidecar{OffsetSeconds: offset, Provenance: provenance})
+	if err != nil {
+		return err
+	}
+	return session.WriteFileNoFollow(filepath.Join(dir, session.AudioOffsetFile), append(b, '\n'), 0o644)
+}
+
+// readOffsetSidecar reads the offset sidecar if present. ok is false with no
+// error when the file is absent (the record-origin case). A present-but-unusable
+// sidecar — unreadable, oversized, malformed, or carrying a non-finite offset —
+// is a refuse-with-guidance error rather than a silent fallback to 0: the audio
+// is known to be external (only convertAudio writes this file), so guessing 0
+// would reintroduce exactly the silent shift the sidecar exists to prevent.
+func readOffsetSidecar(dir string) (offset float64, provenance string, ok bool, err error) {
+	path := filepath.Join(dir, session.AudioOffsetFile)
+	f, err := session.OpenFileNoFollowRead(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, "", false, nil
+		}
+		return 0, "", false, err
+	}
+	defer f.Close()
+
+	b, err := io.ReadAll(io.LimitReader(f, maxOffsetSidecarBytes+1))
+	if err != nil {
+		return 0, "", false, offsetSidecarErr(err)
+	}
+	if len(b) > maxOffsetSidecarBytes {
+		return 0, "", false, offsetSidecarErr(fmt.Errorf("file exceeds %d bytes", maxOffsetSidecarBytes))
+	}
+	var sc offsetSidecar
+	if err := json.Unmarshal(b, &sc); err != nil {
+		return 0, "", false, offsetSidecarErr(err)
+	}
+	if math.IsNaN(sc.OffsetSeconds) || math.IsInf(sc.OffsetSeconds, 0) {
+		return 0, "", false, offsetSidecarErr(fmt.Errorf("offset_seconds is not a finite number"))
+	}
+	return sc.OffsetSeconds, fmt.Sprintf("persisted: audio.wav converted from an external recording (%+.2fs)", sc.OffsetSeconds), true, nil
+}
+
+// offsetSidecarErr wraps a sidecar fault in the same refuse-with-guidance
+// message, telling the operator how to recover the offset explicitly.
+func offsetSidecarErr(cause error) error {
+	return fmt.Errorf("%s is present but unusable (%v); re-run with -audio FILE to re-derive the offset, or pass -offset SECONDS",
+		session.AudioOffsetFile, cause)
 }
 
 // mapSegments converts engine segments to the Utterance schema of

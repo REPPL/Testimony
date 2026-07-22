@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
 )
 
@@ -29,6 +30,18 @@ type timelineIndex struct {
 }
 
 // indexTimeline builds a timelineIndex from merged timeline entries.
+//
+// Every key the answer is matched against is stored in its session.SafeText form
+// (ids, utterance text, selectors, routes), because that is the only form of the
+// timeline the answering agent is ever shown: EmitRequest routes each marshalled
+// timeline line through SafeText to strip terminal-control and Trojan-Source
+// bytes before printing the request. Indexing the raw bytes here while the agent
+// copies the sanitised bytes would make an id, selector, route, or quote that
+// carried any stripped character impossible to validate — an honest,
+// verbatim-copied answer would be rejected as "not present". SafeText is a no-op
+// on ordinary text, so this changes nothing for a normal session and only closes
+// the shown-vs-validated gap on control-character-bearing (i.e. hostile or
+// hand-edited) transcripts.
 func indexTimeline(entries []timeline.Entry) timelineIndex {
 	idx := timelineIndex{
 		ids:       map[string]bool{},
@@ -37,20 +50,20 @@ func indexTimeline(entries []timeline.Entry) timelineIndex {
 		routes:    map[string]bool{},
 	}
 	for i, e := range entries {
-		idx.ids[e.ID] = true
+		idx.ids[session.SafeText(e.ID)] = true
 		end := e.T
 		switch e.Src {
 		case "speech":
 			end = timeline.SpeechEnd(e)
 			if s, ok := e.Payload["text"].(string); ok {
-				idx.uttText[e.ID] = s
+				idx.uttText[session.SafeText(e.ID)] = session.SafeText(s)
 			}
 		case "event":
 			if s, ok := e.Payload["selector"].(string); ok && s != "" {
-				idx.selectors[s] = true
+				idx.selectors[session.SafeText(s)] = true
 			}
 			if r, ok := e.Payload["route"].(string); ok && r != "" {
-				idx.routes[r] = true
+				idx.routes[session.SafeText(r)] = true
 			}
 		}
 		// Seed idx.end on the first entry, exactly as idx.start is seeded below, so
@@ -158,13 +171,17 @@ func validate(findings []positioned, idx timelineIndex) []error {
 			errs = append(errs, fmt.Errorf("%s: evidence lists %d ids, exceeding the limit of %d", label, len(f.Evidence), maxEvidence))
 		}
 		for _, id := range f.Evidence {
-			if !idx.ids[id] {
+			// Match against the SafeText form the index holds — the form the agent
+			// was shown (see indexTimeline). The id is normalised once here so the
+			// utt-* anchor test and the uttText lookup agree with the id set.
+			nid := session.SafeText(id)
+			if !idx.ids[nid] {
 				errs = append(errs, fmt.Errorf("%s: evidence id %q not found in the timeline", label, id))
 				continue
 			}
-			if strings.HasPrefix(id, "utt-") {
+			if strings.HasPrefix(nid, "utt-") {
 				hasUtt = true
-				if txt, ok := idx.uttText[id]; ok {
+				if txt, ok := idx.uttText[nid]; ok {
 					uttTexts = append(uttTexts, txt)
 				}
 			}
@@ -174,19 +191,23 @@ func validate(findings []positioned, idx timelineIndex) []error {
 		}
 
 		// quote: non-empty and a verbatim substring of one cited evidence
-		// utterance's text (per-utterance, no normalisation).
+		// utterance's text. Both sides are compared in SafeText form (uttTexts is
+		// already sanitised via the index): the agent copies the quote from the
+		// sanitised request, so validating against the raw utterance would reject an
+		// honest verbatim copy whenever the utterance carried a stripped character.
 		if f.Quote == "" {
 			errs = append(errs, fmt.Errorf("%s: quote must be non-empty", label))
-		} else if !containsAny(uttTexts, f.Quote) {
+		} else if !containsAny(uttTexts, session.SafeText(f.Quote)) {
 			errs = append(errs, fmt.Errorf("%s: quote is not a verbatim substring of any cited evidence utterance", label))
 		}
 
-		// ui selector/route, when present, must name a real event.
+		// ui selector/route, when present, must name a real event — matched in the
+		// same SafeText form the index and the emitted request use.
 		if f.UI != nil {
-			if f.UI.Selector != "" && !idx.selectors[f.UI.Selector] {
+			if f.UI.Selector != "" && !idx.selectors[session.SafeText(f.UI.Selector)] {
 				errs = append(errs, fmt.Errorf("%s: ui.selector %q is not present on any timeline event", label, f.UI.Selector))
 			}
-			if f.UI.Route != "" && !idx.routes[f.UI.Route] {
+			if f.UI.Route != "" && !idx.routes[session.SafeText(f.UI.Route)] {
 				errs = append(errs, fmt.Errorf("%s: ui.route %q is not present on any timeline event", label, f.UI.Route))
 			}
 		}

@@ -1,6 +1,7 @@
 package report
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -326,5 +327,112 @@ func TestReportFindingsSanitiseIDAndVerdict(t *testing.T) {
 	// The real Confirmed group holds exactly the one genuine finding.
 	if strings.Count(md, "### Confirmed (1)") != 1 {
 		t.Fatalf("confirmed count line was altered:\n%s", md)
+	}
+}
+
+// TestReportDoesNotLeakPathOnUnreadableFindings covers the info-disclosure on the
+// findings-unavailable path. findings.jsonl exists but cannot be read — here a
+// symlink, which session's no-follow guard refuses with an error naming the full
+// path. That path is absolute when the operator passed an absolute -session and
+// on macOS embeds the username. report.md is the artefact a session directory is
+// built to share, so the raw error (the one string in renderFindings not routed
+// through SafeText) must not land in it. Render still succeeds; the report shows a
+// generic notice and no filesystem path. Pre-fix the whole error, path and all,
+// was written into report.md.
+func TestReportDoesNotLeakPathOnUnreadableFindings(t *testing.T) {
+	dir := setupSession(t)
+	findings := filepath.Join(dir, session.FindingsFile)
+	if err := os.Symlink(filepath.Join(dir, "elsewhere"), findings); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render should stay non-fatal on an unreadable findings file: %v", err)
+	}
+	if strings.Contains(md, dir) {
+		t.Fatalf("report leaked the session path into report.md:\n%s", md)
+	}
+	if !strings.Contains(md, "could not be read") {
+		t.Fatalf("expected a generic findings-unavailable notice, got:\n%s", md)
+	}
+}
+
+// TestClockRefusesOutOfRangeTime is the sink half of the time-magnitude class.
+// timeline.jsonl and findings.jsonl are attacker-authorable and reach clock
+// without passing timeline.checkedUtterances. A finite-but-astronomical t makes
+// int(sec+0.5) an out-of-range float64→int conversion (implementation-defined:
+// arm64 saturates to MaxInt64 and prints "153722867280912930:07", amd64 wraps
+// negative), planting a nonsensical stamp in the human evidence artefact. clock
+// must render a visibly-broken placeholder instead. Pre-fix it did the raw
+// conversion.
+func TestClockRefusesOutOfRangeTime(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sec  float64
+	}{
+		{"huge positive", 1e300},
+		{"huge negative", -1e300},
+		{"positive inf", math.Inf(1)},
+		{"nan", math.NaN()},
+	} {
+		got := clock(tc.sec)
+		if got != "--:--" {
+			t.Errorf("clock(%s)=%q, want %q (out-of-range must not reach int conversion)", tc.name, got, "--:--")
+		}
+	}
+	// The ordinary range is unaffected.
+	if got := clock(125); got != "02:05" {
+		t.Fatalf("clock(125)=%q, want 02:05", got)
+	}
+}
+
+// TestReportRendersHugeTimeAsPlaceholder is the end-to-end guard: a hand-authored
+// timeline.jsonl whose speech carries t=1e300 must render a placeholder Duration,
+// not a saturated-integer garbage stamp, and Render must still exit cleanly.
+func TestReportRendersHugeTimeAsPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "x", Participant: "P1"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	const tl = `{"t":1e300,"src":"speech","id":"u1","payload":{"speaker":"P1","t1":1e300,"text":"planted"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "153722867280912930") {
+		t.Fatalf("report rendered a saturated-integer garbage stamp:\n%s", md)
+	}
+	if !strings.Contains(md, "--:--") {
+		t.Fatalf("expected a placeholder stamp for the out-of-range time:\n%s", md)
+	}
+}
+
+// TestReportFlushesEventPastLegacySentinel covers the sentinel bug: the trailing
+// standalone-event flush used a finite 1e18 bound, so any event with t at or past
+// it was silently omitted from the report while merge and report both exited 0.
+// The flush is now +Inf-bounded, so every finite-t event appears. Pre-fix the
+// event below (t=1e18) was dropped.
+func TestReportFlushesEventPastLegacySentinel(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "x", Participant: "P1"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// One ordinary utterance and a standalone event at exactly the old sentinel.
+	const tl = `{"t":5,"src":"speech","id":"u1","payload":{"speaker":"P1","t1":6,"text":"hello"}}
+{"t":1e18,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"#late","route":"#r"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(md, "#late") {
+		t.Fatalf("standalone event at the legacy 1e18 sentinel was dropped from the report:\n%s", md)
 	}
 }

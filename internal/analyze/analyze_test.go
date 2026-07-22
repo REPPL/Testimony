@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/REPPL/Testimony/internal/session"
 )
@@ -101,6 +103,34 @@ func TestIngestValidationFailures(t *testing.T) {
 				t.Fatalf("findings.jsonl was written despite a validation error")
 			}
 		})
+	}
+}
+
+// TestIngestQuoteValidatesAgainstSanitisedUtterance is the shown-vs-validated
+// regression. EmitRequest runs every timeline line through session.SafeText, so
+// an utterance whose text carries a Bidi_Control character (here U+200F, common
+// in genuine RTL speech) is shown to the agent with that character stripped. The
+// agent copies the quote verbatim from the request it was given — i.e. the
+// sanitised text — and cites the utterance. validate must therefore compare the
+// quote against the sanitised utterance text too. Pre-fix it indexed the raw
+// utterance text and the honest, verbatim-copied quote was rejected as "not a
+// verbatim substring", an unrepairable failure since the agent can never see the
+// stripped character.
+func TestIngestQuoteValidatesAgainstSanitisedUtterance(t *testing.T) {
+	// The raw utterance carries U+200F (RLM) between "save" and "button". Ingest
+	// reads timeline.jsonl (the merged, raw form).
+	const tl = "{\"t\":22,\"src\":\"speech\",\"id\":\"utt-004\",\"payload\":{\"speaker\":\"P1\",\"t1\":28,\"text\":\"I clicked the save ‏button and nothing happened\"}}\n"
+	dir := writeSession(t, tl)
+
+	// The agent's quote is the SafeText'd span — no RLM, because the request never
+	// showed it one.
+	answer := `{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"the save button and nothing happened","evidence":["utt-004"]}]}`
+	findings, err := Ingest(dir, strings.NewReader(answer))
+	if err != nil {
+		t.Fatalf("an honest quote copied from the sanitised request was rejected: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("got %d findings, want 1", len(findings))
 	}
 }
 
@@ -543,5 +573,96 @@ func TestIngestOversizedFindingLeavesPriorFileIntact(t *testing.T) {
 	after, _ := os.ReadFile(path)
 	if string(before) != string(after) {
 		t.Fatalf("a prior findings.jsonl was modified despite the refusal")
+	}
+}
+
+// TestIngestGuardAndWriteAreOneLockedStep is the TOCTOU regression for the
+// verdict guard. Pre-fix, Ingest probed for verdicts and then rewrote
+// findings.jsonl as two separate, lock-free opens, so a concurrent `testimony
+// review` could commit a verdict (under review.AppendVerdict's exclusive lock)
+// in between and have the O_TRUNC rewrite destroy it — the human-decision
+// record the guard exists to protect. Post-fix the probe, truncate, and write
+// run under one exclusive flock on findings.jsonl, so Ingest cannot touch the
+// file while a verdict writer holds the lock. The test stands in for that
+// writer: it takes the lock, starts Ingest, requires Ingest NOT to complete
+// while the lock is held (pre-fix it completes and truncates in milliseconds),
+// then commits a verdict and releases. Ingest must then see the verdict and
+// refuse, leaving it intact.
+func TestIngestGuardAndWriteAreOneLockedStep(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	path := filepath.Join(dir, session.FindingsFile)
+	const priorFinding = `{"kind":"finding","id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"status":"unverified"}` + "\n"
+	if err := os.WriteFile(path, []byte(priorFinding), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	// Stand-in for a `testimony review` mid-AppendVerdict: same open, same lock.
+	locked, err := session.OpenFileNoFollow(path, os.O_APPEND|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatalf("open findings: %v", err)
+	}
+	if err := syscall.Flock(int(locked.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatalf("flock: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Ingest(dir, strings.NewReader(goodAnswer))
+		done <- err
+	}()
+
+	// While the verdict writer holds the lock, Ingest must block. Pre-fix it
+	// ignores the lock and finishes (truncating the file) within milliseconds,
+	// so completing inside this grace window is the defect itself.
+	select {
+	case err := <-done:
+		t.Fatalf("Ingest completed while a verdict writer held the lock (err=%v)", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	const verdict = `{"kind":"verdict","finding":"F-001","verdict":"confirmed","note":"seen it","at":"2026-07-22"}` + "\n"
+	if _, err := locked.WriteString(verdict); err != nil {
+		t.Fatalf("append verdict: %v", err)
+	}
+	if err := locked.Close(); err != nil { // releases the lock
+		t.Fatalf("close: %v", err)
+	}
+
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "verdict records") {
+		t.Fatalf("expected the verdict-guard refusal after the lock released, got %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if !strings.Contains(string(b), `"kind":"verdict"`) {
+		t.Fatalf("the concurrently committed verdict was destroyed:\n%s", b)
+	}
+	if !strings.Contains(string(b), priorFinding[:40]) {
+		t.Fatalf("the prior finding was destroyed:\n%s", b)
+	}
+}
+
+// TestEmitRequestSanitisesTimelineBidi is the Trojan-Source regression for the
+// timeline block. An exchanged session's transcript text flows through merge into
+// timeline.jsonl and then into the emitted request that cli prints to the
+// operator's terminal. json.Marshal escapes C0 controls and ESC but passes the
+// Unicode Bidi_Control set (here U+202E RLO / U+202C PDF) through as raw bytes, so
+// pre-fix a right-to-left override reordered the displayed quote — the exact
+// spoofing SafeText strips on the report and review paths. EmitRequest must now
+// route each marshalled timeline line through SafeText too.
+func TestEmitRequestSanitisesTimelineBidi(t *testing.T) {
+	const bidiTimeline = "{\"t\":22,\"src\":\"speech\",\"id\":\"utt-004\",\"payload\":{\"speaker\":\"P1\",\"t1\":28,\"text\":\"benign ‮gnihtemos evil‬ end\"}}\n"
+	dir := writeSession(t, bidiTimeline)
+	got, err := EmitRequest(dir)
+	if err != nil {
+		t.Fatalf("EmitRequest: %v", err)
+	}
+	if strings.ContainsRune(got, '‮') || strings.ContainsRune(got, '‬') {
+		t.Fatalf("emitted request carries a raw Bidi_Control character from the timeline text")
+	}
+	// The underlying words are unchanged; only the reordering controls are gone.
+	if !strings.Contains(got, "gnihtemos evil") {
+		t.Fatalf("sanitised timeline text missing from the emitted request:\n%s", got)
 	}
 }

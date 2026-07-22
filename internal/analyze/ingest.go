@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
@@ -103,16 +104,67 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 		return nil, errors.Join(errs...)
 	}
 
-	if held, err := holdsVerdicts(dir); err != nil {
+	if err := commitFindings(dir, findings); err != nil {
 		return nil, err
-	} else if held {
-		return nil, fmt.Errorf("refusing to overwrite %s: it already holds verdict records (the retained precision record)", session.FindingsFile)
-	}
-
-	if err := session.WriteJSONL(filepath.Join(dir, session.FindingsFile), findings); err != nil {
-		return nil, fmt.Errorf("write findings: %w", err)
 	}
 	return findings, nil
+}
+
+// commitFindings runs the verdict guard and the truncating write as one locked
+// step. Probing with holdsVerdicts and then calling session.WriteJSONL as two
+// separate opens left a TOCTOU window: a concurrent `testimony review` commits a
+// verdict (under its own lock, see review.AppendVerdict) between the probe and
+// the O_TRUNC open, and the rewrite destroys it — precisely the human-decision
+// record the guard exists to protect. Holding one exclusive advisory lock across
+// probe, truncate, and write forecloses the interleaving: AppendVerdict blocks
+// until the commit completes, so a verdict is either visible to the probe (and
+// the re-ingest refused) or appended after the new findings. The findings were
+// already held to session.MaxJSONLLine by oversizedFindings, so writing through
+// the locked descriptor keeps the read-side invariant WriteJSONL enforces.
+func commitFindings(dir string, findings []Finding) error {
+	path := filepath.Join(dir, session.FindingsFile)
+	f, err := session.OpenFileNoFollow(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return err
+	}
+	held, err := holdsVerdicts(f, path)
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if held {
+		f.Close()
+		return fmt.Errorf("refusing to overwrite %s: it already holds verdict records (the retained precision record)", session.FindingsFile)
+	}
+	if err := f.Truncate(0); err != nil {
+		f.Close()
+		return fmt.Errorf("write findings: %w", err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return fmt.Errorf("write findings: %w", err)
+	}
+	w := bufio.NewWriter(f)
+	enc := json.NewEncoder(w)
+	for _, v := range findings {
+		if err := enc.Encode(v); err != nil {
+			f.Close()
+			return fmt.Errorf("write findings: %w", err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return fmt.Errorf("write findings: %w", err)
+	}
+	// Close releases the lock with the descriptor.
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("write findings: %w", err)
+	}
+	return nil
 }
 
 // oversizedFindings reports any finding whose findings.jsonl line — its JSON
@@ -227,27 +279,17 @@ func decodeFinding(raw json.RawMessage) (Finding, error) {
 	}, nil
 }
 
-// holdsVerdicts reports whether an existing findings.jsonl already contains any
-// verdict record. A missing file is not an error (false, nil). It scans for raw
-// kind:"verdict" lines rather than reusing analyze.Load, whose verdict slice is
-// filtered to the closed enum (confirmed|rejected|duplicate): a hand-edited or
-// shared file whose only verdict lines carry a foreign or typo'd value would
-// otherwise slip past the guard and have its human-decision records truncated by
-// a re-ingest — exactly the precision history the guard exists to protect.
-func holdsVerdicts(dir string) (bool, error) {
-	path := filepath.Join(dir, session.FindingsFile)
-	// Read-side no-follow guard rather than plain os.Open: a FIFO planted at
-	// findings.jsonl in an exchanged session would otherwise hang this open for
-	// ever. A missing file still satisfies os.ErrNotExist and is not an error here.
-	f, err := session.OpenFileNoFollowRead(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
-	}
-	defer f.Close()
-
+// holdsVerdicts reports whether the findings.jsonl open on f already contains
+// any verdict record. It reads through the caller's descriptor — opened under
+// the no-follow guard and exclusively locked by commitFindings — rather than
+// opening the path itself, so the probe and the write it gates observe the same
+// locked file. It scans for raw kind:"verdict" lines rather than reusing
+// analyze.Load, whose verdict slice is filtered to the closed enum
+// (confirmed|rejected|duplicate): a hand-edited or shared file whose only
+// verdict lines carry a foreign or typo'd value would otherwise slip past the
+// guard and have its human-decision records truncated by a re-ingest — exactly
+// the precision history the guard exists to protect.
+func holdsVerdicts(f io.Reader, path string) (bool, error) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {

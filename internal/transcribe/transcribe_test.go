@@ -243,6 +243,58 @@ func TestResolveOffsetInPlaceNoT0(t *testing.T) {
 	}
 }
 
+// TestResolveOffsetInPlaceReadsSidecar is the re-run-offset-loss regression. A
+// first `transcribe -audio rec.m4a` converts the recording into audio.wav and
+// derives a nonzero offset; a later bare `transcribe` reuses audio.wav and hits
+// the in-place branch. Pre-fix that branch always returned 0, silently shifting
+// every utterance by the forgotten offset. The offset is now persisted in a
+// sidecar beside audio.wav and read back here. write-then-read round-trips the
+// value.
+func TestResolveOffsetInPlaceReadsSidecar(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeOffsetSidecar(dir, 12.4, "derived: audio creation_time − manifest t0"); err != nil {
+		t.Fatalf("writeOffsetSidecar: %v", err)
+	}
+	off, prov, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1_700_000_000_000}, false)
+	if err != nil {
+		t.Fatalf("in-place with a sidecar must succeed: %v", err)
+	}
+	if off != 12.4 {
+		t.Fatalf("offset: got %v, want 12.4 (from the sidecar, not the naive 0)", off)
+	}
+	if !strings.Contains(prov, "persisted") {
+		t.Fatalf("provenance should name the persisted origin, got %q", prov)
+	}
+}
+
+// TestResolveOffsetInPlaceRefusesBadSidecar covers the refuse-with-guidance
+// fallback: a present-but-unusable sidecar (here malformed JSON) means the audio
+// is known external but its offset is unrecoverable, so the run must refuse and
+// tell the operator how to state the offset, never silently fall back to 0.
+func TestResolveOffsetInPlaceRefusesBadSidecar(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, session.AudioOffsetFile), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+	_, _, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
+	if err == nil || !strings.Contains(err.Error(), "re-run with -audio") {
+		t.Fatalf("a malformed sidecar must refuse with guidance, got %v", err)
+	}
+}
+
+// TestResolveOffsetInPlaceNoSidecarIsRecordOrigin proves the record flow is
+// untouched: audio.wav with no sidecar is captured at t0, so the offset is 0.
+func TestResolveOffsetInPlaceNoSidecarIsRecordOrigin(t *testing.T) {
+	dir := t.TempDir()
+	off, prov, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
+	if err != nil {
+		t.Fatalf("record-origin in-place must succeed: %v", err)
+	}
+	if off != 0 || !strings.Contains(prov, "captured at t0") {
+		t.Fatalf("record-origin must be offset 0 captured at t0, got %v (%s)", off, prov)
+	}
+}
+
 // TestResolveOffsetExternalNoT0 is the silent-transcript-corruption regression:
 // pre-fix resolveOffset took the raw man.T0EpochMS and, on the external
 // recording path, handed it to deriveOffset unchecked. A received or hand-edited
@@ -520,5 +572,45 @@ func TestCheckSessionAudioRefusesFIFO(t *testing.T) {
 	}
 	if err := checkSessionAudio(wav, dir); err != nil {
 		t.Fatalf("a real audio.wav must be accepted, got %v", err)
+	}
+}
+
+// TestResolveModelRefusesFIFO is the model-path twin of the FIFO refusals on the
+// package's other subprocess-input sites (TestConvertAudioRefusesFIFOInput,
+// TestConvertAudioRefusesFIFOOutput, TestCheckSessionAudioRefusesFIFO). The
+// resolved -model path is handed to whisper-cli's -m and opened by it, so a FIFO
+// there would block that open(2) for ever. resolveModel must fall through to the
+// candidate search / not-found error rather than returning the FIFO. Pre-fix the
+// `!fi.IsDir()` test accepted it, since a FIFO is not a directory.
+func TestResolveModelRefusesFIFO(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "ggml-fifo.bin")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("mkfifo unsupported: %v", err)
+	}
+	got, err := resolveModel(fifo)
+	if err == nil {
+		t.Fatalf("resolveModel returned %q for a FIFO path; want a not-found error", got)
+	}
+	if got == fifo {
+		t.Fatalf("resolveModel returned the FIFO path itself: %q", got)
+	}
+}
+
+// TestResolveModelAcceptsRegularFile guards the ordinary case the refusal must
+// not break: an existing regular ggml file (or a symlink to one, which os.Stat
+// resolves) is returned as-is.
+func TestResolveModelAcceptsRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "ggml-test.bin")
+	if err := os.WriteFile(model, []byte("ggml"), 0o644); err != nil {
+		t.Fatalf("write model: %v", err)
+	}
+	got, err := resolveModel(model)
+	if err != nil {
+		t.Fatalf("resolveModel(regular file): %v", err)
+	}
+	if got != model {
+		t.Fatalf("want %q, got %q", model, got)
 	}
 }

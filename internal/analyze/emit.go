@@ -86,8 +86,14 @@ func EmitRequest(dir string) (string, error) {
 	// report and review: without it an App, Participant, or task carrying ESC
 	// drives ANSI sequences in the terminal, and one carrying a newline forges
 	// Markdown structure (a fake "## " heading or extra rubric instructions) inside
-	// the request the agent is asked to obey. The timeline block below needs no
-	// such treatment: json.Marshal escapes control bytes on the way out.
+	// the request the agent is asked to obey. The timeline block below needs the
+	// same treatment for a narrower reason: json.Marshal escapes the C0 controls
+	// and ESC, but it passes the Unicode Bidi_Control set through as raw bytes, so
+	// an exchanged session's transcript or event text could still smuggle a
+	// Trojan-Source reordering (CVE-2021-42574) into the request printed to the
+	// operator's terminal — the exact spoofing SafeText strips on the report and
+	// review paths. Each marshalled line is run through SafeText below; JSON's own
+	// structural bytes are ASCII and pass through it unchanged.
 	b.WriteString("## Session\n\n")
 	fmt.Fprintf(&b, "- App: %s\n", session.SafeText(orNone(man.App)))
 	fmt.Fprintf(&b, "- Participant: %s\n", session.SafeText(orNone(man.Participant)))
@@ -110,7 +116,7 @@ func EmitRequest(dir string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			b.Write(line)
+			b.WriteString(session.SafeText(string(line)))
 			b.WriteByte('\n')
 		}
 	}

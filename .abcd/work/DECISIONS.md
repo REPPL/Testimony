@@ -186,3 +186,61 @@ Architecture-shaping decisions graduate to an ADR under
   it used the zero-value anchor and wrote a silently corrupt timeline (~55-year
   offsets, nonsense report duration) with exit 0. Transcript-only sessions are
   unaffected.
+- 2026-07-22 — Close the Ingest/AppendVerdict TOCTOU on `findings.jsonl`:
+  `Ingest` now runs its verdict-guard probe, `O_TRUNC`, and rewrite as one step
+  under a `LOCK_EX` advisory lock (`commitFindings`), matching the lock
+  `review.AppendVerdict` already holds. Previously the probe and the truncating
+  write were two lock-free opens, so a concurrent `testimony review` could commit
+  a verdict between them and have the re-ingest destroy it — the human-decision
+  record the guard exists to protect. Sibling sweep: `findings.jsonl` is the only
+  session file with both an appender and a truncating rewriter; the other
+  `WriteJSONL` sites (timeline, transcript) are truncate-only, no sibling.
+- 2026-07-22 — Bind each review verdict to the finding the analyst judged.
+  `review.AppendVerdict` now takes the shown finding and, under its existing
+  `LOCK_EX` on findings.jsonl, re-reads the current findings and refuses if the
+  targeted id is gone or now names a different finding (`verifyTarget`,
+  `analyze.SameIdentity`). Previously the walk validated the target only against
+  the in-memory snapshot from `analyze.Load`, so a concurrent `analyze -ingest`
+  (permitted until the first verdict exists) that restarts finding ids at F-001
+  could slide a different finding under the same id and misattribute the
+  operator's verdict — silent corruption of the precision record. Refactored
+  `analyze.Load` to expose `ParseRecords(io.Reader)` so the re-check reads through
+  the already-locked descriptor. Sibling sweep: `AppendVerdict` is the sole
+  verdict writer; both production callers now bind the judged finding.
+- 2026-07-22 — Guard the untrusted-time-magnitude class end to end. Utterance
+  t0/t1 (session-relative float64 seconds) now have a magnitude bound in
+  timeline.checkedUtterances (1e9 s), the speech-side twin of the interaction
+  t<=0 guard; report.clock and review.clock refuse non-finite / out-of-range
+  seconds before the float64→int conversion (rendering `--:--`), defending the
+  display sink for a hand-authored timeline.jsonl/findings.jsonl that bypasses
+  merge; and report's trailing standalone-event flush uses a +Inf sentinel
+  instead of a finite 1e18 that silently dropped events at/after it. Sibling
+  sweep: report.clock and review.clock were the two duplicated float→int time
+  sinks; both guarded.
+- 2026-07-22 — Validate findings against the SafeText form of the timeline.
+  EmitRequest shows the agent each timeline line through session.SafeText, but
+  analyze.validate indexed and compared the raw bytes, so an id/selector/route/
+  quote carrying a stripped Bidi_Control or control character could never be
+  matched by an honest verbatim-copied answer (fail-closed, hostile/hand-edited
+  transcripts and genuine RTL speech). indexTimeline now stores SafeText keys and
+  validate compares SafeText(quote/selector/route/id). SafeText is a no-op on
+  ordinary text. Resolves the selector/route/id sibling of the earlier
+  emit-quote asymmetry.
+- 2026-07-22 — Surface ffmpeg's own diagnostic when the avfoundation device
+  listing is empty (record.probeDevices): an ffmpeg built without avfoundation
+  exits non-zero as an *exec.ExitError with the cause in its output, previously
+  discarded and misreported as "no microphone found". Now a bounded output tail
+  is appended to the error.
+- 2026-07-22 — transcribe persists the audio→session offset for external
+  recordings in a sidecar (`audio.offset.json`) beside audio.wav. A bare re-run
+  (different model, reusing audio.wav) reads it back instead of silently assuming
+  offset 0 and shifting every utterance; a record-origin audio.wav has no sidecar
+  and stays offset 0; a present-but-unusable sidecar refuses with guidance rather
+  than guessing. New session-directory artefact, documented in
+  docs/reference/session-directory.md.
+- 2026-07-22 — record captures the microphone via avfoundation ":default" (the
+  system default input) instead of enumerated index 0, so a virtual audio driver
+  (BlackHole/Loopback/conferencing device) that enumerates first is no longer
+  silently recorded in the real mic's place; startRecorders logs the detected
+  audio-input roster so a surprising default stays visible. NOTE: the avfoundation
+  capture path is not exercised by CI — verify on macOS hardware before release.
