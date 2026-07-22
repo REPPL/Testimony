@@ -16,7 +16,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 
@@ -84,7 +83,11 @@ func IsFindingID(s string) bool { return findingIDRe.MatchString(s) }
 // callers can render an absence notice.
 func Load(dir string) ([]Finding, []Verdict, error) {
 	path := filepath.Join(dir, session.FindingsFile)
-	f, err := os.Open(path)
+	// Route through the read-side no-follow guard, not plain os.Open: findings.jsonl
+	// in an exchanged (attacker-authored) session may be a symlink or a FIFO, and a
+	// FIFO would block this open in open(2) for ever. A missing file still returns
+	// an fs.ErrNotExist-satisfying error, which callers render as an absence notice.
+	f, err := session.OpenFileNoFollowRead(path)
 	if err != nil {
 		return nil, nil, err
 	}

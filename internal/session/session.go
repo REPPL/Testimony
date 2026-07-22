@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,10 +83,57 @@ func Create(outRoot string, now time.Time, m Manifest) (dir string, err error) {
 	return dir, nil
 }
 
+// ErrNoT0 reports a manifest that carries no usable capture anchor. It is
+// returned by Manifest.T0 and is worth matching with errors.Is when a caller
+// wants to distinguish "this session cannot be placed on a wall clock" from an
+// unreadable or malformed manifest.
+var ErrNoT0 = errors.New("manifest is missing t0_epoch_ms")
+
+// T0 returns the session's anchor instant in epoch milliseconds, or ErrNoT0
+// when the manifest carries none. Every caller that converts epoch-ms times to
+// session-relative ones — timeline.BuildEntries, transcribe's audio-offset
+// derivation — must obtain t0 through here rather than reading the field
+// directly.
+//
+// The check is needed because T0EpochMS is a value-typed int64: a manifest that
+// simply omits t0_epoch_ms decodes to 0, which is indistinguishable from a
+// recorded zero and is then subtracted from real epoch-ms timestamps. That
+// places every event about fifty-seven years into the session and writes a
+// silently corrupt timeline — wrong, plausible-looking numbers, which is worse
+// than a refusal, because a report built on them reads as evidence.
+//
+// Treating 0 as absent is safe rather than merely convenient: a genuine
+// t0_epoch_ms of 0 is midnight on 1 January 1970, which is not a capture
+// instant any recorder can produce. Create derives t0 from the same now that
+// names the session directory, so every manifest this tool writes has one.
+// Negative values are refused on the same reasoning — they anchor the session
+// before the epoch, and no capture starts there.
+//
+// The check deliberately lives here and not in LoadManifest. Several consumers
+// legitimately load a manifest they need no anchor from — report.Render works
+// from an already session-relative timeline.jsonl, and analyze.EmitRequest
+// reads only the app, participant, and task context — so refusing at load time
+// would fail commands that have no use for t0 and no way to be wrong about it.
+func (m Manifest) T0() (int64, error) {
+	if m.T0EpochMS <= 0 {
+		return 0, fmt.Errorf("%w (session %q); cannot place epoch-millisecond times on the session clock", ErrNoT0, m.Session)
+	}
+	return m.T0EpochMS, nil
+}
+
 // LoadManifest reads manifest.json from dir.
 func LoadManifest(dir string) (Manifest, error) {
 	var m Manifest
-	b, err := os.ReadFile(filepath.Join(dir, ManifestFile))
+	// Read through the no-follow guard rather than os.ReadFile: manifest.json in
+	// an exchanged session is attacker-controllable, and a FIFO planted there
+	// would block os.ReadFile in open(2) for ever waiting for a writer, hanging
+	// any command that loads the manifest.
+	f, err := OpenFileNoFollowRead(filepath.Join(dir, ManifestFile))
+	if err != nil {
+		return m, fmt.Errorf("load manifest: %w", err)
+	}
+	defer f.Close()
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return m, fmt.Errorf("load manifest: %w", err)
 	}
@@ -104,31 +152,41 @@ func SaveManifest(dir string, m Manifest) error {
 	return WriteFileNoFollow(filepath.Join(dir, ManifestFile), append(b, '\n'), 0o644)
 }
 
-// OpenFileNoFollow opens path for writing with O_NOFOLLOW, so a symlink planted
-// at the final path component is refused rather than followed, and refuses any
-// opened path that is not a regular file. A session directory is an exchange
-// unit (a shared or downloaded session may be attacker-authored); without the
-// symlink guard a planted symlink — e.g. a timeline.jsonl pointing at
-// ~/.ssh/authorized_keys — would redirect a write to an arbitrary file outside
+// openNoFollow is the single symlink-and-regular-file guard shared by every
+// session-artefact open, read or write. It opens path with O_NOFOLLOW, so a
+// symlink planted at the final path component is refused rather than followed,
+// and refuses any opened path that is not a regular file. A session directory is
+// an exchange unit (a shared or downloaded session may be attacker-authored);
+// without the symlink guard a planted symlink — e.g. a timeline.jsonl pointing
+// at a private key file — would redirect a write to an arbitrary file outside
 // the session directory, and without the regular-file guard a FIFO planted at
-// the same path would hold the write open for ever, waiting for a reader that
-// never arrives, hanging merge or report on a session the operator merely
-// received. O_NONBLOCK is set so that the FIFO open itself returns instead of
-// blocking before the check can run; it has no effect on the ordinary case,
-// because opening a regular file never blocks and the flag does not alter
-// subsequent reads or writes on one. flag is OR-ed with O_NOFOLLOW and
-// O_NONBLOCK; callers pass the usual O_CREATE/O_TRUNC/O_APPEND/O_WRONLY set.
-func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
+// the same path would hang the CLI in open(2) for ever: on the write side
+// waiting for a reader that never arrives, and on the read side waiting for a
+// writer that never arrives, so merge, report, or analyze never returns on a
+// session the operator merely received.
+//
+// O_NONBLOCK is what makes the regular-file check reachable at all: opening a
+// FIFO — for reading or for writing — normally blocks until the other end is
+// present, but with O_NONBLOCK the open returns immediately (a read-only FIFO
+// open succeeds at once; a write-only one fails with ENXIO), so fstat can then
+// run and refuse it. It has no effect on the ordinary case, because opening a
+// regular file never blocks and the flag does not alter subsequent reads or
+// writes on one. flag is OR-ed with O_NOFOLLOW and O_NONBLOCK.
+//
+// verb ("read"/"write") is woven into the refusal messages so they name the
+// direction; OpenFileNoFollow keeps verb="write" verbatim so callers and tests
+// that assert "refusing to write ..." are undisturbed.
+func openNoFollow(path string, flag int, perm os.FileMode, verb string) (*os.File, error) {
 	f, err := os.OpenFile(path, flag|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, perm)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {
-			return nil, fmt.Errorf("refusing to write %s: it is a symlink", path)
+			return nil, fmt.Errorf("refusing to %s %s: it is a symlink", verb, path)
 		}
 		return nil, err
 	}
 	// Stat the descriptor rather than the path, so the answer describes the file
 	// that was actually opened and cannot be swapped between the check and the
-	// write.
+	// read or write.
 	fi, err := f.Stat()
 	if err != nil {
 		f.Close()
@@ -136,9 +194,28 @@ func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error)
 	}
 	if !fi.Mode().IsRegular() {
 		f.Close()
-		return nil, fmt.Errorf("refusing to write %s: it is not a regular file", path)
+		return nil, fmt.Errorf("refusing to %s %s: it is not a regular file", verb, path)
 	}
 	return f, nil
+}
+
+// OpenFileNoFollow opens path for writing under the shared openNoFollow guard,
+// refusing a planted symlink or non-regular file (see openNoFollow for the full
+// threat model). Callers pass the usual O_CREATE/O_TRUNC/O_APPEND/O_WRONLY set;
+// O_NOFOLLOW and O_NONBLOCK are added by the guard.
+func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
+	return openNoFollow(path, flag, perm, "write")
+}
+
+// OpenFileNoFollowRead opens path read-only under the same guard, so the read
+// side of the pipeline is protected too: a FIFO planted at timeline.jsonl,
+// interactions.jsonl, transcript.jsonl, findings.jsonl, or manifest.json in an
+// exchanged session is refused immediately rather than blocking ReadJSONL or
+// LoadManifest in open(2) for ever, and a symlink is refused rather than
+// followed out of the session directory. The caller owns the returned file and
+// must Close it.
+func OpenFileNoFollowRead(path string) (*os.File, error) {
+	return openNoFollow(path, os.O_RDONLY, 0, "read")
 }
 
 // WriteFileNoFollow is os.WriteFile that refuses to follow a symlink at path
@@ -201,7 +278,11 @@ const MaxJSONLLine = 4 << 20 // 4 MiB
 // ReadJSONL decodes a JSON-Lines file into a slice of T. Blank lines are
 // skipped. A missing file is an error; an empty file yields an empty slice.
 func ReadJSONL[T any](path string) ([]T, error) {
-	f, err := os.Open(path)
+	// Open through the no-follow guard rather than os.Open: a session's JSONL
+	// artefacts are attacker-controllable when the session was exchanged, and a
+	// FIFO planted at one would block os.Open in open(2) for ever waiting for a
+	// writer, hanging merge, report, or analyze on a session merely received.
+	f, err := OpenFileNoFollowRead(path)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +317,39 @@ func ReadJSONL[T any](path string) ([]T, error) {
 // symlink at path (see OpenFileNoFollow) so writing a session artefact — even
 // from an untrusted, downloaded session directory — cannot be redirected to an
 // arbitrary file outside the session.
+//
+// It also holds the writers to MaxJSONLLine, the read-side invariant: without
+// the check merge could persist a timeline.jsonl (or analyze a findings.jsonl)
+// carrying a record longer than ReadJSONL can scan back, report success, and
+// leave the operator with an artefact its own reader — and every later merge,
+// report, and analyze run over that session — refuses whole. The whole set is
+// measured before the file is opened, so a refusal neither truncates an
+// existing artefact nor leaves a prefix of the new one behind, matching the
+// all-or-nothing stance of analyze.Ingest and demo.appendRecords. That costs a
+// second encoding pass over records that are small structs; a durably
+// unreadable session is the worse trade.
 func WriteJSONL[T any](path string, values []T) error {
+	// Encode into one reusable buffer so the pre-flight pass holds a single
+	// record, not the whole file, in memory.
+	var buf bytes.Buffer
+	check := json.NewEncoder(&buf)
+	for i, v := range values {
+		buf.Reset()
+		if err := check.Encode(v); err != nil {
+			return err
+		}
+		// Encode's output already ends in the newline, and that newline counts:
+		// ReadJSONL's bufio.Scanner buffer caps at MaxJSONLLine bytes and must
+		// hold the record *and* its terminator to find the line end, so a record
+		// is readable when its bytes including the newline fit within the limit —
+		// one byte less payload than the constant's face value. demo's
+		// tooLongForJSONL draws the boundary on the same side, so the capture and
+		// artefact writers accept exactly the same set of records.
+		if buf.Len() > MaxJSONLLine {
+			return fmt.Errorf("%s: record %d encodes to %d bytes, over the %d-byte JSONL line limit", path, i, buf.Len(), MaxJSONLLine)
+		}
+	}
+
 	f, err := OpenFileNoFollow(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err

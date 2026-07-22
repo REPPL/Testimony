@@ -3,6 +3,8 @@ package review
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -320,6 +322,93 @@ func TestAppendVerdictTerminatesAnUnterminatedLastLine(t *testing.T) {
 	}
 }
 
+// shortWriteFile is a verdictFile whose Write persists a prefix and then errors,
+// standing in for a full disk (write(2) fills the remaining space, returns a
+// short count, and the next write returns ENOSPC — os.File.Write persists the
+// truncated prefix before returning the error). Seek always reports the current
+// length, so it also stands in for the O_APPEND descriptor writeVerdict holds.
+type shortWriteFile struct {
+	buf  []byte
+	fail bool // when true, Write keeps only a prefix then returns an error
+}
+
+func (f *shortWriteFile) Seek(offset int64, whence int) (int64, error) {
+	return int64(len(f.buf)), nil
+}
+
+func (f *shortWriteFile) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 || off >= int64(len(f.buf)) {
+		return 0, io.EOF
+	}
+	return copy(p, f.buf[off:]), nil
+}
+
+func (f *shortWriteFile) Truncate(size int64) error {
+	f.buf = f.buf[:size]
+	return nil
+}
+
+func (f *shortWriteFile) Write(p []byte) (int, error) {
+	if f.fail {
+		half := len(p) / 2
+		f.buf = append(f.buf, p[:half]...)
+		return half, errors.New("no space left on device")
+	}
+	f.buf = append(f.buf, p...)
+	return len(p), nil
+}
+
+// TestWriteVerdictRollsBackPartialWrite is the ENOSPC regression on the verdict
+// path: a short write that persists a newline-less prefix must be truncated
+// away, so findings.jsonl never retains a partial line that would fuse with the
+// next verdict into one malformed physical record and make the whole file — the
+// human verdict record the package exists to protect — unparseable to every
+// reader. Pre-fix AppendVerdict wrote directly with no rollback, so the prefix
+// survived, exactly as demo.appendLines did before its own fix.
+func TestWriteVerdictRollsBackPartialWrite(t *testing.T) {
+	f := &shortWriteFile{}
+	first, err := json.Marshal(analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := writeVerdict(f, append(first, '\n')); err != nil {
+		t.Fatalf("first verdict: %v", err)
+	}
+	good := string(f.buf)
+
+	f.fail = true
+	second, err := json.Marshal(analyze.Verdict{Kind: "verdict", Finding: "F-002", Verdict: "rejected", At: "2026-07-17"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := writeVerdict(f, append(second, '\n')); err == nil {
+		t.Fatalf("expected a write error on a full disk")
+	}
+	if string(f.buf) != good {
+		t.Fatalf("partial line survived: file is %q, want the clean prefix %q", f.buf, good)
+	}
+	if !strings.HasSuffix(string(f.buf), "\n") {
+		t.Fatalf("file does not end on a newline: %q", f.buf)
+	}
+
+	// The rolled-back file still parses one record per line, so a later verdict
+	// lands cleanly rather than fusing onto a fragment.
+	f.fail = false
+	if err := writeVerdict(f, append(second, '\n')); err != nil {
+		t.Fatalf("verdict after rollback: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(f.buf), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %q", len(lines), f.buf)
+	}
+	for i, l := range lines {
+		var v analyze.Verdict
+		if err := json.Unmarshal([]byte(l), &v); err != nil {
+			t.Fatalf("line %d is not one JSON record: %v (%q)", i+1, err, l)
+		}
+	}
+}
+
 // TestAppendVerdictRefusesSymlink is the arbitrary-file-append regression: a
 // findings.jsonl planted as a symlink must not be followed.
 func TestAppendVerdictRefusesSymlink(t *testing.T) {
@@ -337,5 +426,54 @@ func TestAppendVerdictRefusesSymlink(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(outside); string(b) != "original\n" {
 		t.Fatalf("victim file appended through symlink: %q", b)
+	}
+}
+
+// TestPrintFindingRendersNegativeSessionRelativeTimes is the clamped-clock
+// regression, the sibling of the one fixed in internal/report. A recording
+// whose creation_time predates the manifest t0 yields a negative offset, and
+// analyze.indexTimeline admits findings anchored there. Pre-fix review.clock
+// clamped every negative time to zero, so the review prompt stamped a pre-t0
+// finding as [00:00] — the wrong moment, shown on the surface where the analyst
+// actually records the verdict.
+func TestPrintFindingRendersNegativeSessionRelativeTimes(t *testing.T) {
+	f := analyze.Finding{
+		ID: "F-001", Type: "bug", Severity: 3, T: -90,
+		Quote: "before the clock started",
+		UI:    &analyze.UI{Selector: "btn", Route: "#x"},
+	}
+	var buf bytes.Buffer
+	printFinding(&buf, f)
+	if !strings.Contains(buf.String(), "[-01:30]") {
+		t.Fatalf("review prompt missing signed clock [-01:30]:\n%s", buf.String())
+	}
+	if strings.Contains(buf.String(), "[00:00]") {
+		t.Fatalf("a pre-t0 finding time was clamped to zero:\n%s", buf.String())
+	}
+}
+
+// TestClockRoundsSymmetrically guards the sign-splitting arithmetic in clock: a
+// negative time must round by magnitude the way its positive twin does, so the
+// digits never disagree across the sign and a time a fraction of a second
+// before t0 never prints the nonsense "-00:00". The expectations match
+// report.clock deliberately — the two helpers are byte-identical, and if a
+// third caller ever needs one they belong in a shared home (a small formatting
+// helper in internal/session, alongside SafeText) rather than a third copy.
+func TestClockRoundsSymmetrically(t *testing.T) {
+	for _, tc := range []struct {
+		sec  float64
+		want string
+	}{
+		{0, "00:00"},
+		{-0.4, "00:00"},
+		{-0.6, "-00:01"},
+		{61.5, "01:02"},
+		{-61.5, "-01:02"},
+		{-90, "-01:30"},
+		{-3600, "-60:00"},
+	} {
+		if got := clock(tc.sec); got != tc.want {
+			t.Fatalf("clock(%g) = %q, want %q", tc.sec, got, tc.want)
+		}
 	}
 }

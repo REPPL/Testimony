@@ -1,11 +1,14 @@
 package transcribe
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
@@ -109,6 +112,75 @@ func TestWhisperCppFixture(t *testing.T) {
 	}
 }
 
+// TestWhisperXRejectsUntimedSegment is the speech-at-time-0 regression: the
+// segment-level start/end were value-typed float64, so a segment whose start
+// whisperx omitted decoded to 0 and mapSegments filed Bob's remark as an
+// utterance beginning at session time 0 — speech planted at the head of the
+// evidence record, with nothing to say the engine never placed it. The
+// word-level fields were already pointers, which is what made the segment-level
+// omission an oversight rather than a choice. A missing end is refused too: it
+// would otherwise collapse t1 onto t0 and shrink the window EventsNear joins
+// interactions over.
+func TestWhisperXRejectsUntimedSegment(t *testing.T) {
+	for _, c := range []struct{ name, raw, want string }{
+		{"missing start", `{"segments":[{"end":4.0,"text":"Bob hesitates here."}]}`, "missing start"},
+		{"missing end", `{"segments":[{"start":61.5,"text":"Bob hesitates here."}]}`, "missing end"},
+	} {
+		segs, err := parseWhisperX([]byte(c.raw))
+		if err == nil {
+			// Pre-fix this branch ran, and the utterance landed at t0=0.
+			utts := mapSegments(segs, 0)
+			t.Fatalf("%s: want refusal, got utterances %+v", c.name, utts)
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s: want an error naming %q, got %v", c.name, c.want, err)
+		}
+	}
+
+	// A fully timed segment must still parse — the guard rejects absence, not a
+	// legitimate start of 0 at the very beginning of the recording.
+	segs, err := parseWhisperX([]byte(`{"segments":[{"start":0,"end":2.5,"text":"Alice begins."}]}`))
+	if err != nil {
+		t.Fatalf("a segment starting at a genuine 0 must be accepted, got %v", err)
+	}
+	if len(segs) != 1 || segs[0].start != 0 || segs[0].end != 2.5 {
+		t.Fatalf("timed segment mis-parsed: %+v", segs)
+	}
+}
+
+// TestWhisperCppRejectsUntimedSegment is the same speech-at-time-0 regression on
+// the whisper.cpp adapter: offsets.from/to were value-typed int64, so a segment
+// whose "from" whisper-cli omitted decoded to 0 ms and Carol's remark was filed
+// at session time 0 rather than where she said it. This engine emits no
+// word-level timings, so the offsets are its only clock and there is nothing to
+// fall back on; a missing "to" is refused for the same reason as in whisperx.
+func TestWhisperCppRejectsUntimedSegment(t *testing.T) {
+	for _, c := range []struct{ name, raw, want string }{
+		{"missing from", `{"transcription":[{"offsets":{"to":9000},"text":"Carol scrolls back."}]}`, "missing offsets.from"},
+		{"missing to", `{"transcription":[{"offsets":{"from":75000},"text":"Carol scrolls back."}]}`, "missing offsets.to"},
+	} {
+		segs, err := parseWhisperCpp([]byte(c.raw))
+		if err == nil {
+			// Pre-fix this branch ran, and the utterance landed at t0=0.
+			utts := mapSegments(segs, 0)
+			t.Fatalf("%s: want refusal, got utterances %+v", c.name, utts)
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s: want an error naming %q, got %v", c.name, c.want, err)
+		}
+	}
+
+	// A genuine 0 ms offset — speech from the first instant of the recording —
+	// stays acceptable; only absence is refused.
+	segs, err := parseWhisperCpp([]byte(`{"transcription":[{"offsets":{"from":0,"to":2500},"text":"Alice begins."}]}`))
+	if err != nil {
+		t.Fatalf("a segment starting at a genuine 0 must be accepted, got %v", err)
+	}
+	if len(segs) != 1 || segs[0].start != 0 || segs[0].end != 2.5 {
+		t.Fatalf("timed segment mis-parsed: %+v", segs)
+	}
+}
+
 func TestMapSegmentsNegativeOffset(t *testing.T) {
 	utts := mapSegments([]segment{
 		{start: 10.0, end: 12.345, text: " Carol pauses. ", words: []timeline.Word{{W: " Carol ", T: 10.004}}},
@@ -129,7 +201,10 @@ func TestMapSegmentsNegativeOffset(t *testing.T) {
 }
 
 func TestResolveOffsetFlagWins(t *testing.T) {
-	off, prov := resolveOffset(Options{Offset: 4.25, OffsetSet: true}, 0, true)
+	off, prov, err := resolveOffset(Options{Offset: 4.25, OffsetSet: true}, session.Manifest{T0EpochMS: 0}, true)
+	if err != nil {
+		t.Fatalf("explicit -offset must not consult t0: got error %v", err)
+	}
 	if off != 4.25 || prov != "from -offset flag" {
 		t.Fatalf("explicit -offset must win: got %v (%s)", off, prov)
 	}
@@ -138,12 +213,73 @@ func TestResolveOffsetFlagWins(t *testing.T) {
 // TestResolveOffsetInPlace covers a record session: no external -audio, so the
 // offset is 0 by construction (capture starts at t0) with no ffprobe involved.
 func TestResolveOffsetInPlace(t *testing.T) {
-	off, prov := resolveOffset(Options{}, 1_700_000_000_000, false)
+	off, prov, err := resolveOffset(Options{}, session.Manifest{T0EpochMS: 1_700_000_000_000}, false)
+	if err != nil {
+		t.Fatalf("in-place path must not fail: got error %v", err)
+	}
 	if off != 0 {
 		t.Fatalf("in-place audio.wav offset must be 0, got %v", off)
 	}
 	if prov != "default 0: session audio.wav captured at t0" {
 		t.Fatalf("unexpected provenance: %q", prov)
+	}
+}
+
+// TestResolveOffsetInPlaceNoT0 proves the crucial constraint's in-place half: the
+// record flow transcribes the session's own audio.wav (captured at t0, offset 0)
+// and never derives an offset from t0, so a missing t0_epoch_ms must not fail it.
+// Pre-fix resolveOffset returned no error at all, so this succeeded incidentally;
+// the guard added for the external path must not leak into this branch.
+func TestResolveOffsetInPlaceNoT0(t *testing.T) {
+	off, prov, err := resolveOffset(Options{}, session.Manifest{T0EpochMS: 0}, false)
+	if err != nil {
+		t.Fatalf("in-place audio.wav with no t0 must still succeed, got error %v", err)
+	}
+	if off != 0 {
+		t.Fatalf("in-place audio.wav offset must be 0, got %v", off)
+	}
+	if prov != "default 0: session audio.wav captured at t0" {
+		t.Fatalf("unexpected provenance: %q", prov)
+	}
+}
+
+// TestResolveOffsetExternalNoT0 is the silent-transcript-corruption regression:
+// pre-fix resolveOffset took the raw man.T0EpochMS and, on the external
+// recording path, handed it to deriveOffset unchecked. A received or hand-edited
+// session whose manifest omits t0_epoch_ms decodes that field to 0 (a negative
+// value is likewise unusable), so deriveOffset returned the recording's real
+// epoch-second creation time — roughly the whole Unix epoch, ~1.78e9 s — as the
+// offset, mapSegments added it to every utterance, and transcript.jsonl was
+// written with times about fifty-seven years into the session while Run returned
+// success. The fix reads t0 through Manifest.T0, so an unusable anchor now surfaces
+// as an ErrNoT0-based error and the run refuses rather than fabricating times.
+func TestResolveOffsetExternalNoT0(t *testing.T) {
+	for _, m := range []session.Manifest{
+		{Session: "2026-07-22_bob-received", T0EpochMS: 0},
+		{Session: "2026-07-22_carol-edited", T0EpochMS: -1},
+	} {
+		_, _, err := resolveOffset(Options{Audio: "bob-interview.m4a"}, m, true)
+		if err == nil {
+			t.Fatalf("external recording with unusable t0 (%d) must fail, got nil error", m.T0EpochMS)
+		}
+		if !errors.Is(err, session.ErrNoT0) {
+			t.Fatalf("want an ErrNoT0-based error, got %v", err)
+		}
+	}
+}
+
+// TestResolveOffsetExternalOffsetFlagNoT0 proves the crucial constraint that an
+// explicit -offset short-circuits before t0 is consulted: an operator who states
+// the offset needs no anchor, so a missing t0_epoch_ms must not fail the run even
+// on the external path. Pre-fix the raw field was passed through regardless; the
+// flag branch now returns before Manifest.T0 is called at all.
+func TestResolveOffsetExternalOffsetFlagNoT0(t *testing.T) {
+	off, prov, err := resolveOffset(Options{Audio: "bob-interview.m4a", Offset: 3.0, OffsetSet: true}, session.Manifest{T0EpochMS: 0}, true)
+	if err != nil {
+		t.Fatalf("explicit -offset must succeed without a t0, got error %v", err)
+	}
+	if off != 3.0 || prov != "from -offset flag" {
+		t.Fatalf("explicit -offset must win without consulting t0: got %v (%s)", off, prov)
 	}
 }
 
@@ -281,5 +417,108 @@ func TestConvertAudioRefusesSymlinkOutput(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(outside); string(b) != "original\n" {
 		t.Fatalf("victim overwritten through symlink: %q", b)
+	}
+}
+
+// TestConvertAudioRefusesFIFOOutput is the hang regression: pre-fix the
+// output-path guard tested only for ModeSymlink, so a FIFO planted at audio.wav
+// in a session Alice merely received from Bob passed the check and ffmpeg's
+// open(2) then blocked for ever waiting for a reader, hanging `testimony
+// transcribe` with no error. The conversion runs in a goroutine and the test
+// fails on a timeout, so a regression reports a failure rather than hanging the
+// suite for ever.
+func TestConvertAudioRefusesFIFOOutput(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "voice.wav")
+	if err := os.WriteFile(in, []byte("not really audio"), 0o644); err != nil {
+		t.Fatalf("seed input: %v", err)
+	}
+	out := filepath.Join(dir, session.AudioFile)
+	if err := syscall.Mkfifo(out, 0o644); err != nil {
+		t.Skipf("FIFOs unavailable on this platform: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- convertAudio(in, out) }()
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("want non-regular-file refusal, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("convertAudio blocked on a FIFO output instead of refusing it")
+	}
+}
+
+// TestConvertAudioRefusesFIFOInput is the input-side half of the same hang: the
+// pre-fix existence check was a bare os.Stat, which a FIFO satisfies, so ffmpeg
+// was handed a path whose open(2) never returns. A symlink to a real recording
+// must still be accepted — os.Stat resolves it, and only writes are redirected
+// by a symlink.
+func TestConvertAudioRefusesFIFOInput(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "voice.wav")
+	if err := syscall.Mkfifo(in, 0o644); err != nil {
+		t.Skipf("FIFOs unavailable on this platform: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- convertAudio(in, filepath.Join(dir, session.AudioFile)) }()
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("want non-regular-file refusal, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("convertAudio blocked on a FIFO input instead of refusing it")
+	}
+
+	real := filepath.Join(dir, "bob-interview.wav")
+	if err := os.WriteFile(real, []byte("RIFF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.wav")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	// A symlinked recording is legitimate, so it must get past the input guard
+	// and fail (if at all) only later, on the ffmpeg lookup or the conversion.
+	if err := convertAudio(link, filepath.Join(dir, session.AudioFile)); err != nil &&
+		strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("symlink to a regular recording must be accepted, got %v", err)
+	}
+}
+
+// TestCheckSessionAudioRefusesFIFO is the in-place branch of the same hang: with
+// no -audio flag the session's own audio.wav is passed straight to the ASR
+// engine, and pre-fix a bare os.Stat was the only check, so a FIFO planted there
+// blocked the engine's read for ever. An absent file must still produce the
+// actionable "run record first" message rather than this refusal.
+func TestCheckSessionAudioRefusesFIFO(t *testing.T) {
+	dir := t.TempDir()
+	wav := filepath.Join(dir, session.AudioFile)
+
+	err := checkSessionAudio(wav, dir)
+	if err == nil || !strings.Contains(err.Error(), "run `testimony record` first") {
+		t.Fatalf("missing audio must stay an actionable error, got %v", err)
+	}
+
+	if err := syscall.Mkfifo(wav, 0o644); err != nil {
+		t.Skipf("FIFOs unavailable on this platform: %v", err)
+	}
+	if err := checkSessionAudio(wav, dir); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("want non-regular-file refusal for a FIFO audio.wav, got %v", err)
+	}
+
+	if err := os.Remove(wav); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wav, []byte("RIFF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkSessionAudio(wav, dir); err != nil {
+		t.Fatalf("a real audio.wav must be accepted, got %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/REPPL/Testimony/internal/demo"
 	"github.com/REPPL/Testimony/internal/session"
 )
 
@@ -575,6 +577,107 @@ func TestRunReportsRecorderStoppedWithNoOutput(t *testing.T) {
 		if !strings.Contains(out, "testimony "+verb) {
 			t.Fatalf("the %s command must still be offered when interactions may be captured: %q", verb, out)
 		}
+	}
+}
+
+// TestRunStopsDemoServerThroughBoundedShutdown proves that BOTH of Run's exit
+// paths — the Ctrl+C branch and the branch a recorder taken on its own drives —
+// stop the demo capture server through demo.Shutdown, the helper that carries a
+// deadline and a Close fallback. Pre-fix each site called
+// srv.Shutdown(context.Background()) directly, so `testimony record -demo` never
+// received the bound at all: an unbounded stop waits for as long as any
+// connection stays open, and one stalled browser tab left Ctrl+C hanging instead
+// of finalising the session.
+//
+// The deadline itself belongs to demo and is proven there; what regressed, and
+// what this test pins, is that record routes both call sites through it rather
+// than stopping the server itself — so the assertion is deliberately the narrower
+// "the bounded helper was called, once, on each path". Hermetic: the demo serve
+// and shutdown seams are stubbed, so no port is bound and no ffmpeg runs.
+func TestRunStopsDemoServerThroughBoundedShutdown(t *testing.T) {
+	// The production seam must be the bounded helper, not some unbounded stop the
+	// stub below would happily stand in for.
+	if reflect.ValueOf(shutdownDemoFn).Pointer() != reflect.ValueOf(demo.Shutdown).Pointer() {
+		t.Fatal("record must stop the demo server through demo.Shutdown, the bounded helper")
+	}
+
+	// interrupted drives the Ctrl+C branch; recorderDied drives the branch taken
+	// when a recorder exits on its own. Both must stop the server.
+	cases := []struct {
+		name       string
+		interrupt  bool
+		wantErrors bool
+	}{
+		{name: "interrupted", interrupt: true, wantErrors: false},
+		{name: "recorder died", interrupt: false, wantErrors: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			origNotify, origStart := notifyContext, startRecordersFn
+			origServe, origShutdown := serveDemoFn, shutdownDemoFn
+			t.Cleanup(func() {
+				notifyContext, startRecordersFn = origNotify, origStart
+				serveDemoFn, shutdownDemoFn = origServe, origShutdown
+			})
+
+			// A server value that was never listened on: stopDemo only has to reach
+			// the seam, and binding a real port would make the test racy.
+			stub := &http.Server{}
+			serveDemoFn = func(addr, dir string) (*http.Server, error) { return stub, nil }
+
+			var mu sync.Mutex
+			var stopped []*http.Server
+			shutdownDemoFn = func(srv *http.Server) error {
+				mu.Lock()
+				stopped = append(stopped, srv)
+				mu.Unlock()
+				return nil
+			}
+
+			var cancel context.CancelFunc
+			notifyContext = func() (context.Context, context.CancelFunc) {
+				ctx, cf := context.WithCancel(context.Background())
+				cancel = cf
+				return ctx, cf
+			}
+			startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+				child := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+				if c.interrupt {
+					// A well-behaved recorder that finalised a real audio.wav, so the
+					// Ctrl+C path completes without any finalise problem.
+					if err := os.WriteFile(filepath.Join(dir, session.AudioFile), []byte("RIFF...."), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					cancel()
+				} else {
+					// The recorder exits on its own, sending Run down the other branch.
+					_ = child.p.Signal(syscall.SIGINT)
+				}
+				return []*liveChild{child}, nil
+			}
+
+			err := Run(Options{
+				Out:         t.TempDir(),
+				Participant: "Bob",
+				Demo:        true,
+				Addr:        "127.0.0.1:8737",
+				GOOS:        "darwin",
+				Log:         io.Discard,
+			})
+			if c.wantErrors && err == nil {
+				t.Fatal("a recorder exiting on its own must make Run exit non-zero")
+			}
+			if !c.wantErrors && err != nil {
+				t.Fatalf("Run must stop cleanly on interrupt: %v", err)
+			}
+
+			mu.Lock()
+			got := append([]*http.Server(nil), stopped...)
+			mu.Unlock()
+			if len(got) != 1 || got[0] != stub {
+				t.Fatalf("the demo server must be stopped exactly once through the bounded helper, got %d call(s)", len(got))
+			}
+		})
 	}
 }
 

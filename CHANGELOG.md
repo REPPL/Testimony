@@ -10,6 +10,64 @@ called out in a **Breaking** section.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-22
+
+A robustness release. No new commands: the pipeline gains no surface, but the
+existing one no longer accepts malformed or hostile session input in silence.
+Every fix below carries a regression test, and the changes were confirmed by a
+multi-round review that finished with two consecutive passes finding nothing.
+
+### Fixed
+
+Evidence-record integrity — the report is the artefact of record, so a wrong
+number in it is the worst kind of bug:
+
+- A transcript with missing or duplicate utterance `id`s no longer renders every
+  event under every utterance. Events attach by position, not by an unvalidated
+  id.
+- A finding, utterance, interaction, or ASR segment that omits its required time
+  is now rejected rather than silently anchored at the session start (`[00:00]`).
+  Absent and a genuine zero are distinguished throughout.
+- A manifest whose `t0_epoch_ms` is absent or negative is refused wherever a time
+  is placed on the session clock — `merge` and `transcribe` alike — instead of
+  shifting every event by roughly the whole Unix epoch and reporting success.
+- Pre-`t0` times (a recording that predates the manifest anchor) render with a
+  signed clock rather than being clamped to `[00:00]`.
+
+Robustness against malformed or exchanged sessions — a session directory is an
+exchange unit and may be attacker-authored:
+
+- A symlink or FIFO planted at any session artefact is refused on both the read
+  and the write path, rather than redirecting a write or hanging the CLI in
+  `open(2)` for ever.
+- No writer emits a JSONL line larger than the readers can take back; an
+  over-long record is refused at the point of capture and of write, not
+  discovered as a permanently unreadable session later.
+- `analyze` no longer truncates a findings file on an empty answer, and no longer
+  loses a human verdict whose value falls outside the known set.
+- Untrusted manifest, transcript, and finding text can no longer inject terminal
+  escape sequences or forge document structure; the sanitiser now covers the
+  complete Unicode Bidi_Control set.
+
+Resource and process lifecycle:
+
+- `record` and the capture server shut down under a deadline, so a stalled
+  connection can no longer hang session finalisation after Ctrl+C.
+- A partial write (a full disk) leaves no truncated, unreadable line behind in
+  any append path.
+- `record` classifies a start-up permission denial correctly instead of
+  misreporting it as an unexpected mid-session stop.
+- An empty capture address no longer binds the unauthenticated endpoints on
+  every network interface.
+
+### Changed
+
+- Validation is stricter at the pipeline's boundaries. Inputs that violate the
+  documented session schema — a missing required time, an absent or negative
+  anchor, an over-long record — are now refused with a clear error where earlier
+  versions accepted them and produced a silently wrong artefact. Well-formed
+  sessions, including the bundled sample, are unaffected.
+
 ## [0.2.0] - 2026-07-18
 
 ### Added

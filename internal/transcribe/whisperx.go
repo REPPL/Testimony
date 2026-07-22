@@ -19,9 +19,21 @@ type whisperxOutput struct {
 	Language string            `json:"language"`
 }
 
+// whisperxSegment is how one segment of the engine's output is decoded before
+// it is trusted. Start and End are pointers so that an absent time stays
+// distinguishable from a genuine 0: a segment of speech at the very start of
+// the recording legitimately carries start 0, so a value-typed field cannot
+// tell the two apart. With one, a segment whose start whisperx omitted decodes
+// to 0 and mapSegments files the utterance at session time 0 — speech planted
+// at the head of the evidence record, minutes from where it was actually said,
+// with nothing on the record to say the engine never placed it. The word-level
+// fields below have carried pointers for exactly this reason since they were
+// written; the segment-level ones were the omission. This mirrors the guard
+// timeline.rawInteraction and analyze.rawFinding apply to their own untrusted
+// times.
 type whisperxSegment struct {
-	Start   float64        `json:"start"`
-	End     float64        `json:"end"`
+	Start   *float64       `json:"start"`
+	End     *float64       `json:"end"`
 	Text    string         `json:"text"`
 	Speaker string         `json:"speaker"` // diarisation label, when enabled
 	Words   []whisperxWord `json:"words"`
@@ -114,14 +126,32 @@ func cudaVisible() bool {
 
 // parseWhisperX converts the WhisperX JSON into engine-neutral segments.
 // Words without a start timestamp (alignment miss) are omitted.
+//
+// A segment missing either of its own times is a hard error rather than a
+// silent default. An unaligned word is a routine, expected outcome the engine
+// reports for individual tokens, so dropping it costs only word-level detail;
+// a segment without times is a malformed engine response, and the two
+// alternatives to refusing it both put a fabrication in the evidence record.
+// Defaulting start to 0 relocates the speech. Defaulting end to start yields a
+// zero-length utterance, and t1 is not decorative: timeline.EventsNear joins
+// interactions to speech over [t0−window, t1+window], so a fabricated end
+// quietly shrinks the window and drops the very interactions the utterance was
+// about. Refusing the run tells the operator their transcript is incomplete,
+// which is the one outcome that leaves nothing false on the record.
 func parseWhisperX(raw []byte) ([]segment, error) {
 	var out whisperxOutput
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("parse whisperx JSON: %w", err)
 	}
 	segs := make([]segment, 0, len(out.Segments))
-	for _, s := range out.Segments {
-		seg := segment{start: s.Start, end: s.End, text: s.Text, speaker: s.Speaker}
+	for i, s := range out.Segments {
+		if s.Start == nil {
+			return nil, fmt.Errorf("whisperx segment %d is missing start; cannot place it on the audio clock", i+1)
+		}
+		if s.End == nil {
+			return nil, fmt.Errorf("whisperx segment %d is missing end; cannot say when the speech stopped", i+1)
+		}
+		seg := segment{start: *s.Start, end: *s.End, text: s.Text, speaker: s.Speaker}
 		for _, w := range s.Words {
 			if w.Start == nil {
 				continue

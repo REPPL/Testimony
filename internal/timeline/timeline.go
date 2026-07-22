@@ -24,6 +24,22 @@ type Utterance struct {
 	Words   []Word  `json:"words,omitempty"`
 }
 
+// rawUtterance is how a transcript.jsonl record is decoded before it is
+// trusted. Its T0 and T1 are pointers so that an absent "t0" stays
+// distinguishable from a genuine 0, exactly as rawInteraction's T is: an
+// utterance that begins the moment capture starts legitimately carries t0 equal
+// to 0, so a value-typed field cannot tell that record apart from one whose
+// "t0" the transcript never named, and a zero test would either reject honest
+// testimony or admit malformed lines. Everything else mirrors Utterance.
+type rawUtterance struct {
+	ID      string   `json:"id"`
+	T0      *float64 `json:"t0"`
+	T1      *float64 `json:"t1"`
+	Speaker string   `json:"speaker,omitempty"`
+	Text    string   `json:"text"`
+	Words   []Word   `json:"words,omitempty"`
+}
+
 // Word is one aligned word inside an utterance: its text and start time in
 // session-relative seconds (docs/reference/session-directory.md).
 type Word struct {
@@ -188,6 +204,50 @@ func checkedInteractions(path string, raw []rawInteraction) ([]Interaction, erro
 	return out, nil
 }
 
+// checkedUtterances enforces the one transcript field whose absence cannot be
+// caught later — t0 — and converts the accepted records for BuildEntries. It is
+// the speech-side counterpart of checkedInteractions, and it exists because
+// transcript.jsonl is as exchangeable and as hand-editable as interactions.jsonl
+// while only the latter was ever guarded. Without the check a line missing "t0"
+// decodes leniently to 0, BuildEntries places it at the session's very start,
+// and the report prints it at 00:00 above everything that genuinely happened
+// there: a malformed transcript would silently plant words at the opening of the
+// evidence record, with nothing to say the transcript never timed them. Refusing
+// the whole merge names the offending line so the operator repairs the
+// transcript instead of reading a fabricated account of when Alice spoke.
+//
+// A nil t1 is defaulted to t0 rather than refused. A missing end time cannot
+// move an utterance to a moment it did not occur — the fabrication hazard t0
+// carries — it can only shrink the span the report joins events against, and
+// SpeechEnd already commits the package to a documented answer for a speech
+// entry with no end: fall back to its start. Defaulting here reproduces that
+// answer at the boundary instead of contradicting it, and it avoids the far
+// worse alternative of a zero-valued t1 on an utterance at, say, t0 22, whose
+// join window [t0-window, 0+window] is inverted and quietly matches no event at
+// all. Discarding a whole session's recoverable testimony over a shrinkable
+// window would be the disproportionate answer.
+func checkedUtterances(path string, raw []rawUtterance) ([]Utterance, error) {
+	out := make([]Utterance, 0, len(raw))
+	for i, r := range raw {
+		if r.T0 == nil {
+			return nil, fmt.Errorf("%s: utterance %d is missing t0; cannot place it on the session clock", path, i+1)
+		}
+		t1 := *r.T0
+		if r.T1 != nil {
+			t1 = *r.T1
+		}
+		out = append(out, Utterance{
+			ID:      r.ID,
+			T0:      *r.T0,
+			T1:      t1,
+			Speaker: r.Speaker,
+			Text:    r.Text,
+			Words:   r.Words,
+		})
+	}
+	return out, nil
+}
+
 // Merge reads manifest, transcript and interactions from dir, writes
 // timeline.jsonl, and returns the number of speech and event entries.
 func Merge(dir string) (speech, events int, err error) {
@@ -195,9 +255,14 @@ func Merge(dir string) (speech, events int, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	utts, err := readOptionalJSONL[Utterance](filepath.Join(dir, session.TranscriptFile))
+	uttsPath := filepath.Join(dir, session.TranscriptFile)
+	rawUtts, err := readOptionalJSONL[rawUtterance](uttsPath)
 	if err != nil {
 		return 0, 0, fmt.Errorf("read transcript: %w", err)
+	}
+	utts, err := checkedUtterances(uttsPath, rawUtts)
+	if err != nil {
+		return 0, 0, err
 	}
 	intsPath := filepath.Join(dir, session.InteractionsFile)
 	raw, err := readOptionalJSONL[rawInteraction](intsPath)
@@ -205,14 +270,22 @@ func Merge(dir string) (speech, events int, err error) {
 		return 0, 0, fmt.Errorf("read interactions: %w", err)
 	}
 
-	// Interaction times are epoch milliseconds; without t0 they cannot be placed
-	// on the session clock. A manifest lacking t0_epoch_ms leaves T0EpochMS at the
-	// zero value, which would turn each epoch-ms timestamp into a ~55-year offset
-	// and write a silently corrupt timeline. Reject it rather than emit nonsense.
-	// A transcript-only session carries no interactions and is already
-	// session-relative, so it is unaffected.
-	if len(raw) > 0 && man.T0EpochMS == 0 {
-		return 0, 0, fmt.Errorf("manifest is missing t0_epoch_ms; cannot place interactions on the session clock")
+	// Interaction times are epoch milliseconds; without a usable t0 they cannot be
+	// placed on the session clock. The anchor is obtained through session.Manifest.T0
+	// rather than read from the field directly, so this call site honours the single
+	// rule that accessor owns: it treats a zero anchor as absent and, crucially,
+	// also refuses a NEGATIVE t0_epoch_ms — a case an inline `== 0` test missed, so a
+	// negative anchor slipped through and BuildEntries shifted every interaction by
+	// +|t0|, writing a silently corrupt timeline while Merge exited 0. The guard
+	// stays conditional on interactions being present: a transcript-only session
+	// carries no epoch-ms times, is already session-relative, and legitimately needs
+	// no anchor, so it must still merge without one.
+	t0 := man.T0EpochMS
+	if len(raw) > 0 {
+		t0, err = man.T0()
+		if err != nil {
+			return 0, 0, err
+		}
 	}
 
 	ints, err := checkedInteractions(intsPath, raw)
@@ -220,7 +293,7 @@ func Merge(dir string) (speech, events int, err error) {
 		return 0, 0, err
 	}
 
-	entries := BuildEntries(man.T0EpochMS, utts, ints)
+	entries := BuildEntries(t0, utts, ints)
 	if err := session.WriteJSONL(filepath.Join(dir, session.TimelineFile), entries); err != nil {
 		return 0, 0, fmt.Errorf("write timeline: %w", err)
 	}

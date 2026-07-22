@@ -15,10 +15,19 @@ type whispercppOutput struct {
 	Result struct {
 		Language string `json:"language"`
 	} `json:"result"`
+	// The offsets are pointers so that an absent time stays distinguishable
+	// from a genuine 0: a segment of speech at the very start of the recording
+	// legitimately carries from 0, so a value-typed field cannot tell the two
+	// apart. With one, a segment whose "from" whisper-cli omitted decodes to 0
+	// and mapSegments files the utterance at session time 0 — speech planted at
+	// the head of the evidence record, minutes from where it was actually said,
+	// with nothing on the record to say the engine never placed it. This
+	// mirrors the guard timeline.rawInteraction and analyze.rawFinding apply to
+	// their own untrusted times.
 	Transcription []struct {
 		Offsets struct {
-			From int64 `json:"from"` // ms
-			To   int64 `json:"to"`   // ms
+			From *int64 `json:"from"` // ms
+			To   *int64 `json:"to"`   // ms
 		} `json:"offsets"`
 		Text string `json:"text"`
 	} `json:"transcription"`
@@ -58,16 +67,32 @@ func runWhisperCpp(bin, wav string, opts Options) ([]segment, error) {
 
 // parseWhisperCpp converts the whisper.cpp JSON into engine-neutral
 // segments, using the millisecond offsets.
+//
+// A segment missing either offset is a hard error rather than a silent
+// default, matching parseWhisperX. whisper.cpp emits no word-level timings at
+// all, so the segment offsets are the only clock this engine contributes and
+// there is nothing left to fall back on: defaulting "from" to 0 relocates the
+// speech, and defaulting "to" to "from" yields a zero-length utterance whose
+// t1 then shrinks the [t0−window, t1+window] span timeline.EventsNear joins
+// interactions over, dropping the very interactions the utterance was about.
+// Refusing the run tells the operator their transcript is incomplete, which is
+// the one outcome that leaves nothing false on the record.
 func parseWhisperCpp(raw []byte) ([]segment, error) {
 	var out whispercppOutput
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("parse %s JSON: %w", whisperCppBinary, err)
 	}
 	segs := make([]segment, 0, len(out.Transcription))
-	for _, t := range out.Transcription {
+	for i, t := range out.Transcription {
+		if t.Offsets.From == nil {
+			return nil, fmt.Errorf("%s segment %d is missing offsets.from; cannot place it on the audio clock", whisperCppBinary, i+1)
+		}
+		if t.Offsets.To == nil {
+			return nil, fmt.Errorf("%s segment %d is missing offsets.to; cannot say when the speech stopped", whisperCppBinary, i+1)
+		}
 		segs = append(segs, segment{
-			start: float64(t.Offsets.From) / 1000.0,
-			end:   float64(t.Offsets.To) / 1000.0,
+			start: float64(*t.Offsets.From) / 1000.0,
+			end:   float64(*t.Offsets.To) / 1000.0,
 			text:  t.Text,
 		})
 	}
