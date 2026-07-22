@@ -25,6 +25,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 // Manifest describes a capture session. t0_epoch_ms anchors all
@@ -255,15 +256,20 @@ func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 // artefact (report.md) or a terminal line (review). It strips C0/C1 control
 // bytes — including the newline and carriage return that could forge report
 // structure or split a JSONL record, and the ESC (0x1b) that drives ANSI
-// terminal sequences — turns tabs into spaces, and removes the complete Unicode
-// Bidi_Control set (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) along
-// with the line and paragraph separators, the formatting controls behind
-// Trojan-Source spoofing (CVE-2021-42574), so a right-to-left override or an
-// Arabic letter mark cannot make a
-// displayed quote or anchor differ from the bytes a verdict is recorded
-// against. Attacker-authored transcript, interaction, manifest, and finding
-// text therefore cannot inject headings, terminal control sequences, extra
-// lines, or reordered glyphs. Ordinary text is unchanged.
+// terminal sequences — turns tabs into spaces, and removes every Unicode
+// format character (category Cf) along with the line and paragraph
+// separators. Cf covers the complete Bidi_Control set behind Trojan-Source
+// spoofing (CVE-2021-42574) — so a right-to-left override or an Arabic letter
+// mark cannot make a displayed quote or anchor differ from the bytes a verdict
+// is recorded against — and equally the invisible characters outside it (ZWSP
+// U+200B, word joiner U+2060, ZWNBSP/BOM U+FEFF, soft hyphen U+00AD, the
+// U+E00xx tag block) that render as nothing in a terminal or Markdown viewer
+// while surviving in the bytes: enumerating the bidi set alone left those as an
+// ASCII-smuggling residue, hiding text (for instance an instruction to the
+// analysis agent) inside a request or quote the operator reads as clean.
+// Attacker-authored transcript, interaction, manifest, and finding text
+// therefore cannot inject headings, terminal control sequences, extra lines,
+// reordered glyphs, or invisibly-smuggled text. Ordinary text is unchanged.
 func SafeText(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
@@ -271,13 +277,12 @@ func SafeText(s string) string {
 			return ' '
 		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
 			return -1
-		// The complete Unicode Bidi_Control set, plus the line and paragraph
-		// separators: leaving any member out would let that one character do the
-		// reordering the rest are stripped to prevent.
-		case r == 0x061c, // ALM
-			r == 0x200e || r == 0x200f, // LRM, RLM
-			r >= 0x202a && r <= 0x202e, // LRE, RLE, PDF, LRO, RLO
-			r >= 0x2066 && r <= 0x2069, // LRI, RLI, FSI, PDI
+		// Every format character, plus the line and paragraph separators (Zl/Zp,
+		// outside Cf): the category test subsumes the Bidi_Control enumeration and
+		// closes the invisible-Cf residue in one predicate, so no member can be
+		// left out to do the reordering or smuggling the rest are stripped to
+		// prevent.
+		case unicode.Is(unicode.Cf, r),
 			r == 0x2028 || r == 0x2029: // line / paragraph separator
 			return -1
 		default:

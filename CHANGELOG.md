@@ -65,6 +65,32 @@ Capture reliability (`record`/`transcribe`, macOS):
 - A recorder that had to be force-stopped (it missed the finalisation grace) is
   flagged, so a truncated, unplayable `screen.mp4` is no longer reported as good.
 
+A third adversarial pass over that same commit closed what its own review had
+missed:
+
+- Text sanitisation now strips every invisible Unicode format character (zero
+  width space, word joiner, BOM, soft hyphen, the tag block), not only the bidi
+  controls — closing the remaining gap between what a terminal or `report.md`
+  displays and the bytes actually recorded (invisible-text smuggling).
+- A finding quote that sanitises to whitespace alone is rejected like one that
+  sanitises to nothing, closing the remaining trivially-satisfied verbatim
+  check.
+- A recorder that finalised cleanly right at the shutdown grace boundary is no
+  longer misclassified as force-stopped — the flag now reflects whether the
+  escalation SIGKILL actually terminated it — so a complete, playable recording
+  is not reported as truncated with a spurious failure exit.
+- Device enumeration no longer relies on the enumeration child being killable:
+  a child that survives SIGKILL (a wedged kernel driver) is abandoned with an
+  actionable error instead of hanging `record` forever, and a listing that
+  completed just as the deadline fired is used rather than discarded. Both
+  enumeration paths are now covered by hermetic tests against a fake `ffmpeg`,
+  as are the force-stop classification, the derived-offset bound, the
+  missing-vs-unreadable audio split, the report code-span escape, the review
+  error-path sanitisation, and the atomic-conversion call-site wiring — fixes
+  whose tests previously stayed green when the fix was reverted.
+- A converted `audio.wav` keeps the ordinary `0644` file mode instead of
+  silently inheriting the temp file's `0600`.
+
 ### Changed
 
 - **Behaviour:** `analyze -ingest` and `analyze -out` now require a regular file

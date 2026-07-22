@@ -45,12 +45,22 @@ func convertAudio(in, out string) error {
 	// never leaves a partial audio.wav that a later bare `transcribe` would silently
 	// treat as the whole recording.
 	return atomicConvert(out, func(tmpPath string) error {
-		cmd := exec.Command(ffmpeg, "-y", "-i", in, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", tmpPath)
-		if raw, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("ffmpeg: %w\n%s", err, tail(raw))
-		}
-		return nil
+		return convertRunner(ffmpeg, in, tmpPath)
 	})
+}
+
+// convertRunner runs the actual ffmpeg conversion into the temp path. A var
+// only so a hermetic test can stand in for ffmpeg and pin the atomicConvert
+// wiring at the call site — a real ffmpeg failure on a bad input aborts before
+// it ever creates the output, so no integration case can observe whether the
+// producer was pointed at the temp or at out itself. Production never
+// reassigns it.
+var convertRunner = func(ffmpeg, in, tmpPath string) error {
+	cmd := exec.Command(ffmpeg, "-y", "-i", in, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", tmpPath)
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ffmpeg: %w\n%s", err, tail(raw))
+	}
+	return nil
 }
 
 // atomicConvert runs a producer that writes the converted audio to a temp file beside
@@ -70,6 +80,12 @@ func atomicConvert(out string, produce func(tmpPath string) error) error {
 	defer os.Remove(tmpPath)
 	if err := produce(tmpPath); err != nil {
 		return err
+	}
+	// os.CreateTemp reserves the name at 0600; the finished audio.wav is an
+	// ordinary session artefact, so restore the 0644 a direct write would have
+	// given it — otherwise the conversion silently narrows the file's mode.
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return fmt.Errorf("audio convert: finalise %s: %w", out, err)
 	}
 	if err := os.Rename(tmpPath, out); err != nil {
 		return fmt.Errorf("audio convert: finalise %s: %w", out, err)
@@ -108,6 +124,12 @@ func checkPlainOutput(path string) error {
 	}
 	return nil
 }
+
+// deriveOffsetFn is the seam resolveOffset calls for offset derivation. A var
+// only so a test can stub the ffprobe-gated derivation (the deviceListTimeout
+// precedent in record) and exercise resolveOffset's derived-offset magnitude
+// bound hermetically; production never reassigns it.
+var deriveOffsetFn = deriveOffset
 
 // deriveOffset reads the original recording's creation time via ffprobe and
 // returns creation_epoch_seconds − t0_epoch_seconds. The boolean is false

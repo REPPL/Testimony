@@ -72,6 +72,24 @@ func TestIngestRejectsQuoteThatSanitisesToEmpty(t *testing.T) {
 	}
 }
 
+// TestIngestRejectsQuoteThatSanitisesToWhitespace is the whitespace twin of the
+// sanitised-empty refusal: SafeText maps a tab to a space, so a quote of "\t"
+// sanitises to " " — non-empty, clearing the empty check — and
+// strings.Contains(text, " ") is true for any utterance containing a space, so
+// the verbatim gate passed for a quote the participant never spoke. Emptiness
+// must be judged after trimming.
+func TestIngestRejectsQuoteThatSanitisesToWhitespace(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	answer := "{\"findings\":[{\"id\":\"F-001\",\"t\":22,\"type\":\"bug\",\"severity\":3,\"quote\":\"\\t\",\"evidence\":[\"utt-004\"]}]}"
+	_, err := Ingest(dir, strings.NewReader(answer))
+	if err == nil || !strings.Contains(err.Error(), "quote must be non-empty") {
+		t.Fatalf("expected a whitespace-only quote refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.FindingsFile)); statErr == nil {
+		t.Fatalf("findings.jsonl was written despite a quote that sanitises to whitespace")
+	}
+}
+
 // timelineFixture is a minimal merged timeline: one spoken utterance and two
 // events, enough to exercise every validation rule. sessionEnd is 28 (utt-004
 // t1).

@@ -295,8 +295,11 @@ func TestReportNeutralisesInlineMarkdown(t *testing.T) {
 	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: "app", Participant: "Alice"}); err != nil {
 		t.Fatalf("SaveManifest: %v", err)
 	}
-	// An utterance whose text is an image-beacon, and a finding whose quote is one.
-	tl := "{\"t\":1,\"src\":\"speech\",\"id\":\"utt-001\",\"payload\":{\"speaker\":\"Alice\",\"t1\":2,\"text\":\"![t](http://evil/a.png)\"}}\n"
+	// An utterance whose text is an image-beacon, a finding whose quote is one,
+	// and an event whose selector smuggles one through the code span: the inner
+	// backticks would close the span early and let the image markup render live.
+	tl := "{\"t\":1,\"src\":\"speech\",\"id\":\"utt-001\",\"payload\":{\"speaker\":\"Alice\",\"t1\":2,\"text\":\"![t](http://evil/a.png)\"}}\n" +
+		"{\"t\":1.5,\"src\":\"event\",\"id\":\"ev-001\",\"payload\":{\"kind\":\"click\",\"selector\":\"x` ![p](http://span.example/c.png) `y\"}}\n"
 	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
 		t.Fatalf("write timeline: %v", err)
 	}
@@ -319,6 +322,16 @@ func TestReportNeutralisesInlineMarkdown(t *testing.T) {
 	// The words are still present (escaped, not stripped), so the evidence stays legible.
 	if !strings.Contains(md, "evil/a.png") || !strings.Contains(md, "evil/b.png") {
 		t.Fatalf("neutralisation dropped the text instead of escaping it:\n%s", md)
+	}
+	// The selector's inner backticks are stripped, so the whole selector stays one
+	// inert code span (span content is literal — inert — so the image markup may
+	// remain as text there). Pre-strip, "x` ![p](...) `y" split into `x` + live
+	// image markup + `y`, firing the beacon from inside the "code" rendering.
+	if !strings.Contains(md, "`x ![p](http://span.example/c.png) y`") {
+		t.Fatalf("selector did not survive as a single backtick-free code span:\n%s", md)
+	}
+	if strings.Contains(md, "`x` ") {
+		t.Fatalf("selector code span was closed early by an embedded backtick:\n%s", md)
 	}
 }
 

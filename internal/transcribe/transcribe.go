@@ -185,7 +185,7 @@ func resolveOffset(opts Options, man session.Manifest, external bool) (float64, 
 		if err != nil {
 			return 0, "", fmt.Errorf("deriving audio offset: %w", err)
 		}
-		if off, ok := deriveOffset(opts.Audio, t0); ok {
+		if off, ok := deriveOffsetFn(opts.Audio, t0); ok {
 			// A derived offset beyond the session-time magnitude is not a real capture
 			// timing — it means the recording's creation_time (attacker-influenceable
 			// metadata) or the manifest t0 is bogus. Refuse rather than derive a

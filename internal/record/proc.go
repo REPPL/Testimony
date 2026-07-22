@@ -14,6 +14,11 @@ type proc interface {
 	Start() error
 	Signal(os.Signal) error
 	Wait() error
+	// DiedOf reports whether the process was terminated by sig, as opposed to
+	// exiting on its own (cleanly or otherwise). Valid only after Wait has
+	// returned; the answer is what lets stopChild tell a recorder its SIGKILL
+	// actually cut short from one that had already finalised at the boundary.
+	DiedOf(sig syscall.Signal) bool
 }
 
 // execProc adapts an *exec.Cmd to proc. Each recorder runs in its own process
@@ -33,6 +38,18 @@ func (e *execProc) Signal(sig os.Signal) error {
 }
 
 func (e *execProc) Wait() error { return e.cmd.Wait() }
+
+// DiedOf reads the reaped state cmd.Wait recorded. Callers hold the
+// happens-before edge (they read only after the reaper's close(done), which
+// follows Wait), so ProcessState is stable here.
+func (e *execProc) DiedOf(sig syscall.Signal) bool {
+	ps := e.cmd.ProcessState
+	if ps == nil {
+		return false
+	}
+	ws, ok := ps.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled() && ws.Signal() == sig
+}
 
 // stderrRetain caps how much of a child's stderr lockedBuffer keeps. A record
 // session is long-running by design, and avfoundation floods stderr when a device
@@ -99,7 +116,7 @@ type liveChild struct {
 	started time.Time     // when watching began; used to tell a start-up failure from a mid-session stop
 	done    chan struct{} // closed once, when Wait returns
 	err     error         // Wait result; read only after done is closed
-	killed  bool          // set by stopChild when the grace expired and SIGKILL was sent; read after stopAll
+	killed  bool          // set by stopChild when its escalation SIGKILL terminated the child; read after stopAll
 }
 
 // watch starts the single reaper goroutine. It must be called exactly once,
@@ -132,8 +149,19 @@ func stopChild(c *liveChild, grace time.Duration) {
 		// it so finaliseOutputs surfaces the risk instead of blessing the file by size.
 		// killed is written here on the caller's goroutine (stopAll, sequential) and
 		// read only after stopAll returns, so no synchronisation is needed.
+		//
+		// Condemn the artefact only when the SIGKILL is what actually terminated the
+		// recorder. A child that finalised and exited cleanly right at the grace
+		// boundary can still land in this branch — the reaper closes done only after
+		// Wait returns (which also joins the stderr copier), so there is a scheduling
+		// window between a clean exit and done becoming readable, and select picks
+		// randomly when both cases are ready. In that window the SIGKILL hits an
+		// already-exited process (a no-op); marking such a child killed reported a
+		// complete, playable recording as "likely truncated or unplayable" and failed
+		// the run. The reaped wait status is ground truth for who ended the process,
+		// and c.err/ProcessState are stable once done is closed.
 		_ = c.p.Signal(syscall.SIGKILL)
-		c.killed = true
 		<-c.done
+		c.killed = c.p.DiedOf(syscall.SIGKILL)
 	}
 }

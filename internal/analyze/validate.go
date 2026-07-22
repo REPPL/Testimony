@@ -200,9 +200,14 @@ func validate(findings []positioned, idx timelineIndex) []error {
 		// non-empty and clears the first check, but SafeText reduces it to "" and
 		// strings.Contains(anyText, "") is always true — so the verbatim-substring
 		// gate would pass for a quote the participant never spoke, and the finding
-		// would carry a quote that sanitises to nothing. Reject the sanitised-empty
-		// quote explicitly, before the substring test that "" trivially satisfies.
-		if session.SafeText(f.Quote) == "" {
+		// would carry a quote that sanitises to nothing. The same holds one step up
+		// for whitespace: SafeText maps a tab to a space, so a quote of "\t"
+		// sanitises to " ", which is non-empty yet a trivially-satisfied substring
+		// of any utterance containing a space — the identical bypass wearing
+		// whitespace. Judge emptiness after trimming, so a quote that sanitises to
+		// nothing-but-whitespace is rejected before the substring test it would
+		// trivially satisfy.
+		if strings.TrimSpace(session.SafeText(f.Quote)) == "" {
 			errs = append(errs, fmt.Errorf("%s: quote must be non-empty", label))
 		} else if !containsAny(uttTexts, session.SafeText(f.Quote)) {
 			errs = append(errs, fmt.Errorf("%s: quote is not a verbatim substring of any cited evidence utterance", label))

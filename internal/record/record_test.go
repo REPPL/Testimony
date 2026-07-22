@@ -162,6 +162,75 @@ func TestOutputTail(t *testing.T) {
 	}
 }
 
+// fakeFFmpeg writes an executable shell script standing in for the ffmpeg
+// binary, so probeDevices' spawn-and-wait paths run hermetically on any Unix.
+func fakeFFmpeg(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ffmpeg")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatalf("write fake ffmpeg: %v", err)
+	}
+	return path
+}
+
+// TestProbeDevicesTimesOut is the wedged-enumeration regression: a hung device
+// listing must surface an actionable timeout instead of hanging `testimony
+// record` forever before the interrupt handler is live. `exec` replaces the
+// shell with sleep so the deadline SIGKILL reaps the actual blocker.
+func TestProbeDevicesTimesOut(t *testing.T) {
+	old := deviceListTimeout
+	deviceListTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { deviceListTimeout = old })
+
+	start := time.Now()
+	_, _, err := probeDevices(fakeFFmpeg(t, "exec sleep 10\n"), false)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("a hung enumeration must surface a timeout, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the deadline did not bound the wait: took %v", elapsed)
+	}
+}
+
+// TestProbeDevicesAbandonsUnreapableChild covers the residual wedged-driver
+// sub-case: a child pinned where SIGKILL cannot take effect can never be reaped,
+// and probeDevices must abandon it rather than wait forever. The stand-in: the
+// shell (not exec'd) dies on SIGKILL but its sleep grandchild inherits the
+// output pipe, so Wait cannot finish within the kill grace — the same
+// wait-never-returns shape as an unkillable process.
+func TestProbeDevicesAbandonsUnreapableChild(t *testing.T) {
+	oldList, oldKill := deviceListTimeout, probeKillGrace
+	deviceListTimeout = 50 * time.Millisecond
+	probeKillGrace = 100 * time.Millisecond
+	t.Cleanup(func() { deviceListTimeout, probeKillGrace = oldList, oldKill })
+
+	start := time.Now()
+	_, _, err := probeDevices(fakeFFmpeg(t, "sleep 10\n"), false)
+	if err == nil || !strings.Contains(err.Error(), "unresponsive") {
+		t.Fatalf("an unreapable enumeration must be abandoned with an actionable error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the kill grace did not bound the wait: took %v", elapsed)
+	}
+}
+
+// TestProbeDevicesToleratesByDesignExit pins the happy path end to end over a
+// real child process: ffmpeg prints the listing to stderr and exits non-zero by
+// design, and probeDevices must parse the devices out of that "failure".
+func TestProbeDevicesToleratesByDesignExit(t *testing.T) {
+	script := "cat >&2 <<'EOF'\n" + sampleDevices + "\nEOF\nexit 1\n"
+	screen, mics, err := probeDevices(fakeFFmpeg(t, script), true)
+	if err != nil {
+		t.Fatalf("the by-design non-zero exit must be tolerated: %v", err)
+	}
+	if screen != 1 {
+		t.Fatalf("screen index: got %d, want 1 (Capture screen)", screen)
+	}
+	if !reflect.DeepEqual(mics, []string{"Studio Display Microphone", "USB audio CODEC"}) {
+		t.Fatalf("audio roster: got %q", mics)
+	}
+}
+
 // --- platform plan ---
 
 func TestPlan(t *testing.T) {
@@ -755,13 +824,19 @@ func TestRunDegradesHonestly(t *testing.T) {
 // --- lifecycle state machine over a fake proc ---
 
 // fakeProc records the signals it receives and exits Wait only when it receives
-// its designated exit signal.
+// its designated exit signal. exitDelay, when set, holds Wait open for that long
+// after the exit-triggering signal — modelling the reaper's scheduling gap
+// between a child's real exit and close(done) becoming readable. fatalSig
+// records which signal actually ended the proc, so DiedOf answers as a reaped
+// wait status would.
 type fakeProc struct {
-	mu       sync.Mutex
-	signals  []os.Signal
-	exitOn   os.Signal
-	exit     chan struct{}
-	exitOnce sync.Once
+	mu        sync.Mutex
+	signals   []os.Signal
+	exitOn    os.Signal
+	exitDelay time.Duration
+	exit      chan struct{}
+	exitOnce  sync.Once
+	fatalSig  os.Signal
 }
 
 func newFakeProc(exitOn os.Signal) *fakeProc {
@@ -775,7 +850,16 @@ func (f *fakeProc) Signal(s os.Signal) error {
 	f.signals = append(f.signals, s)
 	f.mu.Unlock()
 	if s == f.exitOn {
-		f.exitOnce.Do(func() { close(f.exit) })
+		f.exitOnce.Do(func() {
+			f.mu.Lock()
+			f.fatalSig = s
+			f.mu.Unlock()
+			if f.exitDelay > 0 {
+				time.AfterFunc(f.exitDelay, func() { close(f.exit) })
+			} else {
+				close(f.exit)
+			}
+		})
 	}
 	return nil
 }
@@ -783,6 +867,12 @@ func (f *fakeProc) Signal(s os.Signal) error {
 func (f *fakeProc) Wait() error {
 	<-f.exit
 	return nil
+}
+
+func (f *fakeProc) DiedOf(sig syscall.Signal) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fatalSig == os.Signal(sig)
 }
 
 func (f *fakeProc) sent() []os.Signal {
@@ -818,6 +908,31 @@ func TestStopChildEscalatesToSIGKILL(t *testing.T) {
 	got := fp.sent()
 	if len(got) != 2 || got[0] != syscall.SIGINT || got[1] != syscall.SIGKILL {
 		t.Fatalf("expected SIGINT then SIGKILL, got %v", got)
+	}
+	if !c.killed {
+		t.Fatal("a recorder the escalation SIGKILL terminated must be marked killed, so finaliseOutputs distrusts its artefact")
+	}
+}
+
+// TestStopChildDoesNotCondemnCleanExitAtGraceBoundary is the misclassification
+// regression at the grace deadline. A recorder that finalises and exits cleanly
+// right at the boundary can still land in stopChild's timeout branch — the reaper
+// closes done only after Wait returns, so there is a scheduling window between the
+// clean exit and done becoming readable, and select picks randomly when both cases
+// are ready. Pre-fix the branch set killed unconditionally, so the no-op SIGKILL
+// into that window condemned a complete, playable recording as "likely truncated
+// or unplayable" and failed the run. killed must reflect who actually ended the
+// process: here the child dies of SIGINT (finalised) with its Wait held open past
+// the grace, and must not be marked killed.
+func TestStopChildDoesNotCondemnCleanExitAtGraceBoundary(t *testing.T) {
+	fp := newFakeProc(syscall.SIGINT)
+	fp.exitDelay = 50 * time.Millisecond // exit already triggered; Wait returns after the grace
+	c := newLiveChild(streamScreen, fp, &lockedBuffer{})
+
+	stopChild(c, 5*time.Millisecond)
+
+	if c.killed {
+		t.Fatal("a recorder that finalised on SIGINT was marked killed because its reap outlasted the grace; its complete artefact would be reported as truncated")
 	}
 }
 

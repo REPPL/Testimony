@@ -354,6 +354,70 @@ func TestVerifyTargetErrorSanitisesFindingID(t *testing.T) {
 	}
 }
 
+// TestReviewErrorPathsSanitiseFindingIDs pins every remaining finding-id error
+// sink this package sanitises — checkTargets (both ids), AppendVerdict's
+// oversized-line refusal, and verifyTarget's identity-changed and
+// duplicate-target-gone branches. TestVerifyTargetErrorSanitisesFindingID
+// covers only the cur==nil branch; each branch here reverted to a raw %s
+// independently while the whole suite stayed green, and the verifyTarget pair
+// carry ids sourced straight from an attacker-authored findings.jsonl through
+// review's normal flow.
+func TestReviewErrorPathsSanitiseFindingIDs(t *testing.T) {
+	const evilPrefix = "\x1b]0;pwned\x07"
+	assertClean := func(t *testing.T, err error, wantSub string) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("want an error carrying the sanitised id, got nil")
+		}
+		if strings.ContainsRune(err.Error(), '\x1b') || strings.ContainsRune(err.Error(), '\x07') {
+			t.Fatalf("error carries raw terminal-control bytes: %q", err.Error())
+		}
+		if !strings.Contains(err.Error(), wantSub) {
+			t.Fatalf("sanitised error dropped the id's printable tail %q: %q", wantSub, err.Error())
+		}
+	}
+
+	t.Run("checkTargets finding not found", func(t *testing.T) {
+		findings := []analyze.Finding{{ID: "F-001"}}
+		assertClean(t, checkTargets(findings, evilPrefix+"F-404", "confirmed", ""), "F-404")
+	})
+
+	t.Run("checkTargets duplicate target not found", func(t *testing.T) {
+		findings := []analyze.Finding{{ID: "F-001"}}
+		assertClean(t, checkTargets(findings, "F-001", "duplicate", evilPrefix+"F-405"), "F-405")
+	})
+
+	t.Run("AppendVerdict oversized line", func(t *testing.T) {
+		v := analyze.Verdict{Kind: "verdict", Finding: evilPrefix + "F-001", Verdict: "confirmed",
+			At: strings.Repeat("x", session.MaxJSONLLine)}
+		assertClean(t, AppendVerdict(t.TempDir(), v, nil), "F-001")
+	})
+
+	t.Run("verifyTarget identity changed", func(t *testing.T) {
+		dir := t.TempDir()
+		evilID := evilPrefix + "F-001"
+		line := `{"id":"` + "\\u001b]0;pwned\\u0007" + `F-001","t":22,"type":"bug","severity":3,"quote":"a","evidence":["utt-004"],"status":"unverified"}` + "\n"
+		if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(line), 0o644); err != nil {
+			t.Fatalf("write findings: %v", err)
+		}
+		rec := analyze.Verdict{Kind: "verdict", Finding: evilID, Verdict: "confirmed", At: "2026-07-22"}
+		// The snapshot differs in quote: the finding was rewritten since review started.
+		expect := &analyze.Finding{ID: evilID, T: 22, Type: "bug", Severity: 3, Quote: "different", Evidence: []string{"utt-004"}}
+		assertClean(t, AppendVerdict(dir, rec, expect), "F-001")
+	})
+
+	t.Run("verifyTarget duplicate target gone", func(t *testing.T) {
+		dir := t.TempDir()
+		line := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"a","evidence":["utt-004"],"status":"unverified"}` + "\n"
+		if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(line), 0o644); err != nil {
+			t.Fatalf("write findings: %v", err)
+		}
+		rec := analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "duplicate", Of: evilPrefix + "F-999", At: "2026-07-22"}
+		expect := &analyze.Finding{ID: "F-001", T: 22, Type: "bug", Severity: 3, Quote: "a", Evidence: []string{"utt-004"}}
+		assertClean(t, AppendVerdict(dir, rec, expect), "F-999")
+	})
+}
+
 // shortWriteFile is a verdictFile whose Write persists a prefix and then errors,
 // standing in for a full disk (write(2) fills the remaining space, returns a
 // short count, and the next write returns ENOSPC — os.File.Write persists the
