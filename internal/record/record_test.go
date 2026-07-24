@@ -914,6 +914,36 @@ func TestStopChildEscalatesToSIGKILL(t *testing.T) {
 	}
 }
 
+// TestStopChildAbandonsUnreapableChild is the wedged-shutdown regression. A
+// recorder pinned in an uninterruptible kernel wait cannot be reaped even by
+// SIGKILL, so stopChild's post-SIGKILL receive on c.done never completes; pre-fix
+// (an unbounded <-c.done) that hung the whole sequential shutdown on one bad
+// recorder, so finaliseOutputs and the Next commands never ran and record hung
+// until killed externally. stopChild must bound the reap, abandon the child, and
+// mark it killed so its artefact is distrusted. The fake never exits on any signal
+// stopChild sends, modelling the unreapable child (its reaper goroutine blocks in
+// Wait forever, by design).
+func TestStopChildAbandonsUnreapableChild(t *testing.T) {
+	old := stopReapGrace
+	stopReapGrace = 30 * time.Millisecond
+	t.Cleanup(func() { stopReapGrace = old })
+
+	fp := newFakeProc(syscall.SIGUSR1) // a signal stopChild never sends, so Wait never returns
+	c := newLiveChild(streamScreen, fp, &lockedBuffer{})
+
+	start := time.Now()
+	stopChild(c, 10*time.Millisecond)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("stopChild did not bound its wait on an unreapable child: took %v", elapsed)
+	}
+	if !c.killed {
+		t.Fatal("an abandoned, unreapable recorder must be marked killed so finaliseOutputs distrusts its artefact")
+	}
+	if got := fp.sent(); len(got) != 2 || got[0] != syscall.SIGINT || got[1] != syscall.SIGKILL {
+		t.Fatalf("expected SIGINT then SIGKILL before abandoning, got %v", got)
+	}
+}
+
 // TestStopChildDoesNotCondemnCleanExitAtGraceBoundary is the misclassification
 // regression at the grace deadline. A recorder that finalises and exits cleanly
 // right at the boundary can still land in stopChild's timeout branch — the reaper

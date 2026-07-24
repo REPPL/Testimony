@@ -43,6 +43,13 @@ import (
 // assertion. Production never reassigns them.
 var stopGrace = 5 * time.Second
 
+// stopReapGrace bounds how long stopChild waits for the reaper after the
+// escalation SIGKILL, mirroring recorders.go's probeKillGrace. A wedged capture
+// driver can defer even SIGKILL delivery indefinitely (the child is pinned in an
+// uninterruptible kernel wait), so an unbounded reap here would hang the whole
+// sequential shutdown on one bad recorder. A var only so tests can shrink it.
+var stopReapGrace = 2 * time.Second
+
 // startupWindow bounds how soon after a recorder starts an exit is still
 // treated as a start-up failure (e.g. a TCC denial, which fails within a
 // second or two). A recorder that ran longer than this before exiting cannot

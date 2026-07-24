@@ -510,6 +510,33 @@ func TestConvertAudioIntegration(t *testing.T) {
 	}
 }
 
+// TestAtomicConvertHonoursUmask is the file-mode regression. os.CreateTemp
+// reserves the temp at 0600, so the finished audio.wav must be widened back to
+// the mode a direct ffmpeg write would have produced — which honours the
+// operator's umask, exactly like the record-side audio.wav and every sibling
+// artefact. A flat chmod 0644 (the pre-fix code) widened this one file past a
+// restrictive umask, so a privacy-conscious operator's microphone recording came
+// out group/world-readable. Under umask 077 the result must be 0600, not 0644.
+func TestAtomicConvertHonoursUmask(t *testing.T) {
+	old := syscall.Umask(0o077)
+	t.Cleanup(func() { syscall.Umask(old) })
+
+	dir := t.TempDir()
+	out := filepath.Join(dir, session.AudioFile)
+	if err := atomicConvert(out, func(tmpPath string) error {
+		return os.WriteFile(tmpPath, []byte("RIFF....complete"), 0o644)
+	}); err != nil {
+		t.Fatalf("atomicConvert: %v", err)
+	}
+	fi, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("stat converted audio: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("under umask 077 the converted %s must honour the umask (0600), got %v — a flat 0644 widens the recording past the operator's umask", session.AudioFile, got)
+	}
+}
+
 // TestConvertAudioRoutesThroughTemp pins the convertAudio → atomicConvert
 // wiring at the call site, hermetically (the convertRunner stub stands in for
 // ffmpeg; LookPath resolves against a fake on PATH). The producer must be

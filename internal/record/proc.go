@@ -116,7 +116,7 @@ type liveChild struct {
 	started time.Time     // when watching began; used to tell a start-up failure from a mid-session stop
 	done    chan struct{} // closed once, when Wait returns
 	err     error         // Wait result; read only after done is closed
-	killed  bool          // set by stopChild when its escalation SIGKILL terminated the child; read after stopAll
+	killed  bool          // set by stopChild when its escalation SIGKILL terminated the child, or when the child could not be reaped at all; read after stopAll
 }
 
 // watch starts the single reaper goroutine. It must be called exactly once,
@@ -137,31 +137,50 @@ func newLiveChild(stream string, p proc, stderr *lockedBuffer) *liveChild {
 
 // stop asks one child to finalise its container: SIGINT (ffmpeg writes the
 // trailer/moov atom and exits), wait up to grace, and only on timeout escalate
-// to SIGKILL. It returns after the child has been reaped.
+// to SIGKILL. It returns after the child has been reaped, or — if even SIGKILL
+// cannot reap it within stopReapGrace — after abandoning it, so the sequential
+// shutdown never hangs on one wedged recorder.
 func stopChild(c *liveChild, grace time.Duration) {
 	_ = c.p.Signal(syscall.SIGINT)
 	select {
 	case <-c.done:
+		return
 	case <-time.After(grace):
-		// The recorder did not finalise its container within the grace period. SIGKILL
-		// leaves whatever bytes were flushed — for an MP4, whose moov atom is written
-		// only on clean shutdown, that is very likely a truncated, unplayable file. Mark
-		// it so finaliseOutputs surfaces the risk instead of blessing the file by size.
-		// killed is written here on the caller's goroutine (stopAll, sequential) and
-		// read only after stopAll returns, so no synchronisation is needed.
-		//
+	}
+	// The recorder did not finalise its container within the grace period. SIGKILL
+	// leaves whatever bytes were flushed — for an MP4, whose moov atom is written
+	// only on clean shutdown, that is very likely a truncated, unplayable file. Mark
+	// it so finaliseOutputs surfaces the risk instead of blessing the file by size.
+	// killed is written here on the caller's goroutine (stopAll, sequential) and
+	// read only after stopAll returns, so no synchronisation is needed.
+	_ = c.p.Signal(syscall.SIGKILL)
+	select {
+	case <-c.done:
 		// Condemn the artefact only when the SIGKILL is what actually terminated the
 		// recorder. A child that finalised and exited cleanly right at the grace
-		// boundary can still land in this branch — the reaper closes done only after
-		// Wait returns (which also joins the stderr copier), so there is a scheduling
+		// boundary can still land here — the reaper closes done only after Wait
+		// returns (which also joins the stderr copier), so there is a scheduling
 		// window between a clean exit and done becoming readable, and select picks
 		// randomly when both cases are ready. In that window the SIGKILL hits an
 		// already-exited process (a no-op); marking such a child killed reported a
 		// complete, playable recording as "likely truncated or unplayable" and failed
 		// the run. The reaped wait status is ground truth for who ended the process,
 		// and c.err/ProcessState are stable once done is closed.
-		_ = c.p.Signal(syscall.SIGKILL)
-		<-c.done
 		c.killed = c.p.DiedOf(syscall.SIGKILL)
+	case <-time.After(stopReapGrace):
+		// Even SIGKILL did not produce an exit within the reap grace: the child is
+		// pinned in an uninterruptible kernel wait (a wedged capture driver defers
+		// signal delivery until the kernel call returns — possibly never), so no wait
+		// can reap it. Without this bound the whole shutdown hangs on the unbounded
+		// receive: stopAll is sequential, so one wedged recorder keeps SIGINT from
+		// ever reaching the rest and finaliseOutputs/stopDemo/nextCommands never run —
+		// the operator's only recourse being to kill record externally, which skips
+		// finalisation and orphans every still-live recorder. Abandon the reaper
+		// goroutine (it closes done if the child ever dies; nothing else can reap it —
+		// the same accepted leak as probeDevices' probeKillGrace path) and treat the
+		// artefact as untrusted so finaliseOutputs surfaces it. This mirrors the bound
+		// d9098a7 gave probeDevices, whose comment established that this very wait can
+		// never complete for a wedged child.
+		c.killed = true
 	}
 }

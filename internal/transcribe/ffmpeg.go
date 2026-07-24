@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/REPPL/Testimony/internal/session"
@@ -81,10 +82,17 @@ func atomicConvert(out string, produce func(tmpPath string) error) error {
 	if err := produce(tmpPath); err != nil {
 		return err
 	}
-	// os.CreateTemp reserves the name at 0600; the finished audio.wav is an
-	// ordinary session artefact, so restore the 0644 a direct write would have
-	// given it — otherwise the conversion silently narrows the file's mode.
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
+	// os.CreateTemp reserves the name at 0600; a direct ffmpeg write would instead
+	// have created audio.wav honouring the operator's umask — 0644 for the default
+	// 022, but 0600 under a restrictive umask a privacy-conscious operator sets so
+	// the microphone recording is not group/world-readable. Restore that
+	// umask-masked mode, matching the record-side audio.wav and every sibling
+	// artefact (all created through umask-masked opens); a flat 0644 would silently
+	// widen this one file past the umask. The brief syscall.Umask(0) probe is safe
+	// here — transcribe creates no other file concurrently.
+	um := syscall.Umask(0)
+	syscall.Umask(um)
+	if err := os.Chmod(tmpPath, 0o644&^os.FileMode(um)); err != nil {
 		return fmt.Errorf("audio convert: finalise %s: %w", out, err)
 	}
 	if err := os.Rename(tmpPath, out); err != nil {
