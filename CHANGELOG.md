@@ -8,7 +8,7 @@ leading `v`.
 Before v1.0.0, minor releases may make breaking changes; each one is
 called out in a **Breaking** section.
 
-## [Unreleased]
+## [0.4.0] - 2026-07-24
 
 A second robustness pass over the same capture → analysis pipeline, closing the
 defects a multi-round review surfaced after v0.3.0. Every fix carries a
@@ -65,8 +65,8 @@ Capture reliability (`record`/`transcribe`, macOS):
 - A recorder that had to be force-stopped (it missed the finalisation grace) is
   flagged, so a truncated, unplayable `screen.mp4` is no longer reported as good.
 
-A third adversarial pass over that same commit closed what its own review had
-missed:
+Further adversarial review passes over that same commit closed what it had
+itself missed:
 
 - Text sanitisation now strips every invisible Unicode format character (zero
   width space, word joiner, BOM, soft hyphen, the tag block), not only the bidi
@@ -88,8 +88,20 @@ missed:
   missing-vs-unreadable audio split, the report code-span escape, the review
   error-path sanitisation, and the atomic-conversion call-site wiring — fixes
   whose tests previously stayed green when the fix was reverted.
-- A converted `audio.wav` keeps the ordinary `0644` file mode instead of
-  silently inheriting the temp file's `0600`.
+- A converted `audio.wav` is written with the operator's umask-masked mode, like
+  every other session artefact and the record-side `audio.wav`, rather than the
+  temp file's private `0600` or a flat `0644` wider than the umask allows.
+- The recorder shutdown no longer hangs on a wedged capture device: the wait
+  after the escalation `SIGKILL` is now bounded, so a child pinned in an
+  uninterruptible kernel wait is abandoned (and its artefact distrusted) instead
+  of stalling the whole sequential shutdown before `record` can finalise its
+  outputs and print the follow-up commands.
+- Device enumeration survives an unresponsive child rather than hanging on it:
+  the wait is structured so an expired deadline always takes effect even when the
+  child cannot be reaped, closing a residual hang the first timeout could not.
+- The bounded enumeration-output sink honours the `io.Writer` contract on
+  overflow, so a flood past its cap can no longer abort the capture of the
+  listing partway through.
 
 ### Changed
 
@@ -219,6 +231,7 @@ Resource and process lifecycle:
 - A one-line installer and a checksummed release of static binaries for macOS
   and Linux.
 
-[Unreleased]: https://github.com/REPPL/Testimony/compare/v0.2.0...HEAD
+[0.4.0]: https://github.com/REPPL/Testimony/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/REPPL/Testimony/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/REPPL/Testimony/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/REPPL/Testimony/releases/tag/v0.1.0
