@@ -155,13 +155,18 @@ const probeSinkRetain = 1 << 20
 func (s *probeSink) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Report the full count even when the retention cap discards the tail: a
+	// bounded sink absorbs-and-drops overflow, and returning a short count with a
+	// nil error violates io.Writer and makes os/exec's copy goroutine abort the
+	// pump with ErrShortWrite (mid-listing, on a flood past the cap).
+	n := len(p)
 	if room := probeSinkRetain - len(s.buf); room > 0 {
 		if len(p) > room {
 			p = p[:room]
 		}
 		s.buf = append(s.buf, p...)
 	}
-	return len(p), nil
+	return n, nil
 }
 
 func (s *probeSink) text() string {

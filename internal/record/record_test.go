@@ -173,6 +173,26 @@ func fakeFFmpeg(t *testing.T, script string) string {
 	return path
 }
 
+// TestProbeSinkReturnsFullCount pins the io.Writer contract on the bounded probe
+// sink: even a write that straddles or exceeds the retention cap must report the
+// full byte count, because os/exec's copy goroutine treats a short count with a
+// nil error as ErrShortWrite and aborts the pump mid-listing. Pre-fix the
+// straddling write returned only the retained-room count.
+func TestProbeSinkReturnsFullCount(t *testing.T) {
+	var s probeSink
+	first := make([]byte, probeSinkRetain-10) // leaves 10 bytes of room
+	if n, err := s.Write(first); n != len(first) || err != nil {
+		t.Fatalf("Write returned (%d, %v), want (%d, nil)", n, err, len(first))
+	}
+	straddle := make([]byte, 100) // 10 bytes fit, 90 dropped — must still report 100
+	if n, err := s.Write(straddle); n != len(straddle) || err != nil {
+		t.Fatalf("straddling Write returned (%d, %v), want (%d, nil)", n, err, len(straddle))
+	}
+	if n, err := s.Write([]byte("more")); n != 4 || err != nil { // sink already full
+		t.Fatalf("full-sink Write returned (%d, %v), want (4, nil)", n, err)
+	}
+}
+
 // TestProbeDevicesTimesOut is the wedged-enumeration regression: a hung device
 // listing must surface an actionable timeout instead of hanging `testimony
 // record` forever before the interrupt handler is live. `exec` replaces the
