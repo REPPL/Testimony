@@ -243,6 +243,115 @@ func TestResolveOffsetInPlaceNoT0(t *testing.T) {
 	}
 }
 
+// TestResolveOffsetInPlaceReadsSidecar is the re-run-offset-loss regression. A
+// first `transcribe -audio rec.m4a` converts the recording into audio.wav and
+// derives a nonzero offset; a later bare `transcribe` reuses audio.wav and hits
+// the in-place branch. Pre-fix that branch always returned 0, silently shifting
+// every utterance by the forgotten offset. The offset is now persisted in a
+// sidecar beside audio.wav and read back here. write-then-read round-trips the
+// value.
+func TestResolveOffsetInPlaceReadsSidecar(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeOffsetSidecar(dir, 12.4, "derived: audio creation_time − manifest t0"); err != nil {
+		t.Fatalf("writeOffsetSidecar: %v", err)
+	}
+	off, prov, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1_700_000_000_000}, false)
+	if err != nil {
+		t.Fatalf("in-place with a sidecar must succeed: %v", err)
+	}
+	if off != 12.4 {
+		t.Fatalf("offset: got %v, want 12.4 (from the sidecar, not the naive 0)", off)
+	}
+	if !strings.Contains(prov, "persisted") {
+		t.Fatalf("provenance should name the persisted origin, got %q", prov)
+	}
+}
+
+// TestResolveOffsetInPlaceRefusesBadSidecar covers the refuse-with-guidance
+// fallback: a present-but-unusable sidecar (here malformed JSON) means the audio
+// is known external but its offset is unrecoverable, so the run must refuse and
+// tell the operator how to state the offset, never silently fall back to 0.
+func TestResolveOffsetInPlaceRefusesBadSidecar(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, session.AudioOffsetFile), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+	_, _, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
+	if err == nil || !strings.Contains(err.Error(), "re-run with -audio") {
+		t.Fatalf("a malformed sidecar must refuse with guidance, got %v", err)
+	}
+}
+
+// TestResolveOffsetRefusesOversizedSidecar is the offset-magnitude regression: a
+// hand-edited sidecar carrying an astronomical offset (finite, so it clears the
+// NaN/Inf check) would shift every re-run's utterance past the magnitude merge
+// accepts, so the corruption surfaces one command later at merge. Bounding the offset
+// at read time refuses with guidance naming the sidecar as the fault. A large-but-
+// in-bounds offset still round-trips.
+func TestResolveOffsetRefusesOversizedSidecar(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeOffsetSidecar(dir, 5e9, "derived: audio creation_time − manifest t0"); err != nil {
+		t.Fatalf("writeOffsetSidecar: %v", err)
+	}
+	_, _, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
+	if err == nil || !strings.Contains(err.Error(), "re-run with -audio") {
+		t.Fatalf("an oversized sidecar offset must refuse with guidance, got %v", err)
+	}
+
+	// A large but in-bounds offset (10 hours) is still accepted and round-trips.
+	if err := writeOffsetSidecar(dir, 36000, "derived: audio creation_time − manifest t0"); err != nil {
+		t.Fatalf("writeOffsetSidecar: %v", err)
+	}
+	off, _, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
+	if err != nil {
+		t.Fatalf("an in-bounds sidecar offset must be accepted: %v", err)
+	}
+	if off != 36000 {
+		t.Fatalf("offset: got %v, want 36000", off)
+	}
+}
+
+// TestResolveOffsetRefusesOversizedDerivedOffset is the derived half of the
+// offset-magnitude bound (the sidecar half has its own test above): a poisoned
+// recording creation_time (attacker-influenceable metadata) that derives an
+// astronomical offset must refuse at derivation, naming the input, rather than
+// bake a decades-long shift into every utterance for merge to reject one
+// command later. The ffprobe-gated derivation is stubbed through the
+// deriveOffsetFn seam so the bound itself is exercised hermetically.
+func TestResolveOffsetRefusesOversizedDerivedOffset(t *testing.T) {
+	old := deriveOffsetFn
+	t.Cleanup(func() { deriveOffsetFn = old })
+
+	deriveOffsetFn = func(audio string, t0EpochMS int64) (float64, bool) { return 5e9, true }
+	_, _, err := resolveOffset(Options{Audio: "ext.wav"}, session.Manifest{T0EpochMS: 1}, true)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") || !strings.Contains(err.Error(), "-offset") {
+		t.Fatalf("an oversized derived offset must refuse with -offset guidance, got %v", err)
+	}
+
+	// A large but in-bounds derived offset (10 hours) still resolves.
+	deriveOffsetFn = func(audio string, t0EpochMS int64) (float64, bool) { return 36000, true }
+	off, provenance, err := resolveOffset(Options{Audio: "ext.wav"}, session.Manifest{T0EpochMS: 1}, true)
+	if err != nil {
+		t.Fatalf("an in-bounds derived offset must be accepted: %v", err)
+	}
+	if off != 36000 || !strings.Contains(provenance, "derived") {
+		t.Fatalf("offset: got %v (%q), want 36000 (derived)", off, provenance)
+	}
+}
+
+// TestResolveOffsetInPlaceNoSidecarIsRecordOrigin proves the record flow is
+// untouched: audio.wav with no sidecar is captured at t0, so the offset is 0.
+func TestResolveOffsetInPlaceNoSidecarIsRecordOrigin(t *testing.T) {
+	dir := t.TempDir()
+	off, prov, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
+	if err != nil {
+		t.Fatalf("record-origin in-place must succeed: %v", err)
+	}
+	if off != 0 || !strings.Contains(prov, "captured at t0") {
+		t.Fatalf("record-origin must be offset 0 captured at t0, got %v (%s)", off, prov)
+	}
+}
+
 // TestResolveOffsetExternalNoT0 is the silent-transcript-corruption regression:
 // pre-fix resolveOffset took the raw man.T0EpochMS and, on the external
 // recording path, handed it to deriveOffset unchecked. A received or hand-edited
@@ -370,9 +479,161 @@ func TestConvertAudioIntegration(t *testing.T) {
 	if err != nil || fi.Size() == 0 {
 		t.Fatalf("expected non-empty %s: %v", session.AudioFile, err)
 	}
+	// Atomicity: a successful conversion leaves no `.audio-*.wav` temp behind (it was
+	// renamed over out, and the deferred cleanup is a no-op).
+	if temps, _ := filepath.Glob(filepath.Join(dir, ".audio-*.wav")); len(temps) != 0 {
+		t.Fatalf("conversion left temp files behind: %v", temps)
+	}
 
 	if err := convertAudio(filepath.Join(dir, "voice.mp3"), out); err == nil {
 		t.Fatal("unsupported extension must error")
+	}
+
+	// A conversion where ffmpeg itself fails — a corrupt recording wearing a .wav
+	// extension — must leave no output and no temp. This pins the convertAudio →
+	// atomicConvert wiring at the call site: the hermetic helper test alone stays
+	// green if a later edit routes ffmpeg straight at out again.
+	failDir := t.TempDir()
+	corrupt := filepath.Join(failDir, "corrupt.wav")
+	if err := os.WriteFile(corrupt, []byte("not audio at all"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	failOut := filepath.Join(failDir, session.AudioFile)
+	if err := convertAudio(corrupt, failOut); err == nil {
+		t.Fatal("a corrupt input must fail the conversion")
+	}
+	if _, statErr := os.Stat(failOut); !os.IsNotExist(statErr) {
+		t.Fatalf("a failed conversion left %s behind (err=%v)", session.AudioFile, statErr)
+	}
+	if temps, _ := filepath.Glob(filepath.Join(failDir, ".audio-*.wav")); len(temps) != 0 {
+		t.Fatalf("a failed conversion left temp files behind: %v", temps)
+	}
+}
+
+// TestAtomicConvertHonoursUmask is the file-mode regression. os.CreateTemp
+// reserves the temp at 0600, so the finished audio.wav must be widened back to
+// the mode a direct ffmpeg write would have produced — which honours the
+// operator's umask, exactly like the record-side audio.wav and every sibling
+// artefact. A flat chmod 0644 (the pre-fix code) widened this one file past a
+// restrictive umask, so a privacy-conscious operator's microphone recording came
+// out group/world-readable. Under umask 077 the result must be 0600, not 0644.
+func TestAtomicConvertHonoursUmask(t *testing.T) {
+	old := syscall.Umask(0o077)
+	t.Cleanup(func() { syscall.Umask(old) })
+
+	dir := t.TempDir()
+	out := filepath.Join(dir, session.AudioFile)
+	if err := atomicConvert(out, func(tmpPath string) error {
+		return os.WriteFile(tmpPath, []byte("RIFF....complete"), 0o644)
+	}); err != nil {
+		t.Fatalf("atomicConvert: %v", err)
+	}
+	fi, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("stat converted audio: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("under umask 077 the converted %s must honour the umask (0600), got %v — a flat 0644 widens the recording past the operator's umask", session.AudioFile, got)
+	}
+}
+
+// TestConvertAudioRoutesThroughTemp pins the convertAudio → atomicConvert
+// wiring at the call site, hermetically (the convertRunner stub stands in for
+// ffmpeg; LookPath resolves against a fake on PATH). The producer must be
+// handed a temp path beside out — never out itself — and its failure must leave
+// out absent and no temp behind. The helper's own unit test stays green if a
+// later edit routes ffmpeg straight at out again; this one does not.
+func TestConvertAudioRoutesThroughTemp(t *testing.T) {
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "ffmpeg"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin)
+
+	dir := t.TempDir()
+	in := filepath.Join(dir, "voice.wav")
+	if err := os.WriteFile(in, []byte("RIFF input"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, session.AudioFile)
+
+	oldRunner := convertRunner
+	t.Cleanup(func() { convertRunner = oldRunner })
+	var producedAt string
+	convertRunner = func(ffmpeg, in, tmpPath string) error {
+		producedAt = tmpPath
+		// Exactly what an interrupted or ENOSPC-hit ffmpeg does: a partial file,
+		// then failure.
+		if werr := os.WriteFile(tmpPath, []byte("RIFF....partial"), 0o644); werr != nil {
+			t.Fatalf("seed partial: %v", werr)
+		}
+		return errors.New("ffmpeg: killed by signal")
+	}
+
+	if err := convertAudio(in, out); err == nil {
+		t.Fatal("convertAudio must surface the conversion failure")
+	}
+	if producedAt == "" {
+		t.Fatal("convertRunner was never invoked")
+	}
+	if producedAt == out {
+		t.Fatal("the producer was pointed straight at out; a partial conversion would land as audio.wav")
+	}
+	if filepath.Dir(producedAt) != dir {
+		t.Fatalf("temp %q is not beside out (rename would cross filesystems)", producedAt)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("a failed conversion left %s behind (err=%v)", session.AudioFile, statErr)
+	}
+	if temps, _ := filepath.Glob(filepath.Join(dir, ".audio-*.wav")); len(temps) != 0 {
+		t.Fatalf("a failed conversion left temp files behind: %v", temps)
+	}
+}
+
+// TestAtomicConvertLeavesNoPartialOnFailure is the interrupted-conversion regression,
+// hermetic (no ffmpeg): a producer that writes a partial temp and then fails — exactly
+// what a Ctrl+C'd or ENOSPC-hit ffmpeg does — must leave out untouched and the temp
+// removed, so a later bare `transcribe` never mistakes a truncated fragment for the
+// whole recording. Pre-fix (ffmpeg wrote straight to out) the fragment survived at out.
+func TestAtomicConvertLeavesNoPartialOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, session.AudioFile)
+
+	// Producer writes a partial WAV to the temp, then reports failure (interrupted).
+	err := atomicConvert(out, func(tmpPath string) error {
+		if werr := os.WriteFile(tmpPath, []byte("RIFF....partial fragment"), 0o644); werr != nil {
+			t.Fatalf("seed partial temp: %v", werr)
+		}
+		return errors.New("ffmpeg: killed by signal")
+	})
+	if err == nil {
+		t.Fatal("atomicConvert must surface the producer's error")
+	}
+	// out must not exist: the partial temp was never renamed into place.
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("a failed conversion left a partial %s behind (err=%v)", session.AudioFile, statErr)
+	}
+	// The temp must be cleaned up.
+	if temps, _ := filepath.Glob(filepath.Join(dir, ".audio-*.wav")); len(temps) != 0 {
+		t.Fatalf("a failed conversion left temp files behind: %v", temps)
+	}
+
+	// A succeeding producer renames its temp into place and leaves no temp.
+	if err := atomicConvert(out, func(tmpPath string) error {
+		return os.WriteFile(tmpPath, []byte("RIFF....complete"), 0o644)
+	}); err != nil {
+		t.Fatalf("atomicConvert on success: %v", err)
+	}
+	if b, rerr := os.ReadFile(out); rerr != nil || string(b) != "RIFF....complete" {
+		t.Fatalf("successful conversion did not land the full output: %q (err=%v)", b, rerr)
+	}
+	// The finished artefact carries an ordinary 0644, not os.CreateTemp's 0600 —
+	// the conversion must not silently narrow the mode a direct write gave it.
+	if fi, serr := os.Stat(out); serr != nil || fi.Mode().Perm() != 0o644 {
+		t.Fatalf("converted %s mode: got %v (err=%v), want 0644", session.AudioFile, fi.Mode().Perm(), serr)
+	}
+	if temps, _ := filepath.Glob(filepath.Join(dir, ".audio-*.wav")); len(temps) != 0 {
+		t.Fatalf("successful conversion left temp files behind: %v", temps)
 	}
 }
 
@@ -520,5 +781,117 @@ func TestCheckSessionAudioRefusesFIFO(t *testing.T) {
 	}
 	if err := checkSessionAudio(wav, dir); err != nil {
 		t.Fatalf("a real audio.wav must be accepted, got %v", err)
+	}
+}
+
+// TestCheckSessionAudioRefusesSymlink is the read-side exfil regression. A session
+// is an exchange unit, so a received one can ship audio.wav as a symlink to a file
+// outside the session — a private recording. Pre-fix checkSessionAudio used os.Stat,
+// which resolves the link to its regular target and returns nil, so the engine
+// transcribes that out-of-session file into transcript.jsonl inside the re-shareable
+// session directory. os.Lstat must refuse the symlink, matching the read-side stance
+// session.OpenFileNoFollowRead takes everywhere else. A symlink to a genuinely absent
+// target must also be reported as a symlink, not misreported as "no audio.wav" — the
+// F9 half: the file exists, so re-recording is the wrong advice.
+func TestCheckSessionAudioRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	wav := filepath.Join(dir, session.AudioFile)
+
+	// (a) symlink to a real regular file outside the session.
+	outside := filepath.Join(t.TempDir(), "private.wav")
+	if err := os.WriteFile(outside, []byte("RIFF private audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, wav); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+	if err := checkSessionAudio(wav, dir); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("a symlinked audio.wav must be refused as a symlink (pre-fix it was silently followed), got %v", err)
+	}
+
+	// (b) symlink to an absent target must still be named a symlink, not "no audio.wav".
+	if err := os.Remove(wav); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "does-not-exist.wav"), wav); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := checkSessionAudio(wav, dir); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("a dangling symlink must be reported as a symlink, not as absence, got %v", err)
+	}
+}
+
+// TestCheckSessionAudioDistinguishesUnreadableFromMissing pins the
+// missing-vs-unreadable split: only a genuinely absent audio.wav earns the "run
+// `testimony record` first" guidance. A different Lstat failure — here EACCES
+// from an unsearchable directory — must surface as a read error, because
+// sending the operator to re-record a session whose audio exists destroys the
+// misdiagnosed session's value.
+func TestCheckSessionAudioDistinguishesUnreadableFromMissing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission checks")
+	}
+	sealed := filepath.Join(t.TempDir(), "sealed")
+	if err := os.Mkdir(sealed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wav := filepath.Join(sealed, session.AudioFile)
+	if err := os.WriteFile(wav, []byte("RIFF real audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sealed, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(sealed, 0o755) })
+
+	err := checkSessionAudio(wav, sealed)
+	if err == nil {
+		t.Fatal("an unreadable audio.wav must error")
+	}
+	if strings.Contains(err.Error(), "testimony record") {
+		t.Fatalf("an unreadable audio.wav was misreported as absent (re-record advice): %v", err)
+	}
+	if !strings.Contains(err.Error(), "reading") {
+		t.Fatalf("the error should name the read failure, got %v", err)
+	}
+}
+
+// TestResolveModelRefusesFIFO is the model-path twin of the FIFO refusals on the
+// package's other subprocess-input sites (TestConvertAudioRefusesFIFOInput,
+// TestConvertAudioRefusesFIFOOutput, TestCheckSessionAudioRefusesFIFO). The
+// resolved -model path is handed to whisper-cli's -m and opened by it, so a FIFO
+// there would block that open(2) for ever. resolveModel must fall through to the
+// candidate search / not-found error rather than returning the FIFO. Pre-fix the
+// `!fi.IsDir()` test accepted it, since a FIFO is not a directory.
+func TestResolveModelRefusesFIFO(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "ggml-fifo.bin")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("mkfifo unsupported: %v", err)
+	}
+	got, err := resolveModel(fifo)
+	if err == nil {
+		t.Fatalf("resolveModel returned %q for a FIFO path; want a not-found error", got)
+	}
+	if got == fifo {
+		t.Fatalf("resolveModel returned the FIFO path itself: %q", got)
+	}
+}
+
+// TestResolveModelAcceptsRegularFile guards the ordinary case the refusal must
+// not break: an existing regular ggml file (or a symlink to one, which os.Stat
+// resolves) is returned as-is.
+func TestResolveModelAcceptsRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "ggml-test.bin")
+	if err := os.WriteFile(model, []byte("ggml"), 0o644); err != nil {
+		t.Fatalf("write model: %v", err)
+	}
+	got, err := resolveModel(model)
+	if err != nil {
+		t.Fatalf("resolveModel(regular file): %v", err)
+	}
+	if got != model {
+		t.Fatalf("want %q, got %q", model, got)
 	}
 }

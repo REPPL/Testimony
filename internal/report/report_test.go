@@ -1,6 +1,7 @@
 package report
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,6 +238,103 @@ func TestReportClockRoundsSymmetrically(t *testing.T) {
 	}
 }
 
+// TestReportAttachesEventsByPositionNotDuplicateID is the event-side twin of
+// TestReportAttachesEventsPerUtteranceWithoutIDs. report reads timeline.jsonl
+// directly, so an exchanged or hand-edited one can carry two events sharing an id
+// that merge would have made unique. Pre-fix the attach loop matched events by id,
+// so an in-window event pulled its far-away same-id twin under the utterance too and
+// the id-keyed standalone dedup then hid it — fabricating what the participant did
+// while speaking. Attaching by position must keep the far event standalone, at its
+// own time, and off the utterance.
+func TestReportAttachesEventsByPositionNotDuplicateID(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: "app", Participant: "Alice"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// Two events share id "ev-001": one at 10.5 s (inside the utterance window at
+	// 10 s), one at 9000 s (far outside). Only the near one may attach.
+	tl := `{"t":10,"src":"speech","id":"utt-001","payload":{"speaker":"Alice","t1":11,"text":"spoke here"}}
+{"t":10.5,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"near"}}
+{"t":9000,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"far"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// The far event renders exactly once, as a standalone at its own [150:00] stamp,
+	// never nested under the utterance. Pre-fix it appeared under the utterance and
+	// was suppressed from the standalone flush.
+	if n := strings.Count(md, "`far`"); n != 1 {
+		t.Fatalf("far event rendered %d times, want exactly 1:\n%s", n, md)
+	}
+	// It renders as a top-level standalone ("- ", column 0), never nested under the
+	// utterance ("  - ", indented) — the pre-fix bug attached it under the utterance.
+	if !strings.Contains(md, "\n- [150:00] click `far`") {
+		t.Fatalf("far same-id event was not rendered as a standalone at its own time:\n%s", md)
+	}
+	if strings.Contains(md, "  - [150:00]") {
+		t.Fatalf("far same-id event was wrongly nested under the utterance:\n%s", md)
+	}
+	// The near one attaches under the utterance (indented list item at its own 00:11).
+	if !strings.Contains(md, "  - [00:11] click `near`") {
+		t.Fatalf("near event did not attach to its utterance:\n%s", md)
+	}
+}
+
+// TestReportNeutralisesInlineMarkdown is the beacon-injection regression. report.md
+// is the shareable evidence artefact; an attacker-authored quote or event text of
+// `![x](http://evil/beacon.png)` used to survive verbatim, so opening the report in
+// any Markdown viewer fired a remote-image request — a tracking/exfil beacon. The
+// active image/link markup must be neutralised (backslash-escaped) so it renders as
+// literal text, while the words stay legible.
+func TestReportNeutralisesInlineMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: "app", Participant: "Alice"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// An utterance whose text is an image-beacon, a finding whose quote is one,
+	// and an event whose selector smuggles one through the code span: the inner
+	// backticks would close the span early and let the image markup render live.
+	tl := "{\"t\":1,\"src\":\"speech\",\"id\":\"utt-001\",\"payload\":{\"speaker\":\"Alice\",\"t1\":2,\"text\":\"![t](http://evil/a.png)\"}}\n" +
+		"{\"t\":1.5,\"src\":\"event\",\"id\":\"ev-001\",\"payload\":{\"kind\":\"click\",\"selector\":\"x` ![p](http://span.example/c.png) `y\"}}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	findings := "{\"id\":\"F-001\",\"t\":1,\"type\":\"bug\",\"severity\":3,\"quote\":\"![q](http://evil/b.png)\",\"evidence\":[\"utt-001\"],\"status\":\"unverified\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// No active image markup survives: the `!` immediately followed by `[` and the
+	// `](` link opener are the beacon triggers, and neither may appear unescaped.
+	if strings.Contains(md, "![t](http://evil/a.png)") || strings.Contains(md, "![q](http://evil/b.png)") {
+		t.Fatalf("active image-beacon markdown survived into report.md:\n%s", md)
+	}
+	if strings.Contains(md, "](http://evil") {
+		t.Fatalf("an unescaped link/image opener survived into report.md:\n%s", md)
+	}
+	// The words are still present (escaped, not stripped), so the evidence stays legible.
+	if !strings.Contains(md, "evil/a.png") || !strings.Contains(md, "evil/b.png") {
+		t.Fatalf("neutralisation dropped the text instead of escaping it:\n%s", md)
+	}
+	// The selector's inner backticks are stripped, so the whole selector stays one
+	// inert code span (span content is literal — inert — so the image markup may
+	// remain as text there). Pre-strip, "x` ![p](...) `y" split into `x` + live
+	// image markup + `y`, firing the beacon from inside the "code" rendering.
+	if !strings.Contains(md, "`x ![p](http://span.example/c.png) y`") {
+		t.Fatalf("selector did not survive as a single backtick-free code span:\n%s", md)
+	}
+	if strings.Contains(md, "`x` ") {
+		t.Fatalf("selector code span was closed early by an embedded backtick:\n%s", md)
+	}
+}
+
 func findingLines(t *testing.T, dir string) []string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))
@@ -326,5 +424,112 @@ func TestReportFindingsSanitiseIDAndVerdict(t *testing.T) {
 	// The real Confirmed group holds exactly the one genuine finding.
 	if strings.Count(md, "### Confirmed (1)") != 1 {
 		t.Fatalf("confirmed count line was altered:\n%s", md)
+	}
+}
+
+// TestReportDoesNotLeakPathOnUnreadableFindings covers the info-disclosure on the
+// findings-unavailable path. findings.jsonl exists but cannot be read — here a
+// symlink, which session's no-follow guard refuses with an error naming the full
+// path. That path is absolute when the operator passed an absolute -session and
+// on macOS embeds the username. report.md is the artefact a session directory is
+// built to share, so the raw error (the one string in renderFindings not routed
+// through SafeText) must not land in it. Render still succeeds; the report shows a
+// generic notice and no filesystem path. Pre-fix the whole error, path and all,
+// was written into report.md.
+func TestReportDoesNotLeakPathOnUnreadableFindings(t *testing.T) {
+	dir := setupSession(t)
+	findings := filepath.Join(dir, session.FindingsFile)
+	if err := os.Symlink(filepath.Join(dir, "elsewhere"), findings); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render should stay non-fatal on an unreadable findings file: %v", err)
+	}
+	if strings.Contains(md, dir) {
+		t.Fatalf("report leaked the session path into report.md:\n%s", md)
+	}
+	if !strings.Contains(md, "could not be read") {
+		t.Fatalf("expected a generic findings-unavailable notice, got:\n%s", md)
+	}
+}
+
+// TestClockRefusesOutOfRangeTime is the sink half of the time-magnitude class.
+// timeline.jsonl and findings.jsonl are attacker-authorable and reach clock
+// without passing timeline.checkedUtterances. A finite-but-astronomical t makes
+// int(sec+0.5) an out-of-range float64→int conversion (implementation-defined:
+// arm64 saturates to MaxInt64 and prints "153722867280912930:07", amd64 wraps
+// negative), planting a nonsensical stamp in the human evidence artefact. clock
+// must render a visibly-broken placeholder instead. Pre-fix it did the raw
+// conversion.
+func TestClockRefusesOutOfRangeTime(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sec  float64
+	}{
+		{"huge positive", 1e300},
+		{"huge negative", -1e300},
+		{"positive inf", math.Inf(1)},
+		{"nan", math.NaN()},
+	} {
+		got := clock(tc.sec)
+		if got != "--:--" {
+			t.Errorf("clock(%s)=%q, want %q (out-of-range must not reach int conversion)", tc.name, got, "--:--")
+		}
+	}
+	// The ordinary range is unaffected.
+	if got := clock(125); got != "02:05" {
+		t.Fatalf("clock(125)=%q, want 02:05", got)
+	}
+}
+
+// TestReportRendersHugeTimeAsPlaceholder is the end-to-end guard: a hand-authored
+// timeline.jsonl whose speech carries t=1e300 must render a placeholder Duration,
+// not a saturated-integer garbage stamp, and Render must still exit cleanly.
+func TestReportRendersHugeTimeAsPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "x", Participant: "P1"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	const tl = `{"t":1e300,"src":"speech","id":"u1","payload":{"speaker":"P1","t1":1e300,"text":"planted"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "153722867280912930") {
+		t.Fatalf("report rendered a saturated-integer garbage stamp:\n%s", md)
+	}
+	if !strings.Contains(md, "--:--") {
+		t.Fatalf("expected a placeholder stamp for the out-of-range time:\n%s", md)
+	}
+}
+
+// TestReportFlushesEventPastLegacySentinel covers the sentinel bug: the trailing
+// standalone-event flush used a finite 1e18 bound, so any event with t at or past
+// it was silently omitted from the report while merge and report both exited 0.
+// The flush is now +Inf-bounded, so every finite-t event appears. Pre-fix the
+// event below (t=1e18) was dropped.
+func TestReportFlushesEventPastLegacySentinel(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "x", Participant: "P1"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	// One ordinary utterance and a standalone event at exactly the old sentinel.
+	const tl = `{"t":5,"src":"speech","id":"u1","payload":{"speaker":"P1","t1":6,"text":"hello"}}
+{"t":1e18,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"#late","route":"#r"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(md, "#late") {
+		t.Fatalf("standalone event at the legacy 1e18 sentinel was dropped from the report:\n%s", md)
 	}
 }

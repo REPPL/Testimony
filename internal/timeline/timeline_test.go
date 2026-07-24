@@ -209,6 +209,34 @@ func TestMergeRejectsInteractionMissingKind(t *testing.T) {
 	}
 }
 
+// TestMergeRejectsInteractionHugeT is the magnitude twin the interaction side was
+// missing: the sign check refuses t <= 0, but a huge positive t (here ~9e18 ms)
+// passes it and yields a session-relative time of ~9e15 s — no session time. Pre-fix
+// merge wrote it and exited 0, then report rendered the span as the broken "--:--"
+// and analyze.indexTimeline's idx.end inflated to admit findings anchored anywhere up
+// to it. checkedUtterances already bounds the same magnitude on the speech side
+// (TestMergeRejectsUtteranceHugeT0); checkedInteractions must too, naming the line and
+// writing no timeline.
+func TestMergeRejectsInteractionHugeT(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	lines := "" +
+		`{"t":` + strconv.FormatInt(t0+9_500, 10) + `,"kind":"click","selector":"[data-testid=save-btn]"}` + "\n" +
+		`{"t":9000000000000000000,"kind":"click","selector":"[data-testid=tab-appearance]"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.InteractionsFile), []byte(lines), 0o644); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+	_, _, err := Merge(dir)
+	if err == nil || !strings.Contains(err.Error(), "interaction 2") {
+		t.Fatalf("expected an out-of-range-magnitude error naming interaction 2, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the out-of-range interaction time")
+	}
+}
+
 // TestMergeAcceptsInteractionAtT0 guards the other half of the required-field
 // check: an interaction captured at exactly t0 has a relative time of 0, which a
 // value-typed decode cannot distinguish from an absent "t". Alice clicking the
@@ -269,6 +297,55 @@ func TestMergeRejectsUtteranceMissingT0(t *testing.T) {
 	// The timeline carrying the phantom utterance must not have been written.
 	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
 		t.Fatalf("timeline.jsonl was written despite the malformed utterance")
+	}
+}
+
+// TestMergeRejectsUtteranceHugeT0 is the magnitude twin of the interaction-side
+// range check. Utterance t0/t1 are session-relative seconds (negative is
+// legitimate), so the guard bounds magnitude, not sign. A hand-edited transcript
+// carrying t0=1e300 is not a session time: it overflows report's float64→int
+// clock into a garbage duration and makes the utterance's EventsNear window span
+// the whole session, silently stealing every event from the utterances they were
+// spoken over. Merge must refuse it and name the line. Pre-fix it merged with
+// exit 0.
+func TestMergeRejectsUtteranceHugeT0(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	lines := "" +
+		`{"id":"utt-001","t0":8.0,"t1":12.5,"speaker":"P1","text":"ordinary"}` + "\n" +
+		`{"id":"utt-002","t0":1e300,"t1":1e300,"speaker":"P1","text":"planted"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(lines), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	_, _, err := Merge(dir)
+	if err == nil {
+		t.Fatalf("expected an out-of-range t0 error, got nil")
+	}
+	if !strings.Contains(err.Error(), "utterance 2") || !strings.Contains(err.Error(), "t0") {
+		t.Fatalf("error should name the offending line and field, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the out-of-range utterance")
+	}
+}
+
+// TestMergeRejectsUtteranceHugeT1 covers the t1 half: a sane t0 but an
+// astronomical t1 (t1 >= t0, so it passes the ordering check) must also be
+// refused, since the join window's upper bound is built from t1.
+func TestMergeRejectsUtteranceHugeT1(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	line := `{"id":"utt-001","t0":8.0,"t1":1e300,"speaker":"P1","text":"planted end"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(line), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	_, _, err := Merge(dir)
+	if err == nil || !strings.Contains(err.Error(), "t1") {
+		t.Fatalf("expected an out-of-range t1 error, got %v", err)
 	}
 }
 
@@ -364,5 +441,76 @@ func TestEventsNearWindow(t *testing.T) {
 	}
 	if all["ev-002"] {
 		t.Fatalf("ev-002 should be outside both windows")
+	}
+}
+
+// TestMergeRejectsInteractionNonPositiveT is the range-check twin of
+// TestMergeRejectsInteractionMissingT. t is epoch milliseconds, so a value at or
+// below zero anchors the event at or before 1 January 1970 — no capture produces
+// that, and at the extreme (a t near math.MinInt64) the (t - t0) subtraction in
+// BuildEntries wraps on signed overflow and plants the event millions of years
+// after the session start, inflating the report span while Merge still exits 0.
+// checkedInteractions now refuses a non-positive t, naming the line, and writes
+// no timeline. Pre-fix this line merged silently.
+func TestMergeRejectsInteractionNonPositiveT(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	lines := "" +
+		`{"t":` + strconv.FormatInt(t0+9_500, 10) + `,"kind":"click","selector":"[data-testid=save-btn]"}` + "\n" +
+		`{"t":-9223372036854775808,"kind":"click","selector":"[data-testid=tab-appearance]"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.InteractionsFile), []byte(lines), 0o644); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+	_, _, err := Merge(dir)
+	if err == nil || !strings.Contains(err.Error(), "interaction 2") {
+		t.Fatalf("expected a non-positive-t error naming interaction 2, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the out-of-range interaction time")
+	}
+}
+
+// TestMergeClampsUtteranceInvertedSpan covers an explicit t1 < t0 in a
+// transcript.jsonl. The nil-t1 default already guards a missing end, but an
+// explicit backwards end recreates the same inverted join window
+// [t0-window, t1+window] (hi < lo) that silently matches no event. Pre-fix the
+// value passed through unvalidated; now it falls back to t0, so the utterance's
+// own interactions still attach. Alice speaks over an event that must stay joined.
+func TestMergeClampsUtteranceInvertedSpan(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	utt := `{"id":"utt-001","t0":22.0,"t1":0.0,"text":"I clicked save and nothing happened."}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(utt), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	inter := `{"t":` + strconv.FormatInt(t0+23_000, 10) + `,"kind":"click","selector":"[data-testid=save-btn]"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.InteractionsFile), []byte(inter), 0o644); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+	if _, _, err := Merge(dir); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	entries, err := session.ReadJSONL[Entry](filepath.Join(dir, session.TimelineFile))
+	if err != nil {
+		t.Fatalf("read timeline: %v", err)
+	}
+	var speech Entry
+	for _, e := range entries {
+		if e.Src == "speech" {
+			speech = e
+		}
+	}
+	if got := SpeechEnd(speech); got != 22.0 {
+		t.Fatalf("inverted t1 should clamp to t0 (22.0), SpeechEnd = %v", got)
+	}
+	// The event at 23.0s falls in [22-2.5, 22+2.5] once t1 is clamped up to t0,
+	// so it attaches; with the pre-fix inverted window [19.5, 2.5] it did not.
+	near := EventsNear(entries, speech, 2.5)
+	if len(near) != 1 || near[0] != "ev-001" {
+		t.Fatalf("want the event to attach to the utterance, got %v", near)
 	}
 }

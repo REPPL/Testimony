@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"path/filepath"
 	"sort"
 
@@ -140,7 +141,10 @@ func SpeechEnd(e Entry) float64 {
 }
 
 // EventsNear returns the IDs of event entries that fall inside the utterance
-// span [u.T0-window, u.T1+window]. Used by the report's join step.
+// span [u.T0-window, u.T1+window]. report inlines this same window test in its
+// join step (indexing events by position, not id, so duplicate ids in an
+// exchanged timeline cannot misattribute); this remains the documented statement
+// of the join window.
 func EventsNear(entries []Entry, u Entry, window float64) []string {
 	lo := u.T - window
 	hi := SpeechEnd(u) + window
@@ -171,6 +175,14 @@ func readOptionalJSONL[T any](path string) ([]T, error) {
 	return out, err
 }
 
+// maxUtteranceSeconds bounds the magnitude of an utterance's session-relative
+// t0/t1. A real usability session is minutes to hours; 1e9 seconds (~31 years)
+// is far past any genuine value while staying small enough that (t - t0) and the
+// report's clock conversion never approach an integer or float hazard. It
+// mirrors report.maxClockSeconds so the input boundary and the display sink
+// refuse the same set of absurd times.
+const maxUtteranceSeconds = 1e9
+
 // checkedInteractions enforces the two fields that
 // docs/reference/session-directory.md marks required on an interaction — t and
 // kind — and converts the accepted records for BuildEntries. Without the check a
@@ -183,11 +195,33 @@ func readOptionalJSONL[T any](path string) ([]T, error) {
 // for the same reason: it would join the timeline naming no observed action.
 // Refusing the whole merge names the offending line so the operator repairs the
 // capture instead of reading a corrupted account of the session.
-func checkedInteractions(path string, raw []rawInteraction) ([]Interaction, error) {
+func checkedInteractions(path string, t0EpochMS int64, raw []rawInteraction) ([]Interaction, error) {
 	out := make([]Interaction, 0, len(raw))
 	for i, r := range raw {
 		if r.T == nil {
 			return nil, fmt.Errorf("%s: interaction %d is missing t; cannot place it on the session clock", path, i+1)
+		}
+		// t is epoch milliseconds, so a value at or below zero anchors the event at
+		// or before 1 January 1970 — no capture produces that, exactly the reasoning
+		// session.Manifest.T0 refuses a non-positive anchor on. Refusing it here also
+		// forecloses the extreme: a t near math.MinInt64 makes (t - t0EpochMS) wrap on
+		// signed overflow in BuildEntries and plant the event millions of years after
+		// session start, inflating the report's span while Merge still exits 0.
+		if *r.T <= 0 {
+			return nil, fmt.Errorf("%s: interaction %d has t %d; an epoch-millisecond time must be positive", path, i+1, *r.T)
+		}
+		// Bound the resulting session-relative magnitude, the epoch-ms twin of
+		// checkedUtterances' |t0| ≤ maxUtteranceSeconds check. The sign check above
+		// rules out the negative extreme, but a huge positive t (up to MaxInt64) still
+		// yields rel = (t − t0)/1000 of ~9e15 s — no session time — which merge writes
+		// while exiting 0, then report's end() reports as the session span and clock()
+		// renders as the broken "--:--", and it also inflates analyze.indexTimeline's
+		// idx.end so a finding may be anchored anywhere up to it. checkedUtterances
+		// refuses the same absurd magnitude on the speech side; without this the
+		// interaction side was the asymmetric gap, admitting a session-relative time
+		// its own twin rejects. t0 is the manifest anchor Merge resolved for this call.
+		if rel := float64(*r.T-t0EpochMS) / 1000.0; math.Abs(rel) > maxUtteranceSeconds {
+			return nil, fmt.Errorf("%s: interaction %d has t %d, a session-relative time of %gs that exceeds %g in magnitude", path, i+1, *r.T, rel, maxUtteranceSeconds)
 		}
 		if r.Kind == "" {
 			return nil, fmt.Errorf("%s: interaction %d is missing kind; an event must name what happened", path, i+1)
@@ -232,8 +266,32 @@ func checkedUtterances(path string, raw []rawUtterance) ([]Utterance, error) {
 		if r.T0 == nil {
 			return nil, fmt.Errorf("%s: utterance %d is missing t0; cannot place it on the session clock", path, i+1)
 		}
+		// A present t1 is accepted only when it does not precede t0. An explicit
+		// t1 < t0 is the same inverted-window hazard the nil case is defaulted away
+		// from: EventsNear would join over [t0-window, t1+window] with hi < lo and
+		// silently match no event, detaching from the utterance the very
+		// interactions spoken over it. Falling back to t0 reproduces the documented
+		// SpeechEnd/nil-t1 answer rather than contradicting it — a missing or
+		// backwards end can only shrink the join window, never move the utterance.
+		// Bound the magnitude of t0 (and t1 below). Utterance times are
+		// session-relative seconds where a small negative value is legitimate
+		// (speech captured just before t0), so unlike the interaction side's
+		// positive-epoch-ms rule this checks magnitude, not sign. An astronomically
+		// large |t0| — a hand-edited transcript's 1e300 — is not a session time: it
+		// overflows report's float64→int clock into a nonsensical duration and makes
+		// the utterance's EventsNear join window span the whole session, so it
+		// silently captures every event away from the utterances they were spoken
+		// over. This is the speech-side twin of checkedInteractions' range refusal;
+		// the report sink clock() defends the same class for hand-authored
+		// timeline.jsonl that reaches it without passing through here.
+		if math.Abs(*r.T0) > maxUtteranceSeconds {
+			return nil, fmt.Errorf("%s: utterance %d has t0 %g; a session-relative time in seconds cannot exceed %g in magnitude", path, i+1, *r.T0, maxUtteranceSeconds)
+		}
 		t1 := *r.T0
-		if r.T1 != nil {
+		if r.T1 != nil && *r.T1 >= *r.T0 {
+			if math.Abs(*r.T1) > maxUtteranceSeconds {
+				return nil, fmt.Errorf("%s: utterance %d has t1 %g; a session-relative time in seconds cannot exceed %g in magnitude", path, i+1, *r.T1, maxUtteranceSeconds)
+			}
 			t1 = *r.T1
 		}
 		out = append(out, Utterance{
@@ -288,7 +346,7 @@ func Merge(dir string) (speech, events int, err error) {
 		}
 	}
 
-	ints, err := checkedInteractions(intsPath, raw)
+	ints, err := checkedInteractions(intsPath, t0, raw)
 	if err != nil {
 		return 0, 0, err
 	}

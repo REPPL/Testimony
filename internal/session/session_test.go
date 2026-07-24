@@ -450,11 +450,63 @@ func TestSafeText(t *testing.T) {
 		"line\u2028sep":          "linesep",     // U+2028 line separator
 		"mark\u200e\u200fs":      "marks",       // U+200E/U+200F LRM/RLM
 		"alm\u061cstrip":         "almstrip",    // U+061C ARABIC LETTER MARK (Bidi_Control)
-		"caf\u00e9":              "caf\u00e9",   // ordinary accented text is unchanged
+		// The invisible format characters (category Cf) outside the Bidi_Control
+		// set: each renders as nothing while surviving in the bytes, so leaving any
+		// one in lets displayed text differ from recorded bytes (ASCII smuggling).
+		"zero\u200bwidth":              "zerowidth",  // U+200B ZERO WIDTH SPACE
+		"word\u2060joiner":             "wordjoiner", // U+2060 WORD JOINER
+		"bom\ufeffstrip":               "bomstrip",   // U+FEFF ZWNBSP/BOM
+		"soft\u00adhyphen":             "softhyphen", // U+00AD SOFT HYPHEN
+		"tag\U000E0041\U000E0042block": "tagblock",   // U+E0041/42 Unicode tag block
+		"caf\u00e9":                    "caf\u00e9",  // ordinary accented text is unchanged
 	}
 	for in, want := range cases {
 		if got := SafeText(in); got != want {
 			t.Errorf("SafeText(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestLoadManifestRefusesOversized covers the last untrusted read on the session
+// surface that was unbounded. manifest.json in an exchanged session is
+// attacker-controllable, so a multi-gigabyte manifest (a few KB once zipped)
+// would OOM any command that loads it via io.ReadAll. LoadManifest now caps the
+// read at maxManifestBytes and refuses anything larger, matching every sibling
+// reader (ReadJSONL, analyze.Ingest, the demo body caps). Pre-fix this buffered
+// the whole file and parsed it.
+func TestLoadManifestRefusesOversized(t *testing.T) {
+	dir := t.TempDir()
+	// A JSON object padded past the cap with whitespace (valid JSON, so a pre-fix
+	// LoadManifest would happily parse it): {"session":"s"<spaces>}. The size is a
+	// literal, not the maxManifestBytes constant, so this test compiles against and
+	// exercises the pre-fix behaviour too.
+	const overCap = (1 << 20) + 4096
+	big := make([]byte, overCap)
+	for i := range big {
+		big[i] = ' '
+	}
+	copy(big, []byte(`{"session":"s"`))
+	big[len(big)-1] = '}'
+	if err := os.WriteFile(filepath.Join(dir, ManifestFile), big, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if _, err := LoadManifest(dir); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected an oversize refusal, got %v", err)
+	}
+}
+
+// TestLoadManifestAcceptsOrdinary guards the ordinary case the cap must not
+// break: a normal, small manifest still loads.
+func TestLoadManifestAcceptsOrdinary(t *testing.T) {
+	dir := t.TempDir()
+	if err := SaveManifest(dir, Manifest{Session: "s", T0EpochMS: 1}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if m.Session != "s" {
+		t.Fatalf("want session s, got %q", m.Session)
 	}
 }

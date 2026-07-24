@@ -252,9 +252,12 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := appendRecords(f, lines); err != nil {
-		// The capture was not persisted; tell the client so it does not treat a
-		// dropped event as recorded, rather than answering 204 as if it had
-		// succeeded.
+		// The capture was not persisted. Tell the client so it does not treat a
+		// dropped event as recorded (it answers the 500 rather than a 204), and log
+		// to the operator's terminal: the client uses sendBeacon, which cannot report
+		// a server status back to the page, so this line is the only signal the person
+		// running the session gets that their evidence stream has started dropping.
+		fmt.Fprintf(os.Stderr, "testimony demo: capture write failed, event(s) dropped: %v\n", err)
 		http.Error(w, "capture write failed", http.StatusInternalServerError)
 		return
 	}

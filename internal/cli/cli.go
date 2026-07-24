@@ -178,7 +178,12 @@ func Run(args []string) int {
 			}
 			in := os.Stdin
 			if *ingest != "-" {
-				f, err := os.Open(*ingest)
+				// Read the answer file through the no-follow guard, like every other
+				// session-surface read: the operator naturally saves the model's answer
+				// beside the session (e.g. sessions/x/answer.json), and a session is an
+				// exchange unit — a received one can ship a FIFO at that name (plain
+				// os.Open blocks in open(2) for ever) or a symlink out of the directory.
+				f, err := session.OpenFileNoFollowRead(*ingest)
 				if err != nil {
 					return fail(err)
 				}
@@ -198,7 +203,12 @@ func Run(args []string) int {
 			return fail(err)
 		}
 		if *out != "" {
-			if err := os.WriteFile(*out, []byte(prompt), 0o644); err != nil {
+			// Write through the no-follow guard, matching the report.md write above and
+			// every other session-surface write: the operator naturally directs -out at
+			// a path beside the session (e.g. sessions/x/request.md), and a received
+			// session can ship a symlink there that plain os.WriteFile would follow,
+			// truncating an arbitrary operator-writable file outside the session.
+			if err := session.WriteFileNoFollow(*out, []byte(prompt), 0o644); err != nil {
 				return fail(err)
 			}
 			fmt.Printf("wrote %s\n", *out)

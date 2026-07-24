@@ -111,6 +111,31 @@ func classifyMissingOutput(stream, artefact, stderrTail string) string {
 	return b.String()
 }
 
+// classifyKilledOutput turns a recorder that had to be SIGKILLed at stop — because
+// it did not finalise its container within the grace period — into an actionable
+// message. hasData distinguishes the two cases: a non-empty file that is likely
+// truncated/unplayable (the container trailer never got written), versus nothing at
+// all. Either way the operator is told the artefact cannot be trusted, so a broken
+// recording is not silently presented as complete. Pure: the caller supplies the
+// stream, artefact name, whether any bytes landed, and the stderr tail.
+func classifyKilledOutput(stream, artefact string, hasData bool, stderrTail string) string {
+	tail := strings.TrimSpace(stderrTail)
+
+	var b strings.Builder
+	if hasData {
+		fmt.Fprintf(&b, "%s capture did not finalise %s within the shutdown grace period and was force-stopped, so the file is likely truncated or unplayable (its container trailer was never written).\n", stream, artefact)
+		fmt.Fprintf(&b, "Re-record if you need this stream; a longer session or a slow disk can need more time to finalise.")
+	} else {
+		fmt.Fprintf(&b, "%s capture produced no usable %s: the recorder was force-stopped before writing any output.\n", stream, artefact)
+		fmt.Fprintf(&b, "Re-record if you need this stream.")
+	}
+
+	if tail != "" {
+		fmt.Fprintf(&b, "\n\nffmpeg output:\n%s", tail)
+	}
+	return b.String()
+}
+
 // writeExitCode appends the child's exit error in parentheses when present.
 func writeExitCode(b *strings.Builder, exitErr error) {
 	if exitErr != nil {

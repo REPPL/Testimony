@@ -54,10 +54,10 @@ func TestResolveVideo(t *testing.T) {
 // --- argv builders ---
 
 func TestMicArgs(t *testing.T) {
-	got := micArgs(0, "sessions/s1/audio.wav")
+	got := micArgs("sessions/s1/audio.wav")
 	want := []string{
 		"-f", "avfoundation",
-		"-i", ":0",
+		"-i", ":default",
 		"-ac", "1",
 		"-ar", "16000",
 		"-c:a", "pcm_s16le",
@@ -107,15 +107,18 @@ func TestParseAVDevices(t *testing.T) {
 func TestSelectDevices(t *testing.T) {
 	video, audio := parseAVDevices(sampleDevices)
 
-	mic, screen, err := selectDevices(video, audio, true)
+	screen, mics, err := selectDevices(video, audio, true)
 	if err != nil {
 		t.Fatalf("selectDevices: %v", err)
 	}
-	if mic != 0 {
-		t.Fatalf("mic index: got %d, want 0 (system default input)", mic)
-	}
 	if screen != 1 {
 		t.Fatalf("screen index: got %d, want 1 (Capture screen)", screen)
+	}
+	// The audio-input roster is returned for logging, in listing order. The mic
+	// itself is captured via avfoundation :default, not by this list.
+	wantMics := []string{"Studio Display Microphone", "USB audio CODEC"}
+	if !reflect.DeepEqual(mics, wantMics) {
+		t.Fatalf("audio roster: got %q, want %q", mics, wantMics)
 	}
 
 	// Audio-only: screen index is not resolved and no error.
@@ -131,6 +134,120 @@ func TestSelectDevices(t *testing.T) {
 	// No audio device at all → error.
 	if _, _, err := selectDevices(video, nil, false); err == nil {
 		t.Fatal("no audio device must error")
+	}
+}
+
+// TestOutputTail covers the ffmpeg-diagnostic surfacing: an empty listing paired
+// with real ffmpeg output must yield a bounded, trimmed tail so probeDevices can
+// tell the operator the true cause (e.g. an avfoundation-less build) instead of
+// misdirecting them to their microphone.
+func TestOutputTail(t *testing.T) {
+	if got := outputTail(nil); got != "" {
+		t.Fatalf("empty input must yield empty tail, got %q", got)
+	}
+	if got := outputTail([]byte("  \n ")); got != "" {
+		t.Fatalf("whitespace-only input must trim to empty, got %q", got)
+	}
+	short := []byte("Unknown input format: 'avfoundation'")
+	if got := outputTail(short); got != string(short) {
+		t.Fatalf("short output must pass through trimmed: got %q", got)
+	}
+	long := make([]byte, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		long = append(long, 'x')
+	}
+	got := outputTail(long)
+	if len(got) > 420 || !strings.HasPrefix(got, "...") {
+		t.Fatalf("long output must be bounded and elided, got len %d prefix %.3q", len(got), got)
+	}
+}
+
+// fakeFFmpeg writes an executable shell script standing in for the ffmpeg
+// binary, so probeDevices' spawn-and-wait paths run hermetically on any Unix.
+func fakeFFmpeg(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ffmpeg")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatalf("write fake ffmpeg: %v", err)
+	}
+	return path
+}
+
+// TestProbeSinkReturnsFullCount pins the io.Writer contract on the bounded probe
+// sink: even a write that straddles or exceeds the retention cap must report the
+// full byte count, because os/exec's copy goroutine treats a short count with a
+// nil error as ErrShortWrite and aborts the pump mid-listing. Pre-fix the
+// straddling write returned only the retained-room count.
+func TestProbeSinkReturnsFullCount(t *testing.T) {
+	var s probeSink
+	first := make([]byte, probeSinkRetain-10) // leaves 10 bytes of room
+	if n, err := s.Write(first); n != len(first) || err != nil {
+		t.Fatalf("Write returned (%d, %v), want (%d, nil)", n, err, len(first))
+	}
+	straddle := make([]byte, 100) // 10 bytes fit, 90 dropped — must still report 100
+	if n, err := s.Write(straddle); n != len(straddle) || err != nil {
+		t.Fatalf("straddling Write returned (%d, %v), want (%d, nil)", n, err, len(straddle))
+	}
+	if n, err := s.Write([]byte("more")); n != 4 || err != nil { // sink already full
+		t.Fatalf("full-sink Write returned (%d, %v), want (4, nil)", n, err)
+	}
+}
+
+// TestProbeDevicesTimesOut is the wedged-enumeration regression: a hung device
+// listing must surface an actionable timeout instead of hanging `testimony
+// record` forever before the interrupt handler is live. `exec` replaces the
+// shell with sleep so the deadline SIGKILL reaps the actual blocker.
+func TestProbeDevicesTimesOut(t *testing.T) {
+	old := deviceListTimeout
+	deviceListTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { deviceListTimeout = old })
+
+	start := time.Now()
+	_, _, err := probeDevices(fakeFFmpeg(t, "exec sleep 10\n"), false)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("a hung enumeration must surface a timeout, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the deadline did not bound the wait: took %v", elapsed)
+	}
+}
+
+// TestProbeDevicesAbandonsUnreapableChild covers the residual wedged-driver
+// sub-case: a child pinned where SIGKILL cannot take effect can never be reaped,
+// and probeDevices must abandon it rather than wait forever. The stand-in: the
+// shell (not exec'd) dies on SIGKILL but its sleep grandchild inherits the
+// output pipe, so Wait cannot finish within the kill grace — the same
+// wait-never-returns shape as an unkillable process.
+func TestProbeDevicesAbandonsUnreapableChild(t *testing.T) {
+	oldList, oldKill := deviceListTimeout, probeKillGrace
+	deviceListTimeout = 50 * time.Millisecond
+	probeKillGrace = 100 * time.Millisecond
+	t.Cleanup(func() { deviceListTimeout, probeKillGrace = oldList, oldKill })
+
+	start := time.Now()
+	_, _, err := probeDevices(fakeFFmpeg(t, "sleep 10\n"), false)
+	if err == nil || !strings.Contains(err.Error(), "unresponsive") {
+		t.Fatalf("an unreapable enumeration must be abandoned with an actionable error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the kill grace did not bound the wait: took %v", elapsed)
+	}
+}
+
+// TestProbeDevicesToleratesByDesignExit pins the happy path end to end over a
+// real child process: ffmpeg prints the listing to stderr and exits non-zero by
+// design, and probeDevices must parse the devices out of that "failure".
+func TestProbeDevicesToleratesByDesignExit(t *testing.T) {
+	script := "cat >&2 <<'EOF'\n" + sampleDevices + "\nEOF\nexit 1\n"
+	screen, mics, err := probeDevices(fakeFFmpeg(t, script), true)
+	if err != nil {
+		t.Fatalf("the by-design non-zero exit must be tolerated: %v", err)
+	}
+	if screen != 1 {
+		t.Fatalf("screen index: got %d, want 1 (Capture screen)", screen)
+	}
+	if !reflect.DeepEqual(mics, []string{"Studio Display Microphone", "USB audio CODEC"}) {
+		t.Fatalf("audio roster: got %q", mics)
 	}
 }
 
@@ -306,7 +423,7 @@ func TestRunInstallsSignalHandlerBeforeSpawning(t *testing.T) {
 		cancel = c
 		return ctx, c
 	}
-	startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
 		note("spawn")
 		// A well-behaved recorder that finalises a real audio.wav and is reaped on
 		// SIGINT, so the lifecycle stops cleanly. cancel is non-nil only if notify
@@ -363,7 +480,7 @@ func TestRunClassifiesStartupExitDespiteSlowStop(t *testing.T) {
 	}
 
 	var stubborn *fakeProc
-	startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
 		buf := &lockedBuffer{}
 		_, _ = buf.Write([]byte("[AVFoundation indev @ 0x0] Failed to open device\nInput/output error"))
 		// The microphone recorder is denied by TCC and dies at once — well inside
@@ -467,7 +584,7 @@ func TestStartRecordersRefusesSymlinkedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	children, err := startRecorders(dir, []string{streamMicrophone})
+	children, err := startRecorders(dir, []string{streamMicrophone}, io.Discard)
 	if err == nil {
 		stopAll(children)
 		t.Fatal("startRecorders must refuse a symlinked audio output rather than spawn ffmpeg on it")
@@ -537,7 +654,7 @@ func TestRunReportsRecorderStoppedWithNoOutput(t *testing.T) {
 		cancel = c
 		return ctx, c
 	}
-	startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
 		buf := &lockedBuffer{}
 		_, _ = buf.Write([]byte("[AVFoundation indev @ 0x0] Failed to open device\nInput/output error"))
 		// A recorder that blocked on the TCC prompt all session: it never wrote
@@ -640,7 +757,7 @@ func TestRunStopsDemoServerThroughBoundedShutdown(t *testing.T) {
 				cancel = cf
 				return ctx, cf
 			}
-			startRecordersFn = func(dir string, streams []string) ([]*liveChild, error) {
+			startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
 				child := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
 				if c.interrupt {
 					// A well-behaved recorder that finalised a real audio.wav, so the
@@ -727,13 +844,19 @@ func TestRunDegradesHonestly(t *testing.T) {
 // --- lifecycle state machine over a fake proc ---
 
 // fakeProc records the signals it receives and exits Wait only when it receives
-// its designated exit signal.
+// its designated exit signal. exitDelay, when set, holds Wait open for that long
+// after the exit-triggering signal — modelling the reaper's scheduling gap
+// between a child's real exit and close(done) becoming readable. fatalSig
+// records which signal actually ended the proc, so DiedOf answers as a reaped
+// wait status would.
 type fakeProc struct {
-	mu       sync.Mutex
-	signals  []os.Signal
-	exitOn   os.Signal
-	exit     chan struct{}
-	exitOnce sync.Once
+	mu        sync.Mutex
+	signals   []os.Signal
+	exitOn    os.Signal
+	exitDelay time.Duration
+	exit      chan struct{}
+	exitOnce  sync.Once
+	fatalSig  os.Signal
 }
 
 func newFakeProc(exitOn os.Signal) *fakeProc {
@@ -747,7 +870,16 @@ func (f *fakeProc) Signal(s os.Signal) error {
 	f.signals = append(f.signals, s)
 	f.mu.Unlock()
 	if s == f.exitOn {
-		f.exitOnce.Do(func() { close(f.exit) })
+		f.exitOnce.Do(func() {
+			f.mu.Lock()
+			f.fatalSig = s
+			f.mu.Unlock()
+			if f.exitDelay > 0 {
+				time.AfterFunc(f.exitDelay, func() { close(f.exit) })
+			} else {
+				close(f.exit)
+			}
+		})
 	}
 	return nil
 }
@@ -755,6 +887,12 @@ func (f *fakeProc) Signal(s os.Signal) error {
 func (f *fakeProc) Wait() error {
 	<-f.exit
 	return nil
+}
+
+func (f *fakeProc) DiedOf(sig syscall.Signal) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fatalSig == os.Signal(sig)
 }
 
 func (f *fakeProc) sent() []os.Signal {
@@ -790,6 +928,147 @@ func TestStopChildEscalatesToSIGKILL(t *testing.T) {
 	got := fp.sent()
 	if len(got) != 2 || got[0] != syscall.SIGINT || got[1] != syscall.SIGKILL {
 		t.Fatalf("expected SIGINT then SIGKILL, got %v", got)
+	}
+	if !c.killed {
+		t.Fatal("a recorder the escalation SIGKILL terminated must be marked killed, so finaliseOutputs distrusts its artefact")
+	}
+}
+
+// TestStopChildAbandonsUnreapableChild is the wedged-shutdown regression. A
+// recorder pinned in an uninterruptible kernel wait cannot be reaped even by
+// SIGKILL, so stopChild's post-SIGKILL receive on c.done never completes; pre-fix
+// (an unbounded <-c.done) that hung the whole sequential shutdown on one bad
+// recorder, so finaliseOutputs and the Next commands never ran and record hung
+// until killed externally. stopChild must bound the reap, abandon the child, and
+// mark it killed so its artefact is distrusted. The fake never exits on any signal
+// stopChild sends, modelling the unreapable child (its reaper goroutine blocks in
+// Wait forever, by design).
+func TestStopChildAbandonsUnreapableChild(t *testing.T) {
+	old := stopReapGrace
+	stopReapGrace = 30 * time.Millisecond
+	t.Cleanup(func() { stopReapGrace = old })
+
+	fp := newFakeProc(syscall.SIGUSR1) // a signal stopChild never sends, so Wait never returns
+	c := newLiveChild(streamScreen, fp, &lockedBuffer{})
+
+	start := time.Now()
+	stopChild(c, 10*time.Millisecond)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("stopChild did not bound its wait on an unreapable child: took %v", elapsed)
+	}
+	if !c.killed {
+		t.Fatal("an abandoned, unreapable recorder must be marked killed so finaliseOutputs distrusts its artefact")
+	}
+	if got := fp.sent(); len(got) != 2 || got[0] != syscall.SIGINT || got[1] != syscall.SIGKILL {
+		t.Fatalf("expected SIGINT then SIGKILL before abandoning, got %v", got)
+	}
+}
+
+// TestStopChildDoesNotCondemnCleanExitAtGraceBoundary is the misclassification
+// regression at the grace deadline. A recorder that finalises and exits cleanly
+// right at the boundary can still land in stopChild's timeout branch — the reaper
+// closes done only after Wait returns, so there is a scheduling window between the
+// clean exit and done becoming readable, and select picks randomly when both cases
+// are ready. Pre-fix the branch set killed unconditionally, so the no-op SIGKILL
+// into that window condemned a complete, playable recording as "likely truncated
+// or unplayable" and failed the run. killed must reflect who actually ended the
+// process: here the child dies of SIGINT (finalised) with its Wait held open past
+// the grace, and must not be marked killed.
+func TestStopChildDoesNotCondemnCleanExitAtGraceBoundary(t *testing.T) {
+	fp := newFakeProc(syscall.SIGINT)
+	fp.exitDelay = 50 * time.Millisecond // exit already triggered; Wait returns after the grace
+	c := newLiveChild(streamScreen, fp, &lockedBuffer{})
+
+	stopChild(c, 5*time.Millisecond)
+
+	if c.killed {
+		t.Fatal("a recorder that finalised on SIGINT was marked killed because its reap outlasted the grace; its complete artefact would be reported as truncated")
+	}
+}
+
+// TestLockedBufferBoundsMemory is the OOM regression: a device-stall stderr flood
+// over a long session used to grow lockedBuffer without bound, and an OOM parent
+// orphans the ffmpeg children still recording. The buffer must retain only a bounded
+// trailing window while still surfacing the most recent (diagnostic) bytes.
+func TestLockedBufferBoundsMemory(t *testing.T) {
+	var b lockedBuffer
+	// Simulate a flood far larger than the retention window: 4 MiB in 4 KiB writes.
+	chunk := bytes.Repeat([]byte("frame dropped\n"), 300) // ~4 KiB
+	total := 0
+	for i := 0; i < 1024; i++ {
+		n, err := b.Write(chunk)
+		if err != nil || n != len(chunk) {
+			t.Fatalf("Write returned (%d,%v), want (%d,nil)", n, err, len(chunk))
+		}
+		total += len(chunk)
+	}
+	if total <= stderrRetain {
+		t.Fatalf("test wrote %d bytes, not enough to exceed the %d retention cap", total, stderrRetain)
+	}
+	// Retained bytes are bounded regardless of how much was written.
+	if len(b.buf) > stderrRetain {
+		t.Fatalf("lockedBuffer retained %d bytes, exceeding the %d cap", len(b.buf), stderrRetain)
+	}
+	// The tail is still available and marks the elision, so diagnostics survive.
+	tail := b.tail()
+	if !strings.HasPrefix(tail, "…") {
+		t.Fatalf("tail after a flood must mark the dropped prefix with an ellipsis, got %q…", tail[:min(20, len(tail))])
+	}
+	if !strings.Contains(tail, "frame dropped") {
+		t.Fatalf("tail must retain the most recent stderr content, got %q", tail)
+	}
+
+	// A small total (under the cap) is retained verbatim with no ellipsis.
+	var s lockedBuffer
+	s.Write([]byte("short output"))
+	if got := s.tail(); got != "short output" {
+		t.Fatalf("under-cap tail must be verbatim, got %q", got)
+	}
+}
+
+// TestFinaliseOutputsFlagsSIGKILLedRecorder is the truncated-artefact regression: a
+// recorder force-stopped after missing the finalisation grace can leave a non-empty
+// but unplayable file (an MP4 with no moov atom), which the size-only check used to
+// bless as good. finaliseOutputs must flag a killed recorder even when its file has
+// bytes; a killed PCM audio.wav (which survives a kill) is still offered.
+func TestFinaliseOutputsFlagsSIGKILLedRecorder(t *testing.T) {
+	dir := t.TempDir()
+	// Both streams left a non-empty file, but both were SIGKILLed at stop.
+	if err := os.WriteFile(filepath.Join(dir, session.AudioFile), []byte("RIFF....partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.ScreenFile), []byte("\x00\x00\x00\x18ftyp....truncated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGKILL), &lockedBuffer{})
+	scr := newLiveChild(streamScreen, newFakeProc(syscall.SIGKILL), &lockedBuffer{})
+	// Force the SIGKILL escalation (short grace) so both are marked killed.
+	stopChild(mic, 5*time.Millisecond)
+	stopChild(scr, 5*time.Millisecond)
+	if !mic.killed || !scr.killed {
+		t.Fatalf("stopChild must mark a SIGKILLed recorder killed: mic=%v scr=%v", mic.killed, scr.killed)
+	}
+
+	audioReady, problems := finaliseOutputs(dir, []*liveChild{mic, scr})
+	// Both killed recorders are flagged despite non-empty files.
+	if len(problems) != 2 {
+		t.Fatalf("both SIGKILLed recorders must be flagged, got %d problems: %v", len(problems), problems)
+	}
+	var sawAudio, sawScreen bool
+	for _, p := range problems {
+		if strings.Contains(p, session.AudioFile) && strings.Contains(p, "force-stopped") {
+			sawAudio = true
+		}
+		if strings.Contains(p, session.ScreenFile) && strings.Contains(p, "truncated") {
+			sawScreen = true
+		}
+	}
+	if !sawAudio || !sawScreen {
+		t.Fatalf("expected force-stop warnings for both streams, got %v", problems)
+	}
+	// A killed WAV that has bytes is still offered for transcription (PCM survives a kill).
+	if !audioReady {
+		t.Fatalf("a present (if kill-truncated) audio.wav should still be offered for transcription")
 	}
 }
 

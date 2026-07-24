@@ -10,6 +10,8 @@
 package transcribe
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -82,6 +84,17 @@ func Run(opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// An external recording's audio.wav is NOT captured at t0, and disk bytes
+	// cannot distinguish it from a record-origin audio.wav. Persist the offset
+	// beside audio.wav so a later bare `transcribe` (a re-run with a different
+	// model, reusing audio.wav) reads it back instead of silently assuming 0 and
+	// shifting every utterance by the forgotten offset. record-origin audio.wav
+	// writes no sidecar and correctly defaults to 0.
+	if external {
+		if err := writeOffsetSidecar(opts.SessionDir, offset, provenance); err != nil {
+			return 0, fmt.Errorf("persist audio offset: %w", err)
+		}
+	}
 	fmt.Fprintf(opts.Log, "offset: %+.2fs (%s)\n", offset, provenance)
 
 	var segs []segment
@@ -108,15 +121,36 @@ func Run(opts Options) (int, error) {
 // through session.OpenFileNoFollow's regular-file guard, and mere existence is
 // not enough to establish that reading it will terminate: in a session that was
 // shared or downloaded rather than recorded here, a FIFO planted at audio.wav
-// satisfies os.Stat and then blocks the engine's read for ever, hanging
-// `testimony transcribe` on a session the operator merely received. A symlink is
-// resolved by os.Stat and needs no refusal here — a symlink redirects writes,
-// and this path is only ever read.
+// blocks the engine's read for ever, hanging `testimony transcribe` on a session
+// the operator merely received.
+//
+// os.Lstat, not os.Stat, so a symlink at audio.wav is refused rather than
+// resolved. The pre-fix comment reasoned "a symlink redirects writes, and this
+// path is only ever read" and waived the refusal — but a symlink at the in-place
+// audio.wav redirects the READ too: a received session shipping audio.wav ->
+// /some/private/recording.wav makes the engine transcribe that out-of-session
+// file into transcript.jsonl, which lives inside the (re-shareable) session
+// directory. That is the exact read-side exfil session.OpenFileNoFollowRead
+// refuses everywhere else; the in-place audio read was the one exempt path. A
+// record-origin or convertAudio-produced audio.wav is always a real regular file,
+// never a symlink, so nothing legitimate is refused. (An operator-named -audio
+// symlink stays fine: convertAudio still os.Stat-resolves it, because that path
+// the operator named themselves rather than received.)
 func checkSessionAudio(wav, sessionDir string) error {
-	fi, err := os.Stat(wav)
+	fi, err := os.Lstat(wav)
 	if err != nil {
-		return fmt.Errorf("no %s in session %s and no -audio given: run `testimony record` first, or pass -audio FILE",
-			session.AudioFile, sessionDir)
+		// Reserve the "no audio.wav, run record first" guidance for a genuinely
+		// absent file. A different Stat failure — EACCES on the session directory, a
+		// symlink loop (ELOOP), an I/O error — must not be misreported as absence,
+		// which would send the operator to re-record a session whose audio exists.
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("no %s in session %s and no -audio given: run `testimony record` first, or pass -audio FILE",
+				session.AudioFile, sessionDir)
+		}
+		return fmt.Errorf("reading %s: %w", wav, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to read %s: it is a symlink", wav)
 	}
 	if !fi.Mode().IsRegular() {
 		return fmt.Errorf("refusing to read %s: it is not a regular file", wav)
@@ -151,12 +185,109 @@ func resolveOffset(opts Options, man session.Manifest, external bool) (float64, 
 		if err != nil {
 			return 0, "", fmt.Errorf("deriving audio offset: %w", err)
 		}
-		if off, ok := deriveOffset(opts.Audio, t0); ok {
+		if off, ok := deriveOffsetFn(opts.Audio, t0); ok {
+			// A derived offset beyond the session-time magnitude is not a real capture
+			// timing — it means the recording's creation_time (attacker-influenceable
+			// metadata) or the manifest t0 is bogus. Refuse rather than derive a
+			// decades-long shift that mapSegments would bake into every utterance.
+			if math.Abs(off) > maxOffsetSeconds {
+				return 0, "", fmt.Errorf("derived audio offset %+.2fs exceeds %g in magnitude; the recording's creation_time or the manifest t0 is implausible — pass -offset SECONDS to state it explicitly", off, maxOffsetSeconds)
+			}
 			return off, "derived: audio creation_time − manifest t0", nil
 		}
 		return 0, "default 0: audio creation time unavailable", nil
 	}
+	// In-place: audio.wav is reused. A prior external -audio run persists the
+	// offset it derived in a sidecar (see writeOffsetSidecar); honour it so the
+	// re-run does not silently drop the offset. A record-origin audio.wav has no
+	// sidecar and correctly defaults to 0 (captured at t0).
+	if off, provenance, ok, err := readOffsetSidecar(opts.SessionDir); err != nil {
+		return 0, "", err
+	} else if ok {
+		return off, provenance, nil
+	}
 	return 0, "default 0: session audio.wav captured at t0", nil
+}
+
+// offsetSidecar is the persisted audio→session offset written beside audio.wav
+// after an external -audio conversion, so a later in-place re-run recovers it.
+type offsetSidecar struct {
+	OffsetSeconds float64 `json:"offset_seconds"`
+	Provenance    string  `json:"provenance,omitempty"`
+}
+
+// maxOffsetSidecarBytes caps the sidecar read: a genuine one is well under a
+// kilobyte, and the session directory is attacker-authorable, so an oversized
+// file is refused rather than buffered.
+const maxOffsetSidecarBytes = 64 << 10
+
+// maxOffsetSeconds bounds the audio→session offset, mirroring
+// timeline.maxUtteranceSeconds (1e9 s, ~31 years). The offset is added to every
+// utterance time, so an offset beyond this alone forces every merged time past the
+// magnitude timeline.checkedUtterances refuses — merge would reject the whole
+// transcript one command later. Bounding it here, at derivation and at sidecar read,
+// fails the run where the bad value enters (a poisoned recording creation_time, or a
+// hand-edited sidecar) rather than leaving a transcript.jsonl that only merge rejects,
+// so the operator learns which input is wrong.
+const maxOffsetSeconds = 1e9
+
+// writeOffsetSidecar persists offset (with its provenance, for the operator)
+// beside audio.wav via the no-follow write guard, so a session's own directory
+// cannot redirect the write through a planted symlink.
+func writeOffsetSidecar(dir string, offset float64, provenance string) error {
+	b, err := json.Marshal(offsetSidecar{OffsetSeconds: offset, Provenance: provenance})
+	if err != nil {
+		return err
+	}
+	return session.WriteFileNoFollow(filepath.Join(dir, session.AudioOffsetFile), append(b, '\n'), 0o644)
+}
+
+// readOffsetSidecar reads the offset sidecar if present. ok is false with no
+// error when the file is absent (the record-origin case). A present-but-unusable
+// sidecar — unreadable, oversized, malformed, or carrying a non-finite offset —
+// is a refuse-with-guidance error rather than a silent fallback to 0: the audio
+// is known to be external (only convertAudio writes this file), so guessing 0
+// would reintroduce exactly the silent shift the sidecar exists to prevent.
+func readOffsetSidecar(dir string) (offset float64, provenance string, ok bool, err error) {
+	path := filepath.Join(dir, session.AudioOffsetFile)
+	f, err := session.OpenFileNoFollowRead(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, "", false, nil
+		}
+		return 0, "", false, err
+	}
+	defer f.Close()
+
+	b, err := io.ReadAll(io.LimitReader(f, maxOffsetSidecarBytes+1))
+	if err != nil {
+		return 0, "", false, offsetSidecarErr(err)
+	}
+	if len(b) > maxOffsetSidecarBytes {
+		return 0, "", false, offsetSidecarErr(fmt.Errorf("file exceeds %d bytes", maxOffsetSidecarBytes))
+	}
+	var sc offsetSidecar
+	if err := json.Unmarshal(b, &sc); err != nil {
+		return 0, "", false, offsetSidecarErr(err)
+	}
+	if math.IsNaN(sc.OffsetSeconds) || math.IsInf(sc.OffsetSeconds, 0) {
+		return 0, "", false, offsetSidecarErr(fmt.Errorf("offset_seconds is not a finite number"))
+	}
+	// Bound the persisted offset the same as the derived one: a hand-edited sidecar
+	// carrying an astronomical offset would otherwise shift every re-run's utterance
+	// past the magnitude merge accepts, and refusing here names the sidecar as the
+	// fault rather than letting merge reject the resulting transcript.
+	if math.Abs(sc.OffsetSeconds) > maxOffsetSeconds {
+		return 0, "", false, offsetSidecarErr(fmt.Errorf("offset_seconds %+.2fs exceeds %g in magnitude", sc.OffsetSeconds, maxOffsetSeconds))
+	}
+	return sc.OffsetSeconds, fmt.Sprintf("persisted: audio.wav converted from an external recording (%+.2fs)", sc.OffsetSeconds), true, nil
+}
+
+// offsetSidecarErr wraps a sidecar fault in the same refuse-with-guidance
+// message, telling the operator how to recover the offset explicitly.
+func offsetSidecarErr(cause error) error {
+	return fmt.Errorf("%s is present but unusable (%v); re-run with -audio FILE to re-derive the offset, or pass -offset SECONDS",
+		session.AudioOffsetFile, cause)
 }
 
 // mapSegments converts engine segments to the Utterance schema of

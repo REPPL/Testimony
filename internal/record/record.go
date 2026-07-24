@@ -43,6 +43,13 @@ import (
 // assertion. Production never reassigns them.
 var stopGrace = 5 * time.Second
 
+// stopReapGrace bounds how long stopChild waits for the reaper after the
+// escalation SIGKILL, mirroring recorders.go's probeKillGrace. A wedged capture
+// driver can defer even SIGKILL delivery indefinitely (the child is pinned in an
+// uninterruptible kernel wait), so an unbounded reap here would hang the whole
+// sequential shutdown on one bad recorder. A var only so tests can shrink it.
+var stopReapGrace = 2 * time.Second
+
 // startupWindow bounds how soon after a recorder starts an exit is still
 // treated as a start-up failure (e.g. a TCC denial, which fails within a
 // second or two). A recorder that ran longer than this before exiting cannot
@@ -136,7 +143,7 @@ func Run(opts Options) error {
 	ctx, stop := notifyContext()
 	defer stop()
 
-	children, err := startRecordersFn(dir, recorders)
+	children, err := startRecordersFn(dir, recorders, opts.Log)
 	if err != nil {
 		return err
 	}
@@ -228,7 +235,22 @@ func stopDemo(srv *http.Server) {
 func finaliseOutputs(dir string, children []*liveChild) (audioReady bool, problems []string) {
 	for _, c := range children {
 		out := expectedOutput(dir, c.stream)
-		if fi, err := os.Stat(out); err == nil && fi.Size() > 0 {
+		fi, err := os.Stat(out)
+		hasData := err == nil && fi.Size() > 0
+		if c.killed {
+			// The recorder was force-terminated because it did not finalise within the
+			// grace period, so even a non-empty file may be truncated/unplayable (an MP4
+			// missing its moov atom especially). Surface it rather than let the size
+			// check bless a broken artefact. A PCM WAV survives a kill largely intact
+			// (only the RIFF sizes go stale), so a present audio.wav is still offered for
+			// transcription; a killed screen.mp4 is not consumed downstream regardless.
+			problems = append(problems, classifyKilledOutput(c.stream, filepath.Base(out), hasData, c.stderr.tail()))
+			if c.stream == streamMicrophone && hasData {
+				audioReady = true
+			}
+			continue
+		}
+		if hasData {
 			if c.stream == streamMicrophone {
 				audioReady = true
 			}
@@ -280,7 +302,7 @@ func checkPlainOutput(path string) error {
 // ffmpeg subprocess per requested stream, each in its own process group with
 // captured stderr. On darwin the streams are non-empty; elsewhere they are, so
 // this is a no-op returning no children.
-func startRecorders(dir string, streams []string) ([]*liveChild, error) {
+func startRecorders(dir string, streams []string, log io.Writer) ([]*liveChild, error) {
 	if len(streams) == 0 {
 		return nil, nil
 	}
@@ -288,9 +310,16 @@ func startRecorders(dir string, streams []string) ([]*liveChild, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg not found on PATH (needed to capture audio/screen): brew install ffmpeg")
 	}
-	micIndex, screenIndex, err := probeDevices(ffmpeg, contains(streams, streamScreen))
+	screenIndex, mics, err := probeDevices(ffmpeg, contains(streams, streamScreen))
 	if err != nil {
 		return nil, err
+	}
+	// The microphone is captured via avfoundation ":default" (micArgs), so ffmpeg
+	// resolves the system default at capture time. Log the detected input roster
+	// so a virtual audio driver shadowing the real mic is visible before a session
+	// is recorded to silence.
+	if contains(streams, streamMicrophone) && len(mics) > 0 {
+		fmt.Fprintf(log, "  audio inputs: %s\n  microphone  : system default (avfoundation :default)\n", strings.Join(mics, ", "))
 	}
 
 	var children []*liveChild
@@ -303,7 +332,7 @@ func startRecorders(dir string, streams []string) ([]*liveChild, error) {
 		var args []string
 		switch stream {
 		case streamMicrophone:
-			args = micArgs(micIndex, out)
+			args = micArgs(out)
 		case streamScreen:
 			args = screenArgs(screenIndex, out)
 		}

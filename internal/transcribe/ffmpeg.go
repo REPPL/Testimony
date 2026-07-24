@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/REPPL/Testimony/internal/session"
@@ -40,9 +41,62 @@ func convertAudio(in, out string) error {
 	if err != nil {
 		return fmt.Errorf("ffmpeg not found on PATH (needed to produce the 16 kHz mono %s): brew install ffmpeg", session.AudioFile)
 	}
-	cmd := exec.Command(ffmpeg, "-y", "-i", in, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out)
+	// Convert into a temp file beside out, then rename over out only on success (see
+	// atomicConvert), so an interrupted or crashed ffmpeg (Ctrl+C, SIGKILL, ENOSPC)
+	// never leaves a partial audio.wav that a later bare `transcribe` would silently
+	// treat as the whole recording.
+	return atomicConvert(out, func(tmpPath string) error {
+		return convertRunner(ffmpeg, in, tmpPath)
+	})
+}
+
+// convertRunner runs the actual ffmpeg conversion into the temp path. A var
+// only so a hermetic test can stand in for ffmpeg and pin the atomicConvert
+// wiring at the call site — a real ffmpeg failure on a bad input aborts before
+// it ever creates the output, so no integration case can observe whether the
+// producer was pointed at the temp or at out itself. Production never
+// reassigns it.
+var convertRunner = func(ffmpeg, in, tmpPath string) error {
+	cmd := exec.Command(ffmpeg, "-y", "-i", in, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", tmpPath)
 	if raw, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg: %w\n%s", err, tail(raw))
+	}
+	return nil
+}
+
+// atomicConvert runs a producer that writes the converted audio to a temp file beside
+// out, then renames it over out only if the producer succeeded. If the producer
+// returns an error — including one raised after it has already written a partial temp,
+// as a signalled or ENOSPC-hit ffmpeg does — out is left untouched and the temp is
+// removed, so a failed conversion never leaves a truncated file that a later run would
+// mistake for the whole recording. The temp shares out's directory so the rename stays
+// on one filesystem and is atomic. The producer receives the temp path.
+func atomicConvert(out string, produce func(tmpPath string) error) error {
+	tmp, err := os.CreateTemp(filepath.Dir(out), ".audio-*.wav")
+	if err != nil {
+		return fmt.Errorf("audio convert: create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	tmp.Close() // the producer reopens by path; we only needed the reserved name
+	defer os.Remove(tmpPath)
+	if err := produce(tmpPath); err != nil {
+		return err
+	}
+	// os.CreateTemp reserves the name at 0600; a direct ffmpeg write would instead
+	// have created audio.wav honouring the operator's umask — 0644 for the default
+	// 022, but 0600 under a restrictive umask a privacy-conscious operator sets so
+	// the microphone recording is not group/world-readable. Restore that
+	// umask-masked mode, matching the record-side audio.wav and every sibling
+	// artefact (all created through umask-masked opens); a flat 0644 would silently
+	// widen this one file past the umask. The brief syscall.Umask(0) probe is safe
+	// here — transcribe creates no other file concurrently.
+	um := syscall.Umask(0)
+	syscall.Umask(um)
+	if err := os.Chmod(tmpPath, 0o644&^os.FileMode(um)); err != nil {
+		return fmt.Errorf("audio convert: finalise %s: %w", out, err)
+	}
+	if err := os.Rename(tmpPath, out); err != nil {
+		return fmt.Errorf("audio convert: finalise %s: %w", out, err)
 	}
 	return nil
 }
@@ -78,6 +132,12 @@ func checkPlainOutput(path string) error {
 	}
 	return nil
 }
+
+// deriveOffsetFn is the seam resolveOffset calls for offset derivation. A var
+// only so a test can stub the ffprobe-gated derivation (the deviceListTimeout
+// precedent in record) and exercise resolveOffset's derived-offset magnitude
+// bound hermetically; production never reassigns it.
+var deriveOffsetFn = deriveOffset
 
 // deriveOffset reads the original recording's creation time via ffprobe and
 // returns creation_epoch_seconds − t0_epoch_seconds. The boolean is false
