@@ -255,3 +255,16 @@ Architecture-shaping decisions graduate to an ADR under
   AGENTS.md current state). The /dev/null TTY-gate nitpick is recorded but
   unfixed (a true isatty check needs a dependency); the AGENTS.md fence's
   dangling brief link is an upstream abcd defect, not fixable here.
+- 2026-07-29 — Bug-hunt round 9: four hunters, eight adversarial refuters
+  (two per dimension), 27 confirmed findings (11 substantive, 16 nitpick),
+  3 candidates refuted, 1 skipped as recorded in round 8. Headlines: stray
+  positional arguments no longer silently swallow the flags after them; the
+  capture endpoint refuses records merge cannot read (shared validator);
+  the offset sidecar persists before the conversion's rename so no refusal
+  destroys a record-origin audio.wav; an unauthenticated gh falls back to
+  the verified checksum instead of a false provenance refusal; optional
+  dependency failures skip instead of aborting the installer; CHANGELOG
+  gains its Unreleased section; reference pages corrected against the code
+  (endpoint preconditions, evidence cap, sessionEnd bound, ffmpeg's real
+  consumers, the demo page's CDN fetch disclosed in privacy). Vendoring
+  rrweb (offline capture) needs a dependency decision — reported, not done.

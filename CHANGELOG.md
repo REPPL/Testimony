@@ -52,6 +52,21 @@ Capture integrity (round 9):
 - A recorder that exits on its own mid-session still validates the artefacts
   the other recorders left and prints the next-command block.
 
+Installer (round 9):
+
+- An unauthenticated (or attestation-incapable) `gh` no longer refuses the
+  install as a false provenance failure: it falls back to the verified
+  checksum, exactly like no `gh`; a verification `gh` actually performed and
+  rejected still refuses, and gh's own message is shown instead of being
+  swallowed.
+- An optional-dependency failure (an unreachable ffmpeg or uv host, a failed
+  unpack or brew install) skips its step with guidance instead of aborting
+  the whole installer with the child's raw exit code and a leaked temp
+  directory; Ctrl+C stops the installer instead of being read as "skip";
+  `--help` works through the documented pipe invocation; `--dir`/`--version`
+  without a value are refused cleanly; the whisper.cpp model recipe
+  downloads into a directory `-model NAME` actually searches.
+
 ## [0.4.0] - 2026-07-24
 
 A second robustness pass over the same capture → analysis pipeline, closing the
