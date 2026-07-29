@@ -132,6 +132,29 @@ func BuildEntries(t0EpochMS int64, utts []Utterance, ints []Interaction) []Entry
 	return entries
 }
 
+// CheckSrc refuses a timeline whose entries carry a src outside the
+// documented "speech" | "event" set. Merge only ever writes those two, so
+// this bites solely on a hand-edited or exchanged timeline.jsonl — where an
+// unknown src previously vanished without a word: report bucketed entries by
+// src with no default case, so the entry was absent from the rendered
+// timeline while end() still counted its time into the Duration header, and
+// analyze still indexed its id as citable evidence. Silently omitting an
+// entry from the human evidence artefact is the outcome the report package's
+// own +Inf-sentinel fix rules out, so an unrenderable entry refuses loudly,
+// naming its 1-based line, rather than reshaping the record. The src value is
+// routed through session.SafeText because it is attacker-authorable and the
+// message reaches a terminal.
+func CheckSrc(entries []Entry) error {
+	for i, e := range entries {
+		switch e.Src {
+		case "speech", "event":
+		default:
+			return fmt.Errorf("timeline line %d: unknown src %q (want \"speech\" or \"event\")", i+1, session.SafeText(e.Src))
+		}
+	}
+	return nil
+}
+
 // SpeechEnd returns the end time of a speech entry (its t1), falling back to
 // its start time.
 func SpeechEnd(e Entry) float64 {

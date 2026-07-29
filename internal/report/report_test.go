@@ -570,3 +570,30 @@ func TestRenderSortsByTime(t *testing.T) {
 		prev = at
 	}
 }
+
+// TestRenderRefusesUnknownSrc pins the CheckSrc gate on report's read path.
+// Before it, an entry whose src was neither "speech" nor "event" (reachable
+// only from a hand-edited or exchanged timeline.jsonl) fell out of both render
+// buckets and vanished from the rendered timeline, while end() still counted
+// its time — the report claimed a Duration its own timeline never reached, at
+// exit 0, silently omitting the entry from the human evidence artefact.
+func TestRenderRefusesUnknownSrc(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	const tl = `{"t":10,"src":"speech","id":"utt-001","payload":{"t1":12,"speaker":"P1","text":"hello"}}
+{"t":11,"src":"event","id":"ev-002","payload":{"kind":"scroll"}}
+{"t":100,"src":"Event","id":"ev-009","payload":{"kind":"click","selector":"[data-testid=save-btn]"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	_, err := Render(dir, 2.5)
+	if err == nil {
+		t.Fatal("Render silently accepted a timeline entry with unknown src")
+	}
+	if !strings.Contains(err.Error(), "unknown src") || !strings.Contains(err.Error(), "line 3") {
+		t.Fatalf("error must name the unknown src and its line: %v", err)
+	}
+}

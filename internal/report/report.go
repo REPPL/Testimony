@@ -36,6 +36,16 @@ func Render(dir string, window float64) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read timeline (run `testimony merge` first?): %w", err)
 	}
+	// Refuse an entry this renderer cannot place. The src switch below buckets
+	// into speech and events with no default, so an unknown src (reachable only
+	// from a hand-edited or exchanged timeline) previously vanished from the
+	// rendered timeline while end() still counted its time into the Duration
+	// header — the report asserted a session span its own timeline never
+	// reached, and the entry's id stayed citable by findings. Checked before the
+	// sort so the named line matches the file.
+	if err := timeline.CheckSrc(entries); err != nil {
+		return "", err
+	}
 	// Order the record by time rather than trusting the file's line order. The
 	// timeline this reads is not necessarily the one merge wrote: a hand-edited or
 	// exchanged timeline.jsonl reaches Render directly — the same assumption the
