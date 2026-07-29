@@ -98,7 +98,7 @@ func Run(addr, outRoot string) error {
        testimony merge      -session %s
        testimony report     -session %s
 
-`, dir, DisplayURL(addr), dir, dir, dir)
+`, dir, DisplayURL(displayAddr(srv, addr)), dir, dir, dir)
 
 	// Block until interrupted, then shut the server down cleanly.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -194,6 +194,17 @@ func Serve(addr, dir string) (*http.Server, error) {
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		IdleTimeout:       idleTimeout,
+	}
+	// Surface the actually-bound address on the returned server, keeping the
+	// operator's requested host but taking the port from the listener: ":0"
+	// binds an ephemeral port only net.Listen knows, and printing the requested
+	// addr rendered the unopenable http://localhost:0 while the real port was
+	// discoverable only outside the tool. For any explicit port the two agree
+	// and srv.Addr equals the requested addr.
+	if _, boundPort, perr := net.SplitHostPort(ln.Addr().String()); perr == nil {
+		if reqHost, _, herr := net.SplitHostPort(addr); herr == nil {
+			srv.Addr = net.JoinHostPort(reqHost, boundPort)
+		}
 	}
 	go srv.Serve(ln)
 	return srv, nil
@@ -412,6 +423,17 @@ func isJSONContentType(ct string) bool {
 		ct = ct[:i]
 	}
 	return strings.EqualFold(strings.TrimSpace(ct), "application/json")
+}
+
+// displayAddr returns the address to print for a running capture server: the
+// bound address Serve recorded on the server when available (which differs
+// from the request only when an ephemeral ":0" port was asked for), else the
+// requested one.
+func displayAddr(srv *http.Server, requested string) string {
+	if srv != nil && srv.Addr != "" {
+		return srv.Addr
+	}
+	return requested
 }
 
 // DisplayURL renders the human-facing URL an operator opens for a capture

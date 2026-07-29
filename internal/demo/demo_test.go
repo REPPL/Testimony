@@ -3,6 +3,7 @@ package demo
 import (
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -565,5 +566,31 @@ func TestServeRefusesSymlinkStream(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(outside); string(b) != "keep\n" {
 		t.Fatalf("victim file was modified through the symlink: %q", b)
+	}
+}
+
+// TestServeSurfacesBoundAddr pins the ephemeral-port fix: with ":0" the
+// requested address names no real port, so Serve records the bound one on the
+// returned server for callers to print — previously demo -addr :0 printed the
+// unopenable http://localhost:0 while the real port was knowable only outside
+// the tool. An explicit port must round-trip unchanged.
+func TestServeSurfacesBoundAddr(t *testing.T) {
+	srv, err := Serve(":0", manifestDir(t))
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	defer Shutdown(srv)
+	host, port, err := net.SplitHostPort(srv.Addr)
+	if err != nil {
+		t.Fatalf("srv.Addr %q: %v", srv.Addr, err)
+	}
+	if host != "" {
+		t.Fatalf("requested host must be kept (empty for \":0\"), got %q", host)
+	}
+	if port == "0" || port == "" {
+		t.Fatalf("bound port not surfaced: srv.Addr = %q", srv.Addr)
+	}
+	if got := DisplayURL(displayAddr(srv, ":0")); strings.Contains(got, ":0") || !strings.HasPrefix(got, "http://localhost:") {
+		t.Fatalf("display URL still unopenable: %q", got)
 	}
 }
