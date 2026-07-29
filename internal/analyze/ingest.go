@@ -28,8 +28,9 @@ const maxAnswerBytes = 16 << 20
 // later survives the index — an honest verbatim quote of the first is rejected,
 // while a quote of the second validates for a finding anchored at the first's
 // time, durably pairing a quote with a moment it was never spoken at. Merge
-// refuses a duplicated utterance id at the transcript boundary (see
-// timeline.checkedUtterances) and synthesises sequential event ids, so this
+// refuses a duplicated utterance id at the transcript boundary and an
+// utterance id colliding with the event ids it synthesises (see
+// timeline.checkedUtterances and the id scan in timeline.Merge), so this
 // check bites on a hand-edited or exchanged timeline.jsonl, which reaches this
 // reader without passing through merge — report deliberately stays positional
 // and keeps rendering such a file. Ids are compared in their session.SafeText

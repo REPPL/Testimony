@@ -54,6 +54,11 @@ A minimal capture script, following the same conventions as the demo app — pre
     if (el.id) return el.tagName.toLowerCase() + "#" + el.id;
     return el.tagName.toLowerCase();
   }
+  function labelFor(el) {
+    if (!(el instanceof Element)) return "";
+    var t = (el.closest("[data-testid]") || el).textContent || "";
+    return t.trim().replace(/\s+/g, " ").slice(0, 40);
+  }
   function post(url, body) {
     try {
       var json = JSON.stringify(body);
@@ -70,12 +75,11 @@ A minimal capture script, following the same conventions as the demo app — pre
     } catch (e) { /* capture must never break the app */ }
   }
   function interaction(kind, el, extra) {
-    if (!(el instanceof Element)) return; // a non-Element target must not throw in a capture listener
     var payload = {
       t: Date.now(),
       kind: kind,
       selector: selectorFor(el),
-      text: ((el.closest("[data-testid]") || el).textContent || "").trim().replace(/\s+/g, " ").slice(0, 40),
+      text: labelFor(el),
       route: location.hash || location.pathname
     };
     if (extra) for (var k in extra) payload[k] = extra[k];

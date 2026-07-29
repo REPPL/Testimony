@@ -6,8 +6,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a
 leading `v`.
 
 Before v1.0.0, minor releases may make breaking changes; a change that can
-break an existing invocation is called out as **Behaviour:** where it is
-recorded.
+break an existing invocation is called out in the entry that records it.
 
 ## [Unreleased]
 
@@ -15,18 +14,17 @@ recorded.
 
 Evidence integrity:
 
-- **Behaviour:** `merge` refuses a transcript that reuses an utterance id,
-  and `analyze` refuses a timeline carrying duplicate entry ids — inputs
-  earlier versions accepted. Of two utterances sharing an id, only the later
+- **Behaviour:** `merge` refuses a transcript whose utterance ids repeat or
+  collide with the event ids it synthesises, and `analyze` refuses a timeline
+  carrying duplicate entry ids — inputs earlier versions accepted. Of two utterances sharing an id, only the later
   one reached the quote validator, so an honest verbatim quote of the first
   was rejected while a quote of the second validated for a finding anchored
   at the first one's time. `report`, whose join is positional, still renders
   such a timeline.
 - **Behaviour:** `report` and `analyze` refuse a timeline entry whose `src`
   is neither `speech` nor `event` — previously accepted at exit 0 — instead
-  of dropping it from the rendered timeline
-  while counting its time into the header duration and keeping its id
-  citable as evidence.
+  of dropping it from the rendered timeline while counting its time into the
+  header duration and keeping its id citable as evidence.
 - The audio offset sidecar is written atomically (temp file and rename): a
   write failure part-way through used to leave a truncated sidecar behind,
   blocking every later bare `transcribe` with the prior offset
