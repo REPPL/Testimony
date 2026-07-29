@@ -64,12 +64,15 @@ ask() {
     return 1
 }
 
-# choose "Question" "option-a" "option-b" → prints the chosen word.
+# choose "Question" "option-a" "option-b" → prints the chosen word. When both
+# options are the same word there is only one choice to offer, so it is rendered
+# (and matched) once: [local/skip], never [local/local/skip].
 choose() {
     q="$1"; a="$2"; b="$3"
     if [ "$ASSUME_YES" = 1 ]; then printf '%s' "$a"; return; fi
+    if [ "$a" = "$b" ]; then opts="$a"; else opts="$a/$b"; fi
     if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-        printf '%s [%s/%s/skip] ' "$q" "$a" "$b" > /dev/tty
+        printf '%s [%s/skip] ' "$q" "$opts" > /dev/tty
         IFS= read -r reply < /dev/tty || reply=""
         case "$reply" in
             "$a") printf '%s' "$a" ;;
