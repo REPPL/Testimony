@@ -5,14 +5,71 @@ All notable changes to Testimony are recorded here. The format follows
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a
 leading `v`.
 
-Before v1.0.0, minor releases may make breaking changes; each one is
-called out in a **Breaking** section.
+Before v1.0.0, minor releases may make breaking changes; a change that can
+break an existing invocation is called out where it is recorded (to date,
+under **Changed**).
 
 ## [Unreleased]
 
 ### Fixed
 
-Invocation contract (from the round-8 bug-hunt):
+Evidence integrity:
+
+- `analyze` refuses a timeline carrying duplicate entry ids: of two
+  utterances sharing an id, only the later one reached the quote validator,
+  so an honest verbatim quote of the first was rejected while a quote of the
+  second validated for a finding anchored at the first one's time. `report`,
+  whose join is positional, still renders such a file.
+- `report` and `analyze` refuse a timeline entry whose `src` is neither
+  `speech` nor `event`, instead of dropping it from the rendered timeline
+  while counting its time into the header duration and keeping its id
+  citable as evidence.
+- The audio offset sidecar is written atomically (temp file and rename): a
+  write failure part-way through used to leave a truncated sidecar behind,
+  blocking every later bare `transcribe` with the prior offset
+  unrecoverable from the session.
+
+Capture and diagnostics:
+
+- A recorder start-up failure is headlined as a likely permissions issue
+  only when the ffmpeg output carries a device-open failure; the module
+  banner alone — printed on every successful open — used to route a full
+  disk or a missing encoder to the System Settings pane.
+- `demo -addr :0` prints the actually-bound address instead of the
+  unopenable `http://localhost:0`; the same applies to `record -demo`.
+- The demo page falls back to `fetch` when `sendBeacon` refuses to queue a
+  capture batch, which used to drop the batch silently; its seeded display
+  name now uses the Alice persona.
+- Diagnostic stderr tails cut on rune boundaries rather than mid-character;
+  a record refused by the JSONL writer is named as a 1-based line of the
+  output file; `transcribe` defaults its log sink instead of panicking when
+  a caller leaves it unset.
+
+Checks and installer:
+
+- The pipeline smoke test asserts the event half of the pipeline (the
+  header counts and an event-only selector); every prior assertion was
+  satisfiable from the transcript and findings alone, so a regression that
+  dropped all events kept the gate green.
+- The release workflow downloads a published tarball and requires the
+  binary's own version output to name the tag; the checks parse `install.sh`
+  with both shells the documented one-liner pipes it into.
+- `install.sh` verifies the installed binary runs and reports the pinned
+  release before announcing success; an unrunnable binary (a wrong-platform
+  asset, a `noexec` mount) used to print a success line at exit 0. Its
+  trust-model comments state the fail-closed attestation behaviour the
+  implementation has always had.
+
+Documentation:
+
+- Reference and how-to corrections against the code: the report header
+  duration definition, `report`'s inputs, `record`'s ffmpeg prerequisite,
+  the loopback `Origin` rule, the command that changes a recorded verdict,
+  and the word-timestamp claim scoped to the utterance boundaries the join
+  operates on. The README states that voice and screen capture need macOS,
+  and its pipeline diagram joins up.
+
+Invocation contract:
 
 - Every usage error now exits 2, as the CLI reference documents: a missing
   required `-session`, a disallowed flag combination (`analyze -out` with
@@ -33,8 +90,6 @@ Invocation contract (from the round-8 bug-hunt):
   installer also renders single-option prompts correctly and names the actual
   cause when a release download fails.
 
-Invocation contract (round 9):
-
 - A stray positional argument is refused as a usage error; it used to be
   silently swallowed together with every flag after it, so the command ran
   with defaults at exit 0.
@@ -43,7 +98,7 @@ Invocation contract (round 9):
   `transcribe -engine`, and a malformed capture `-addr` (which also no longer
   creates a session directory before refusing).
 
-Capture integrity (round 9):
+Capture integrity:
 
 - `POST /api/interactions` refuses with 400 any record `merge` would refuse —
   a non-object body, or a missing/implausible `t` or missing `kind` — instead
@@ -57,7 +112,7 @@ Capture integrity (round 9):
 - A recorder that exits on its own mid-session still validates the artefacts
   the other recorders left and prints the next-command block.
 
-Installer (round 9):
+Installer:
 
 - An unauthenticated (or attestation-incapable) `gh` no longer refuses the
   install as a false provenance failure: it falls back to the verified

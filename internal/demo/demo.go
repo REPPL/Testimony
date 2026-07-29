@@ -367,8 +367,8 @@ func tooLongForJSONL(line []byte) bool {
 
 // allowWrite guards the capture write endpoints against cross-origin forgery
 // (CSRF) and DNS-rebinding of the loopback server. It requires a loopback Host
-// (a rebinding page still sends the attacker hostname), a same-origin Origin
-// when present, and a JSON Content-Type — a non-CORS-safelisted type that forces
+// (a rebinding page still sends the attacker hostname), a loopback Origin when
+// present (any loopback host, whatever its port), and a JSON Content-Type — a non-CORS-safelisted type that forces
 // a preflight the server never answers permissively, so a cross-origin no-cors
 // "simple request" POST cannot reach the write. It writes the error response and
 // returns false when the request must be refused.

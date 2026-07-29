@@ -97,7 +97,7 @@ testimony report -session DIR [-window 2.5]
 | `-session` | *(required)* | session directory |
 | `-window` | `2.5` | utterance-to-event join window, in seconds |
 
-Behaviour: attaches each event to the first utterance whose span, widened by the window on both sides, contains it; events matched by no utterance appear as standalone lines. Writes `report.md` into the session directory and prints `wrote <path>`.
+Behaviour: reads `manifest.json` (required) and `timeline.jsonl`, plus `findings.jsonl` when present (the Findings section; without the file it is a short notice pointing at `analyze` and `review`). Attaches each event to the first utterance whose span, widened by the window on both sides, contains it; events matched by no utterance appear as standalone lines. Writes `report.md` into the session directory and prints `wrote <path>`.
 
 ## `testimony record`
 
@@ -120,7 +120,7 @@ testimony record [-out sessions] [-app NAME] [-participant P1] [-commit HASH]
 | `-demo` | off | also serve the instrumented demo app into the same session directory |
 | `-addr` | `:8737` | demo server listen address (with `-demo`) |
 
-Behaviour: creates a new session directory named after the current time (`YYYY-MM-DD_HHMMSS`) under the `-out` root and writes `manifest.json` (app, participant, tasks, commit, `t0_epoch_ms` set to now) through the same code path as `demo`. On macOS it captures the default microphone to `audio.wav` (16 kHz mono PCM, the canonical ASR input — no re-conversion needed downstream) and, with `-video`, the screen to `screen.mp4`. Audio-only is the default; `-video` opts in. With `-demo` it also serves the demo app so one command captures voice and clicks into the same directory.
+Behaviour: creates a new session directory named after the current time (`YYYY-MM-DD_HHMMSS`) under the `-out` root and writes `manifest.json` (app, participant, tasks, commit, `t0_epoch_ms` set to now) through the same code path as `demo`. On macOS it captures the default microphone to `audio.wav` (16 kHz mono PCM, the canonical ASR input — no re-conversion needed downstream) and, with `-video`, the screen to `screen.mp4`; both recorders need ffmpeg on `PATH`. Audio-only is the default; `-video` opts in. With `-demo` it also serves the demo app so one command captures voice and clicks into the same directory.
 
 The command blocks until interrupted (`Ctrl+C`). On SIGINT/SIGTERM — and on SIGHUP, so closing the terminal window mid-session finalises exactly like Ctrl+C — it sends each recorder an interrupt so it finalises its container, waits up to five seconds, and hard-kills only on timeout. It then validates each recorder's artefact — `audio.wav`, and `screen.mp4` with `-video` — and prints the exact next commands with the real session directory: with a usable `audio.wav` in place it offers `transcribe` → `merge` → `report` without `-audio`, because the recording is already present.
 

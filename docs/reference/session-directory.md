@@ -154,6 +154,6 @@ A finding's effective status starts `unverified`; verdict records apply in file 
 
 Human-readable Markdown rendered from the timeline and findings:
 
-- a header with session name, app, participant, duration (`MM:SS`, from the last entry), and utterance/event counts, plus the task list;
+- a header with session name, app, participant, duration (`MM:SS`, the latest moment on the timeline — the end (`t1`) of the last utterance when speech closes the session, else the latest entry time), and utterance/event counts, plus the task list;
 - a **Timeline** section: each utterance as `**[MM:SS] <speaker>:** "<text>"`, with the events joined to it (within the report's join window) as indented bullets `[MM:SS] <kind> <selector> "<text>" value="…" (<route>)`; events matched by no utterance appear as standalone bullets in time order;
 - a **Findings** section rendering `findings.jsonl` grouped by effective status (Confirmed, Unverified, Duplicate, Rejected), each group headed with a count and each finding line carrying its id, type, severity, clock, quote, anchor, and any verdict and date. When there is no `findings.jsonl` the section is a short notice pointing at `analyze` and `review`.

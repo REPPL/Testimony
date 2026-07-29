@@ -268,3 +268,18 @@ Architecture-shaping decisions graduate to an ADR under
   (endpoint preconditions, evidence cap, sessionEnd bound, ffmpeg's real
   consumers, the demo page's CDN fetch disclosed in privacy). Vendoring
   rrweb (offline capture) needs a dependency decision — reported, not done.
+- 2026-07-29 — Bug-hunt round 10: four hunters, two adversarial refuters.
+  3 substantive and 22 nitpick findings confirmed and fixed; 3 candidates
+  refuted (the -audio sidecar wording, the mode default claim, the
+  line-wrap premise). Headlines: analyze refuses duplicate timeline ids
+  (the id-keyed quote validator paired quotes with the wrong moment) and,
+  with report, refuses unknown-src entries instead of silently omitting
+  them; the recorder permissions headline fires only on a device-open
+  failure, not on ffmpeg's ordinary banner; the offset sidecar writes
+  atomically; the CI smoke gains event-half assertions and the release
+  workflow asserts the shipped binary names the tag; install.sh verifies
+  the installed binary before announcing success. Recorded, not fixed:
+  the VERSION-pin window before a tag exists (process), docs-lint gates
+  not running in CI (tooling), doubled CI runs on PR branches (trigger
+  set is tied to the merge queue), and the /dev/null TTY gate (per
+  round 8).
