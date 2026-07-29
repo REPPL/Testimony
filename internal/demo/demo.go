@@ -213,7 +213,7 @@ func (s *server) handleRawEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File, batch bool) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		refuseWrite(w, r, "method "+r.Method, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
 	if !allowWrite(w, r) {
@@ -233,11 +233,11 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		refuseWrite(w, r, fmt.Sprintf("unreadable body: %v", err), err.Error(), http.StatusBadRequest)
 		return
 	}
 	if int64(len(body)) > maxBody {
-		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		refuseWrite(w, r, "body over the size limit", "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -245,17 +245,17 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	if batch {
 		var msgs []json.RawMessage
 		if err := json.Unmarshal(body, &msgs); err != nil {
-			http.Error(w, "expected JSON array", http.StatusBadRequest)
+			refuseWrite(w, r, "body is not a JSON array", "expected JSON array", http.StatusBadRequest)
 			return
 		}
 		for _, m := range msgs {
 			line, err := compactLine(m)
 			if err != nil {
-				http.Error(w, "invalid JSON", http.StatusBadRequest)
+				refuseWrite(w, r, "invalid JSON in a batch element", "invalid JSON", http.StatusBadRequest)
 				return
 			}
 			if tooLongForJSONL(line) {
-				http.Error(w, "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
+				refuseWrite(w, r, "batch element over the JSONL line limit", "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
 				return
 			}
 			lines = append(lines, line)
@@ -263,7 +263,7 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	} else {
 		line, err := compactLine(body)
 		if err != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			refuseWrite(w, r, "invalid JSON", "invalid JSON", http.StatusBadRequest)
 			return
 		}
 		// The write side must respect the read side's shape invariant too, not
@@ -273,12 +273,13 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 		// session's merge after the participant has gone. This is the single-
 		// record interaction path only; a raw-event batch is archival and no
 		// reader constrains its element shape.
-		if err := timeline.CheckInteraction(line, s.t0); err != nil {
-			http.Error(w, fmt.Sprintf("interaction %v", err), http.StatusBadRequest)
+		if tooLongForJSONL(line) {
+			refuseWrite(w, r, "record over the JSONL line limit", "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
 			return
 		}
-		if tooLongForJSONL(line) {
-			http.Error(w, "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
+		if err := timeline.CheckInteraction(line, s.t0); err != nil {
+			msg := fmt.Sprintf("interaction %v", err)
+			refuseWrite(w, r, msg, msg, http.StatusBadRequest)
 			return
 		}
 		lines = append(lines, line)
@@ -360,29 +361,34 @@ func tooLongForJSONL(line []byte) bool {
 // a preflight the server never answers permissively, so a cross-origin no-cors
 // "simple request" POST cannot reach the write. It writes the error response and
 // returns false when the request must be refused.
-// Each refusal is also logged to the operator's terminal, for the same reason
-// a failed persist is: the page posts via sendBeacon, which cannot report a
-// status back, so stderr is the only signal that capture posts are being
-// refused — whether by an attack or by a remote client behind a wider bind.
 func allowWrite(w http.ResponseWriter, r *http.Request) bool {
-	refuse := func(reason, status string, code int) bool {
-		fmt.Fprintf(os.Stderr, "testimony demo: capture write refused (%s) from %s\n", reason, r.RemoteAddr)
-		http.Error(w, status, code)
-		return false
-	}
 	if !loopbackHost(r.Host) {
-		return refuse(fmt.Sprintf("unexpected Host %q", r.Host), "unexpected Host", http.StatusForbidden)
+		refuseWrite(w, r, fmt.Sprintf("unexpected Host %q", r.Host), "unexpected Host", http.StatusForbidden)
+		return false
 	}
 	if o := r.Header.Get("Origin"); o != "" {
 		u, err := url.Parse(o)
 		if err != nil || !loopbackHost(u.Host) {
-			return refuse(fmt.Sprintf("cross-origin Origin %q", o), "cross-origin request rejected", http.StatusForbidden)
+			refuseWrite(w, r, fmt.Sprintf("cross-origin Origin %q", o), "cross-origin request rejected", http.StatusForbidden)
+			return false
 		}
 	}
 	if !isJSONContentType(r.Header.Get("Content-Type")) {
-		return refuse(fmt.Sprintf("Content-Type %q", r.Header.Get("Content-Type")), "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+		refuseWrite(w, r, fmt.Sprintf("Content-Type %q", r.Header.Get("Content-Type")), "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+		return false
 	}
 	return true
+}
+
+// refuseWrite answers a refused capture request and logs the refusal to the
+// operator's terminal, for the same reason a failed persist is logged: the
+// page posts via sendBeacon, which cannot report a status back, so stderr is
+// the only signal that capture posts are being refused — by the forgery
+// guard, a malformed or mis-shaped record, or an over-long body. Every
+// refusal path answers through this one helper so none can go silent again.
+func refuseWrite(w http.ResponseWriter, r *http.Request, reason, status string, code int) {
+	fmt.Fprintf(os.Stderr, "testimony demo: capture write refused (%s) from %s\n", reason, r.RemoteAddr)
+	http.Error(w, status, code)
 }
 
 // loopbackHost reports whether hostport names the local machine: the literal

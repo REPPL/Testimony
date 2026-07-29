@@ -394,22 +394,37 @@ func TestWiderBindWarnsCaptureStaysLoopback(t *testing.T) {
 	}
 }
 
-// TestRefusedCaptureWriteIsLogged pins the refusal signal itself: a capture
-// post refused by the Host/Origin/Content-Type guard answers an error status
-// the sendBeacon client cannot surface, so the refusal must reach the
-// operator's terminal, as a failed persist already does.
+// TestRefusedCaptureWriteIsLogged pins the refusal signal: EVERY refused
+// capture post answers an error status the sendBeacon client cannot surface,
+// so each refusal — the forgery guard's, a mis-shaped record's, an over-long
+// body's — must reach the operator's terminal, as a failed persist already
+// does. The 400 shape refusals went silent when they were first added.
 func TestRefusedCaptureWriteIsLogged(t *testing.T) {
-	s, _ := newTestServer(t)
-	stderr := captureStderr(t, func() {
-		w := httptest.NewRecorder()
-		s.handleInteraction(w, jsonPost("/api/interactions", `{"t":1,"kind":"click"}`,
-			map[string]string{"Host": "evil.example:8737"}))
-		if w.Code != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403", w.Code)
-		}
-	})
-	if want := "capture write refused"; !strings.Contains(stderr, want) {
-		t.Errorf("refused write logged nothing; want %q on stderr, got %q", want, stderr)
+	cases := []struct {
+		name string
+		body string
+		hdr  map[string]string
+		code int
+	}{
+		{"rebound host", `{"t":1,"kind":"click"}`, map[string]string{"Host": "evil.example:8737"}, http.StatusForbidden},
+		{"shape refusal", `{"t":1}`, nil, http.StatusBadRequest},
+		{"non-object body", `[1,2,3]`, nil, http.StatusBadRequest},
+		{"over-long record", jsonRecordOfSize(t, session.MaxJSONLLine), nil, http.StatusRequestEntityTooLarge},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, _ := newTestServer(t)
+			stderr := captureStderr(t, func() {
+				w := httptest.NewRecorder()
+				s.handleInteraction(w, jsonPost("/api/interactions", c.body, c.hdr))
+				if w.Code != c.code {
+					t.Fatalf("status = %d, want %d", w.Code, c.code)
+				}
+			})
+			if want := "capture write refused"; !strings.Contains(stderr, want) {
+				t.Errorf("refused write logged nothing; want %q on stderr, got %q", want, stderr)
+			}
+		})
 	}
 }
 
