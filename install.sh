@@ -128,8 +128,8 @@ install_binary() {
     # the script: a trap that only cleans up returns control after the handler,
     # so Ctrl+C at a dependency prompt read was swallowed into the safe-default
     # answer and the run carried on.
-    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"}' EXIT
-    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"}; trap - EXIT; exit 130' INT TERM
+    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"} ${staged:+"$staged"}' EXIT
+    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"} ${staged:+"$staged"}; trap - EXIT; exit 130' INT TERM
 
     say "Downloading $tarball ..."
     # A bad --version (or a platform the release never published) surfaces from
@@ -202,17 +202,24 @@ Refusing to install."
     fi
 
     tar -xzf "$tmp/$tarball" -C "$tmp" testimony
-    # Prove the extracted binary runs and is the release it claims BEFORE it
-    # is installed, so a refusal cannot clobber a previously good binary: a
-    # failing command substitution inside say's argument does not trip
-    # `set -e`, so an unrunnable binary (a wrong-platform asset) previously
-    # replaced the installed one and printed "Installed: ... ()" at exit 0.
-    # Releases predating the version stamp (v0.1.0) report "testimony dev"
-    # and are refused here; every release since prints its own tag.
-    installed_version="$("$tmp/testimony" version)" || die "the release binary failed to run on this machine (a wrong-platform asset?): $tarball"
-    [ "$installed_version" = "testimony $VERSION" ] || die "the release binary reports \"$installed_version\", expected \"testimony $VERSION\"; refusing to install it"
+    # Prove the binary runs and is the release it claims BEFORE it replaces
+    # anything: a failing command substitution inside say's argument does not
+    # trip `set -e`, so an unrunnable binary (a wrong-platform asset)
+    # previously replaced the installed one and printed "Installed: ... ()"
+    # at exit 0. The probe runs from a staged copy inside INSTALL_DIR — the
+    # download's temp directory may sit on a noexec mount (a hardened /tmp,
+    # a noexec TMPDIR), where executing "$tmp/testimony" fails for a
+    # perfectly good binary — and only the verified copy is renamed onto the
+    # final name, so a refusal leaves any previously installed binary
+    # untouched. Releases predating the version stamp (v0.1.0) report
+    # "testimony dev" and are refused here; every release since prints its
+    # own tag.
     mkdir -p "$INSTALL_DIR"
-    install -m 0755 "$tmp/testimony" "$INSTALL_DIR/testimony"
+    staged="$INSTALL_DIR/.testimony.staged.$$"
+    install -m 0755 "$tmp/testimony" "$staged"
+    installed_version="$("$staged" version)" || { rm -f "$staged"; die "the release binary failed to run from $INSTALL_DIR (a wrong-platform asset, or a noexec mount?): $tarball"; }
+    [ "$installed_version" = "testimony $VERSION" ] || { rm -f "$staged"; die "the release binary reports \"$installed_version\", expected \"testimony $VERSION\"; refusing to install it"; }
+    mv -f "$staged" "$INSTALL_DIR/testimony"
     say "Installed: $INSTALL_DIR/testimony ($installed_version)"
 
     case ":$PATH:" in
