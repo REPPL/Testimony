@@ -4,6 +4,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,6 +84,16 @@ func Run(args []string) int {
 		fs.Parse(rest)
 		if *dir == "" {
 			return fail(fmt.Errorf("report: -session is required"))
+		}
+		// A non-finite window is not a join window at all, and Render has no way to
+		// notice: every comparison against NaN is false, so a NaN window silently
+		// detaches every event from the speech it accompanied, while +Inf puts every
+		// event inside the first utterance's window and files them all under it.
+		// Either way report.md — the human evidence artefact — misstates what the
+		// participant was doing while they spoke, and the command exits 0. A negative
+		// window is legitimate (it narrows the join), so only finiteness is required.
+		if math.IsNaN(*window) || math.IsInf(*window, 0) {
+			return fail(fmt.Errorf("report: -window must be a finite number of seconds, got %v", *window))
 		}
 		md, err := report.Render(*dir, *window)
 		if err != nil {
