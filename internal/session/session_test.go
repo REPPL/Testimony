@@ -570,19 +570,26 @@ func TestWriteFileAtomicNoFollowReplaces(t *testing.T) {
 // artefact (a 0600 sidecar) does not silently widen to the caller's default
 // perm on rewrite.
 func TestWriteFileAtomicNoFollowPreservesExistingMode(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "f")
-	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	if err := WriteFileAtomicNoFollow(path, []byte("new\n"), 0o644); err != nil {
-		t.Fatalf("WriteFileAtomicNoFollow: %v", err)
-	}
-	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if got := fi.Mode().Perm(); got != 0o600 {
-		t.Fatalf("existing file's mode not preserved: got %o, want 600", got)
+	// Both a tightened and a widened mode round-trip exactly: preservation is
+	// applied with fchmod on the temp file, which the umask does not filter.
+	for _, mode := range []os.FileMode{0o600, 0o664} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "f")
+		if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		if err := WriteFileAtomicNoFollow(path, []byte("new\n"), 0o644); err != nil {
+			t.Fatalf("WriteFileAtomicNoFollow: %v", err)
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		if got := fi.Mode().Perm(); got != mode {
+			t.Fatalf("existing file's mode not preserved: got %o, want %o", got, mode)
+		}
 	}
 }

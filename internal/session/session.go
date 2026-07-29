@@ -16,6 +16,7 @@ package session
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -266,29 +267,39 @@ func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 // the name); the temp file is created fresh in the same directory, so the
 // rename never crosses a filesystem.
 //
-// Permission semantics match WriteFileNoFollow's open(2) behaviour: the temp
-// file is created with perm filtered by the process umask, and an existing
-// regular file's own mode is preserved across the replacement (an
-// operator-tightened sidecar stays tightened) — which is why the temp file is
-// opened O_CREATE|O_EXCL with the effective mode rather than via
-// os.CreateTemp, whose fixed 0600 plus an explicit Chmod would bypass the
-// umask. A crash between create and rename can leave a dot-prefixed
-// ".<name>.tmp*" file behind; nothing reads it, and the next successful write
-// does not depend on it.
+// Permission semantics: a NEW file is created with perm filtered by the
+// process umask, exactly as WriteFileNoFollow's open(2) would create it; an
+// EXISTING regular file's own mode is preserved exactly across the
+// replacement (applied with fchmod on the temp file, which the umask does not
+// filter), so an operator-tightened sidecar stays tightened and a
+// deliberately widened one is not silently narrowed. Two deliberate
+// differences from a truncating open, both inherent to rename-into-place: a
+// read-only target is replaced (rename consults the directory's permissions,
+// not the file's), and a crash between create and rename can leave a
+// dot-prefixed ".<name>.tmp-*" file behind — nothing reads it, and the next
+// successful write does not depend on it. Temp names carry a random suffix so
+// an attacker who can write the directory cannot pre-plant the whole name
+// space and deterministically block the write (O_EXCL already stops
+// write-through).
 func WriteFileAtomicNoFollow(path string, data []byte, perm os.FileMode) error {
+	priorPerm, havePrior := os.FileMode(0), false
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing to write %s: it is a symlink", path)
 		}
 		if fi.Mode().IsRegular() {
-			perm = fi.Mode().Perm()
+			priorPerm, havePrior = fi.Mode().Perm(), true
 		}
 	}
 	dir, base := filepath.Dir(path), filepath.Base(path)
 	var f *os.File
 	var tmp string
 	for i := 0; ; i++ {
-		tmp = filepath.Join(dir, fmt.Sprintf(".%s.tmp%d-%d", base, os.Getpid(), i))
+		var rnd [4]byte
+		if _, err := rand.Read(rnd[:]); err != nil {
+			return err
+		}
+		tmp = filepath.Join(dir, fmt.Sprintf(".%s.tmp-%x", base, rnd))
 		var err error
 		f, err = os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
 		if err == nil {
@@ -301,6 +312,12 @@ func WriteFileAtomicNoFollow(path string, data []byte, perm os.FileMode) error {
 	cleanup := func() {
 		f.Close()
 		os.Remove(tmp)
+	}
+	if havePrior {
+		if err := f.Chmod(priorPerm); err != nil {
+			cleanup()
+			return err
+		}
 	}
 	if _, err := f.Write(data); err != nil {
 		cleanup()
