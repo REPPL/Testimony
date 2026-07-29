@@ -39,7 +39,14 @@ func detectEngine(pref string) (engine, bin string, err error) {
 		}
 		return EngineWhisperCpp, p, nil
 	default:
-		return "", "", CheckEngine(pref)
+		if err := CheckEngine(pref); err != nil {
+			return "", "", err
+		}
+		// Unreachable while CheckEngine and the cases above agree on the valid
+		// set; a drift between them must fail loudly here rather than hand Run
+		// an empty engine that matches no adapter and writes an empty
+		// transcript at exit 0.
+		return "", "", fmt.Errorf("engine %q is valid but not wired to a binary", pref)
 	}
 }
 
