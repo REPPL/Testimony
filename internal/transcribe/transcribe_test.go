@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
@@ -1294,5 +1295,15 @@ func TestRunDefaultsNilLog(t *testing.T) {
 
 	if _, err := Run(Options{SessionDir: dir, Engine: EngineWhisperX}); err != nil {
 		t.Fatalf("Run with nil Log: %v", err)
+	}
+}
+
+// TestTailCutsOnRuneBoundary pins the rune-aligned truncation of the engine
+// diagnostic tail (see the identical property in record's tails): a byte-offset
+// cut could open the tail mid-rune and render replacement garbage.
+func TestTailCutsOnRuneBoundary(t *testing.T) {
+	long := strings.Repeat("é", 450) + "a"
+	if got := tail([]byte(long)); !utf8.ValidString(got) {
+		t.Fatalf("tail split a rune: %q...", got[:12])
 	}
 }

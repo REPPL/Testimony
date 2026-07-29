@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/REPPL/Testimony/internal/demo"
 	"github.com/REPPL/Testimony/internal/session"
@@ -1202,5 +1203,26 @@ func TestClassifyRecorderExitBannerIsNotAPermissionsSignature(t *testing.T) {
 		if !looksLikeAVFailure(tail) {
 			t.Fatalf("a real device-open failure must keep matching: %q", tail)
 		}
+	}
+}
+
+// TestTailsCutOnRuneBoundaries pins the rune-aligned truncation of the two
+// diagnostic tails in this package: a byte-offset cut could open the tail
+// mid-rune (a non-ASCII device name straddling it), rendering replacement
+// garbage at the head of an operator-facing message.
+func TestTailsCutOnRuneBoundaries(t *testing.T) {
+	// 2-byte runes with one trailing ASCII byte put every rune start on an even
+	// offset while the cut lands on an odd one — mid-rune before the fix.
+	long := strings.Repeat("é", 700) + "a"
+
+	if got := outputTail([]byte(long)); !utf8.ValidString(got) {
+		t.Fatalf("outputTail split a rune: %q...", got[:12])
+	}
+	var lb lockedBuffer
+	if _, err := lb.Write([]byte(long)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := lb.tail(); !utf8.ValidString(got) {
+		t.Fatalf("lockedBuffer.tail split a rune: %q...", got[:12])
 	}
 }

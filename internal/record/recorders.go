@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // deviceListTimeout bounds the avfoundation device enumeration. It is a var, not a
@@ -261,7 +262,14 @@ func outputTail(out []byte) string {
 	const max = 400
 	s := strings.TrimSpace(string(out))
 	if len(s) > max {
-		s = "..." + s[len(s)-max:]
+		// Advance the cut to the next rune boundary: a byte-offset cut can open
+		// the tail mid-rune (a non-ASCII device or file name straddling it), and
+		// a split UTF-8 sequence renders as replacement garbage in the message.
+		i := len(s) - max
+		for i < len(s) && !utf8.RuneStart(s[i]) {
+			i++
+		}
+		s = "..." + s[i:]
 	}
 	return s
 }

@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
@@ -456,7 +457,14 @@ func tail(b []byte) string {
 	s := strings.TrimSpace(string(b))
 	const max = 800
 	if len(s) > max {
-		s = "…" + s[len(s)-max:]
+		// Advance the cut to the next rune boundary so the tail never opens
+		// mid-rune: a split UTF-8 sequence (a non-ASCII path in the engine's
+		// output straddling the cut) renders as replacement garbage.
+		i := len(s) - max
+		for i < len(s) && !utf8.RuneStart(s[i]) {
+			i++
+		}
+		s = "…" + s[i:]
 	}
 	return s
 }
