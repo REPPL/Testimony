@@ -8,6 +8,50 @@ leading `v`.
 Before v1.0.0, minor releases may make breaking changes; each one is
 called out in a **Breaking** section.
 
+## [Unreleased]
+
+### Fixed
+
+Invocation contract (from the round-8 bug-hunt):
+
+- Every usage error now exits 2, as the CLI reference documents: a missing
+  required `-session`, a disallowed flag combination (`analyze -out` with
+  `-ingest`), and a non-finite `report -window` were reported at the runtime
+  status 1, indistinguishable to a script from a session that could not be
+  read.
+- `report -window NaN`/`±Inf` is refused instead of silently rendering a
+  report whose events are detached from (or all filed under) the speech they
+  accompanied.
+- `transcribe -audio` resolves the audio→session offset before the conversion
+  mutates the session, so a refused run no longer destroys a record-origin
+  `audio.wav`; an explicit `-offset` now rewrites an existing sidecar.
+- `report` renders a hand-ordered (or hand-edited) `timeline.jsonl` in time
+  order instead of trusting the file's line order.
+
+Invocation contract (round 9):
+
+- A stray positional argument is refused as a usage error; it used to be
+  silently swallowed together with every flag after it, so the command ran
+  with defaults at exit 0.
+- The remaining invalid-flag-value paths exit 2: `review`'s
+  `-finding`/`-verdict` pairing and verdict syntax, an unknown
+  `transcribe -engine`, and a malformed capture `-addr` (which also no longer
+  creates a session directory before refusing).
+
+Capture integrity (round 9):
+
+- `POST /api/interactions` refuses with 400 any record `merge` would refuse —
+  a non-object body, or a missing/implausible `t` or missing `kind` — instead
+  of persisting with 204 a line that later fails the whole session's merge.
+- A refused capture write and a deliberately wider (non-loopback) bind are
+  reported on stderr; the page posts via `sendBeacon`, so the terminal is the
+  only place a refusal can surface.
+- The audio offset sidecar is persisted before the conversion's rename
+  replaces `audio.wav`, so a refused sidecar write leaves the session
+  byte-for-byte as it was found, and a failed rename rolls the sidecar back.
+- A recorder that exits on its own mid-session still validates the artefacts
+  the other recorders left and prints the next-command block.
+
 ## [0.4.0] - 2026-07-24
 
 A second robustness pass over the same capture → analysis pipeline, closing the
@@ -231,6 +275,7 @@ Resource and process lifecycle:
 - A one-line installer and a checksummed release of static binaries for macOS
   and Linux.
 
+[Unreleased]: https://github.com/REPPL/Testimony/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/REPPL/Testimony/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/REPPL/Testimony/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/REPPL/Testimony/compare/v0.1.0...v0.2.0
