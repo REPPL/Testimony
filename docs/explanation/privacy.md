@@ -7,7 +7,7 @@ A think-aloud session captures two of the most sensitive things a person can han
 The rule is simple: **raw recordings stay local; only derived text is ever analysed.**
 
 - Your voice recording and any screen recording remain files on your machine. No part of the pipeline uploads them anywhere.
-- Speech recognition runs locally — the transcription engines execute on your own hardware, and the transcription step makes no network requests.
+- Speech recognition runs locally — the transcription engines execute on your own hardware, and no part of your session is sent anywhere. The one network request transcription can make is the engine fetching its own model files from their publisher the first time it needs them; your recording plays no part in it, and once the models are on disk the step runs offline.
 - The capture server listens on your machine and writes to a local session directory.
 - What the pipeline produces for analysis is derived text: the transcript, the normalised event stream, the merged timeline, and the report. These are small, readable files you can inspect line by line before sharing them with anyone — or with any analysis tool.
 
