@@ -119,7 +119,14 @@ install_binary() {
     trap 'rm -rf "$tmp"' EXIT INT TERM
 
     say "Downloading $tarball ..."
-    fetch "$base/$tarball" "$tmp/$tarball"
+    # A bad --version (or a platform the release never published) surfaces from
+    # curl/wget as a bare 404 in the middle of "Downloading". Name the actual
+    # cause instead. Still fail-closed: die exits non-zero, nothing is retried.
+    fetch "$base/$tarball" "$tmp/$tarball" || die "could not download $tarball
+  Release \"$VERSION\" — or its $plat asset — was not found at
+    $base/$tarball
+  Release tags are of the form vX.Y.Z (note the leading 'v').
+  Releases: https://github.com/$REPO/releases"
 
     # Integrity: verify the tarball against the release's published SHA256SUMS.
     # No hash is pinned in this script — it is fetched from the release itself.
