@@ -186,6 +186,18 @@ func Run(opts Options) error {
 		atStartup := time.Since(dead.started) < startupWindow
 		stopAll(children)
 		stopDemo(srv)
+		// An early exit is reported the same way as a recorder that produced
+		// nothing (docs/reference/cli.md) — which includes validating what every
+		// recorder actually left behind and printing the next-command block. A
+		// session whose recorder died mid-way still holds whatever was captured
+		// up to that point (a partial audio.wav is transcribable), and without
+		// this the operator got the classification but no word on whether the
+		// artefacts are usable or what to run next.
+		audioReady, problems := finaliseOutputs(dir, children)
+		for _, p := range problems {
+			fmt.Fprintf(opts.Log, "\n%s\n", p)
+		}
+		fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioReady))
 		return errors.New(classifyRecorderExit(dead.stream, dead.err, dead.stderr.tail(), atStartup))
 	}
 
