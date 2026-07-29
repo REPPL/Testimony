@@ -1170,3 +1170,37 @@ func TestAnyExitReportsDeadChild(t *testing.T) {
 	// Clean up the still-live child so no goroutine lingers.
 	stopChild(live, time.Second)
 }
+
+// TestClassifyRecorderExitBannerIsNotAPermissionsSignature pins the signature
+// list to device-open failures only. ffmpeg prints its avfoundation input
+// banner on every SUCCESSFUL open, so with the bare module name in the list a
+// start-up failure whose real cause followed the banner — a full disk, a
+// missing encoder, an unwritable session directory — was headlined "most
+// likely a permissions issue" with a System Settings pointer, misdirecting
+// the operator to grant a permission they already hold.
+func TestClassifyRecorderExitBannerIsNotAPermissionsSignature(t *testing.T) {
+	tails := map[string]string{
+		"full disk":       "Input #0, avfoundation, from ':default':\n  Duration: N/A, start: 761698.132517, bitrate: 1536 kb/s\nav_interleaved_write_frame(): No space left on device",
+		"missing encoder": "Input #0, avfoundation, from '1:none':\nUnknown encoder 'libx264'",
+		"unwritable dir":  "Input #0, avfoundation, from ':default':\nsessions/2026-07-29/audio.wav: Permission denied",
+	}
+	for name, tail := range tails {
+		if looksLikeAVFailure(tail) {
+			t.Fatalf("%s: the avfoundation input banner alone must not read as a device-open failure: %q", name, tail)
+		}
+		msg := classifyRecorderExit(streamMicrophone, errors.New("exit status 1"), tail, true)
+		if strings.Contains(msg, "permissions") || strings.Contains(msg, "Privacy & Security") {
+			t.Fatalf("%s: must not claim permissions: %q", name, msg)
+		}
+	}
+	// The genuine TCC denial lines keep matching.
+	for _, tail := range []string{
+		"[AVFoundation indev @ 0x14f604580] Failed to create AVCaptureDeviceInput: -11852",
+		"[AVFoundation indev @ 0x0] Failed to open device.",
+		"[avfoundation @ 0x0] audio device not authorized to capture (status 0)",
+	} {
+		if !looksLikeAVFailure(tail) {
+			t.Fatalf("a real device-open failure must keep matching: %q", tail)
+		}
+	}
+}
