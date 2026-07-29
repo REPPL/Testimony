@@ -50,9 +50,15 @@ Testimony captures usability evidence, on the record.
 
 ## Current state
 
-Walking skeleton. A Go CLI (`testimony`) with the capture → merge → report
-pipeline working end-to-end on the bundled sample; `record` and `transcribe`
-are honest stubs. See [`docs/architecture.md`](docs/architecture.md).
+v0.4.0. A Go CLI (`testimony`, standard library only) whose seven commands are
+all implemented and dispatched from `internal/cli` behind the `cmd/testimony`
+entry point: `record` and `demo`
+(capture), `transcribe`, `merge`, `report`, and the analysis layer `analyze`
+and `review`. The model work is host-delegated — the CLI never calls a model,
+holds no keys, and adds no network dependency. The user-facing documentation
+is [`docs/README.md`](docs/README.md); the exact command and file contracts are
+[`docs/reference/cli.md`](docs/reference/cli.md) and
+[`docs/reference/session-directory.md`](docs/reference/session-directory.md).
 
 Orientation lives in [`.abcd/work/CONTEXT.md`](.abcd/work/CONTEXT.md).
 
