@@ -510,3 +510,53 @@ func TestLoadManifestAcceptsOrdinary(t *testing.T) {
 		t.Fatalf("want session s, got %q", m.Session)
 	}
 }
+
+// TestWriteFileAtomicNoFollowRefusesSymlink keeps the atomic write under the
+// same planted-symlink refusal as WriteFileNoFollow: rename would replace the
+// link rather than follow it, but a hostile session directory must not be able
+// to retarget an artefact name at all.
+func TestWriteFileAtomicNoFollowRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("original\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := WriteFileAtomicNoFollow(link, []byte("clobber\n"), 0o644); err == nil {
+		t.Fatal("WriteFileAtomicNoFollow wrote through a symlink; want refusal")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "original\n" {
+		t.Fatalf("symlink target disturbed: %q, %v", got, err)
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("planted symlink removed: %v", err)
+	}
+}
+
+// TestWriteFileAtomicNoFollowReplaces covers the happy path: content replaced,
+// no temp file left behind.
+func TestWriteFileAtomicNoFollowReplaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := WriteFileAtomicNoFollow(path, []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("WriteFileAtomicNoFollow: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "new\n" {
+		t.Fatalf("content: %q, %v", got, err)
+	}
+	names, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(names) != 1 {
+		t.Fatalf("temp file left behind: %v", names)
+	}
+}

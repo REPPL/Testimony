@@ -252,6 +252,53 @@ func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 	return f.Close()
 }
 
+// WriteFileAtomicNoFollow replaces path with data all-or-nothing: the bytes
+// are written to a same-directory temp file and renamed into place, so a
+// failure at any point leaves whatever was at path untouched. WriteFileNoFollow
+// cannot promise that — its O_TRUNC open destroys the prior bytes before the
+// first write, so a write that then fails leaves a truncated file AND an error,
+// which for the offset sidecar meant the one durable record of an external
+// audio's clock offset was gone with nothing to roll back to. The no-follow
+// guarantee is kept by refusing up front when path names a symlink (rename
+// would otherwise replace the planted link rather than follow it, but refusal
+// matches WriteFileNoFollow so a hostile session directory cannot even retarget
+// the name); the temp file is created fresh in the same directory, so the
+// rename never crosses a filesystem.
+func WriteFileAtomicNoFollow(path string, data []byte, perm os.FileMode) error {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to write %s: it is a symlink", path)
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	cleanup := func() {
+		f.Close()
+		os.Remove(tmp)
+	}
+	if err := f.Chmod(perm); err != nil {
+		cleanup()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	// Close before rename, and surface the Close error: a filesystem that
+	// defers write-back errors to close would otherwise rename a corrupt temp
+	// file into place (see WriteJSONL's identical stance).
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // SafeText neutralises untrusted text before it is written into a human-facing
 // artefact (report.md) or a terminal line (review). It strips C0/C1 control
 // bytes — including the newline and carriage return that could forge report

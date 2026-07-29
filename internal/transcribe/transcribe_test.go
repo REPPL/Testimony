@@ -1249,3 +1249,38 @@ func TestResolveModelAcceptsRegularFile(t *testing.T) {
 		t.Fatalf("want %q, got %q", model, got)
 	}
 }
+
+// TestWriteOffsetSidecarFailurePreservesPrior pins the atomic sidecar write.
+// The previous truncating write (O_TRUNC, then write) destroyed the prior
+// sidecar's bytes the moment the open succeeded, so a write that failed after
+// that point left a truncated sidecar with the rollback skipped — and, in this
+// read-only-directory arrangement, no failure at all: the existing file's own
+// permissions let the truncating open through, silently replacing the one
+// durable record of the offset. With temp + rename the write must instead
+// fail without touching the prior bytes.
+func TestWriteOffsetSidecarFailurePreservesPrior(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory write permissions do not bind root")
+	}
+	dir := t.TempDir()
+	sidecar := filepath.Join(dir, session.AudioOffsetFile)
+	const prior = `{"offset_seconds":12.5,"provenance":"derived: audio creation_time - manifest t0"}` + "\n"
+	if err := os.WriteFile(sidecar, []byte(prior), 0o644); err != nil {
+		t.Fatalf("seed sidecar: %v", err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+
+	if err := writeOffsetSidecar(dir, 99, "explicit -offset"); err == nil {
+		t.Fatal("writeOffsetSidecar succeeded in a directory it cannot create the temp file in")
+	}
+	got, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatalf("read sidecar back: %v", err)
+	}
+	if string(got) != prior {
+		t.Fatalf("prior sidecar bytes not preserved:\ngot  %q\nwant %q", got, prior)
+	}
+}

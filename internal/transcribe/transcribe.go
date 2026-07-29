@@ -162,7 +162,7 @@ func Run(opts Options) (int, error) {
 			if wrote {
 				switch {
 				case priorCaptured:
-					_ = session.WriteFileNoFollow(sidecar, prior, 0o644)
+					_ = session.WriteFileAtomicNoFollow(sidecar, prior, 0o644)
 				case !priorExists:
 					_ = os.Remove(sidecar)
 				}
@@ -314,14 +314,19 @@ const maxOffsetSidecarBytes = 64 << 10
 const maxOffsetSeconds = 1e9
 
 // writeOffsetSidecar persists offset (with its provenance, for the operator)
-// beside audio.wav via the no-follow write guard, so a session's own directory
-// cannot redirect the write through a planted symlink.
+// beside audio.wav. The write is atomic (temp + rename) as well as
+// no-follow: a plain truncating write destroyed the prior sidecar's bytes
+// before writing the new ones, so a write failure in between left a
+// truncated sidecar behind — and because the caller's rollback triggers only
+// on a write that SUCCEEDED before the conversion failed, that truncated
+// file was never restored: every later bare transcribe then refused on the
+// unreadable sidecar, with the prior offset unrecoverable from the session.
 func writeOffsetSidecar(dir string, offset float64, provenance string) error {
 	b, err := json.Marshal(offsetSidecar{OffsetSeconds: offset, Provenance: provenance})
 	if err != nil {
 		return err
 	}
-	return session.WriteFileNoFollow(filepath.Join(dir, session.AudioOffsetFile), append(b, '\n'), 0o644)
+	return session.WriteFileAtomicNoFollow(filepath.Join(dir, session.AudioOffsetFile), append(b, '\n'), 0o644)
 }
 
 // offsetSidecarExists reports whether a sidecar is already present beside
