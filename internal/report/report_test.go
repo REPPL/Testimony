@@ -533,3 +533,40 @@ func TestReportFlushesEventPastLegacySentinel(t *testing.T) {
 		t.Fatalf("standalone event at the legacy 1e18 sentinel was dropped from the report:\n%s", md)
 	}
 }
+
+// TestRenderSortsByTime is the out-of-order-report regression. Render consumed
+// timeline.jsonl in file order, so a hand-edited or exchanged timeline — the case
+// Render's own join step already defends against — rendered utterances and
+// standalone events in whatever order the lines happened to sit in, printing
+// [00:50] before [00:10]. report.md is read as the chronological record of the
+// session, so the file order silently rewrote when things happened. Render now
+// applies the same stable sort by t that timeline.Merge does.
+func TestRenderSortsByTime(t *testing.T) {
+	const unsorted = `{"t":50,"src":"speech","id":"utt-002","payload":{"speaker":"P1","t1":52,"text":"Second remark."}}
+{"t":10,"src":"speech","id":"utt-001","payload":{"speaker":"P1","t1":12,"text":"First remark."}}
+{"t":40,"src":"event","id":"ev-002","payload":{"kind":"scroll"}}
+{"t":5,"src":"event","id":"ev-001","payload":{"kind":"click"}}
+`
+	dir := setupSession(t)
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(unsorted), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	// Every entry is outside every join window here, so all four appear at the top
+	// level and must read in chronological order.
+	prev := -1
+	for _, want := range []string{"[00:05] click", "[00:10]", "First remark", "[00:40] scroll", "[00:50]", "Second remark"} {
+		at := strings.Index(md, want)
+		if at < 0 {
+			t.Fatalf("report is missing %q:\n%s", want, md)
+		}
+		if at < prev {
+			t.Fatalf("report is out of chronological order at %q:\n%s", want, md)
+		}
+		prev = at
+	}
+}
