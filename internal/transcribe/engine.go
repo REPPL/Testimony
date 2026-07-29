@@ -39,6 +39,17 @@ func detectEngine(pref string) (engine, bin string, err error) {
 		}
 		return EngineWhisperCpp, p, nil
 	default:
-		return "", "", fmt.Errorf("unknown engine %q: want auto, whisperx, or whispercpp", pref)
+		return "", "", CheckEngine(pref)
 	}
+}
+
+// CheckEngine validates an -engine value without touching PATH, so the CLI can
+// refuse an unknown name as a usage error before any work starts. detectEngine
+// keeps applying the same rule when it resolves a binary.
+func CheckEngine(pref string) error {
+	switch pref {
+	case "", EngineAuto, EngineWhisperX, EngineWhisperCpp:
+		return nil
+	}
+	return fmt.Errorf("unknown engine %q: want auto, whisperx, or whispercpp", pref)
 }

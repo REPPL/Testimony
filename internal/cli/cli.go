@@ -57,6 +57,15 @@ func Run(args []string) int {
 		addr := fs.String("addr", ":8737", "listen address")
 		out := fs.String("out", "sessions", "root directory for new session folders")
 		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
+		// Refuse a malformed address here, where wrong invocations exit 2 —
+		// reported from Serve it took the runtime status, after Run had already
+		// created a session directory for a server that could never bind.
+		if err := demo.CheckAddr(*addr); err != nil {
+			return usageErr(fmt.Errorf("demo: %w", err))
+		}
 		if err := demo.Run(*addr, *out); err != nil {
 			return fail(err)
 		}
@@ -66,6 +75,9 @@ func Run(args []string) int {
 		fs := flag.NewFlagSet("merge", flag.ExitOnError)
 		dir := fs.String("session", "", "session directory")
 		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
 		if *dir == "" {
 			return usageErr(fmt.Errorf("merge: -session is required"))
 		}
@@ -82,6 +94,9 @@ func Run(args []string) int {
 		dir := fs.String("session", "", "session directory")
 		window := fs.Float64("window", 2.5, "utterance↔event join window, seconds")
 		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
 		if *dir == "" {
 			return usageErr(fmt.Errorf("report: -session is required"))
 		}
@@ -119,6 +134,14 @@ func Run(args []string) int {
 		demoFlag := fs.Bool("demo", false, "also serve the instrumented demo app into the session")
 		addr := fs.String("addr", ":8737", "demo server listen address (with -demo)")
 		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
+		if *demoFlag {
+			if err := demo.CheckAddr(*addr); err != nil {
+				return usageErr(fmt.Errorf("record: %w", err))
+			}
+		}
 		if err := record.Run(record.Options{
 			Out:         *out,
 			App:         *app,
@@ -146,8 +169,17 @@ func Run(args []string) int {
 		vad := fs.String("vad", "auto", "(whisperx) VAD method: auto, silero, or pyannote (auto picks silero; pyannote trips newer torch's weights_only load)")
 		offset := fs.Float64("offset", 0, "audio→session clock offset in seconds (default: derived from the recording's creation time)")
 		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
 		if *dir == "" {
 			return usageErr(fmt.Errorf("transcribe: -session is required"))
+		}
+		// An unknown engine name is a wrong invocation (exit 2) — reported from
+		// detectEngine it took the runtime status a script could not tell from a
+		// genuinely missing engine binary.
+		if err := transcribe.CheckEngine(*engine); err != nil {
+			return usageErr(fmt.Errorf("transcribe: %w", err))
 		}
 		offsetSet := false
 		fs.Visit(func(f *flag.Flag) {
@@ -180,6 +212,9 @@ func Run(args []string) int {
 		out := fs.String("out", "", "write the emitted request to FILE instead of stdout")
 		ingest := fs.String("ingest", "", "validate answer JSON at FILE (or \"-\" for stdin) into findings.jsonl")
 		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
 		if *dir == "" {
 			return usageErr(fmt.Errorf("analyze: -session is required"))
 		}
@@ -234,13 +269,32 @@ func Run(args []string) int {
 		finding := fs.String("finding", "", "non-interactive: the finding to judge (F-NNN)")
 		verdict := fs.String("verdict", "", "non-interactive: confirmed | rejected | duplicate-of-F-NNN")
 		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
 		if *dir == "" {
 			return usageErr(fmt.Errorf("review: -session is required"))
 		}
+		f, v := strings.TrimSpace(*finding), strings.TrimSpace(*verdict)
+		// The -finding/-verdict pairing and the verdict's syntax are invocation
+		// facts, so they are refused here at the usage status — reported from
+		// review.Run they exited 1, and only after the findings load, so a wrong
+		// flag on a session with no findings.jsonl was misreported as that.
+		if f != "" && v == "" {
+			return usageErr(fmt.Errorf("review: -verdict is required with -finding"))
+		}
+		if v != "" && f == "" {
+			return usageErr(fmt.Errorf("review: -finding is required with -verdict"))
+		}
+		if v != "" {
+			if _, _, err := review.ParseVerdictFlag(v); err != nil {
+				return usageErr(fmt.Errorf("review: %w", err))
+			}
+		}
 		if err := review.Run(review.Options{
 			Dir:     *dir,
-			Finding: strings.TrimSpace(*finding),
-			Verdict: strings.TrimSpace(*verdict),
+			Finding: f,
+			Verdict: v,
 			In:      os.Stdin,
 			Out:     os.Stdout,
 			IsTTY:   isCharDevice(os.Stdin),
@@ -262,6 +316,18 @@ func Run(args []string) int {
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
 		return 2
 	}
+}
+
+// rejectArgs refuses leftover positional arguments after flag parsing. Flag
+// parsing stops at the first non-flag argument, so a stray positional silently
+// discarded every flag that followed it and the command ran with defaults at
+// exit 0 — an invocation the operator never gave. No command takes positional
+// arguments (docs/reference/cli.md), so a leftover is a usage error.
+func rejectArgs(fs *flag.FlagSet) error {
+	if fs.NArg() > 0 {
+		return fmt.Errorf("%s: unexpected argument %q (the command takes no positional arguments)", fs.Name(), fs.Arg(0))
+	}
+	return nil
 }
 
 // printErr writes an operator-facing error in the one shape every command uses.

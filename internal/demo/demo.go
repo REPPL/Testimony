@@ -385,6 +385,14 @@ func DisplayURL(addr string) string {
 	return "http://" + net.JoinHostPort(host, port)
 }
 
+// CheckAddr validates a capture listen address without binding it, so the CLI
+// can refuse a malformed -addr as a usage error before any session directory
+// is created. Serve keeps applying the same rule when it binds.
+func CheckAddr(addr string) error {
+	_, err := listenAddr(addr)
+	return err
+}
+
 // listenAddr binds the capture server to loopback by default: a bare ":8737"
 // (empty host) becomes "127.0.0.1:8737", so the unauthenticated write endpoints
 // are not published to the LAN even though the banner prints "localhost". An
