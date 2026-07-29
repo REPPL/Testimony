@@ -202,7 +202,13 @@ Refusing to install."
     mkdir -p "$INSTALL_DIR"
     tar -xzf "$tmp/$tarball" -C "$tmp" testimony
     install -m 0755 "$tmp/testimony" "$INSTALL_DIR/testimony"
-    say "Installed: $INSTALL_DIR/testimony ($("$INSTALL_DIR/testimony" version))"
+    # Prove the installed binary runs and is the release it claims before
+    # announcing success: a failing command substitution inside say's argument
+    # does not trip `set -e`, so an unrunnable binary (a wrong-platform asset,
+    # a noexec mount) previously printed "Installed: ... ()" and exited 0.
+    installed_version="$("$INSTALL_DIR/testimony" version)" || die "the installed binary failed to run: $INSTALL_DIR/testimony"
+    [ "$installed_version" = "testimony $VERSION" ] || die "the installed binary reports \"$installed_version\", expected \"testimony $VERSION\""
+    say "Installed: $INSTALL_DIR/testimony ($installed_version)"
 
     case ":$PATH:" in
         *":$INSTALL_DIR:"*) : ;;
