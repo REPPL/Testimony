@@ -306,10 +306,18 @@ func Run(args []string) int {
 		return 0
 
 	case "version":
+		// version and help parse no flags, so the shared rejectArgs guard never
+		// sees their leftovers; the same no-positional contract applies.
+		if len(rest) > 0 {
+			return usageErr(fmt.Errorf("version: unexpected argument %q (the command takes no positional arguments)", rest[0]))
+		}
 		fmt.Println("testimony", Version)
 		return 0
 
 	case "help", "-h", "--help":
+		if len(rest) > 0 {
+			return usageErr(fmt.Errorf("help: unexpected argument %q (the command takes no positional arguments)", rest[0]))
+		}
 		fmt.Print(usage)
 		return 0
 

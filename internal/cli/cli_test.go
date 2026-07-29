@@ -150,6 +150,8 @@ func TestStrayPositionalIsAUsageError(t *testing.T) {
 		{"analyze", "-session", dir, "junk", "-out", "x", "-ingest", "-"},
 		{"review", "-session", dir, "junk", "-finding", "F-001", "-verdict", "confirmed"},
 		{"record", "-out", t.TempDir(), "junk", "-participant", "P9"},
+		{"version", "junk"},
+		{"help", "junk"},
 	}
 	for _, args := range cases {
 		var code int
