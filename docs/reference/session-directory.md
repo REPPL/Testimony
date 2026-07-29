@@ -65,7 +65,7 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `id` | string | yes | sequential utterance ID: `utt-001`, `utt-002`, …; unique within the file (`merge` refuses a reused id, since findings cite evidence by id) |
+| `id` | string | yes | sequential utterance ID: `utt-001`, `utt-002`, …; unique within the file and outside the `ev-NNN` namespace `merge` synthesises for events (`merge` refuses a reused or colliding id, since findings cite evidence by id) |
 | `t0` | number | yes | utterance start, session-relative seconds |
 | `t1` | number | yes | utterance end, session-relative seconds |
 | `speaker` | string | no | speaker label; `"P1"` when the engine supplies no diarisation |
