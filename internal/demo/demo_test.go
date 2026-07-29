@@ -2,6 +2,7 @@ package demo
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,31 @@ import (
 
 	"github.com/REPPL/Testimony/internal/session"
 )
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns
+// everything it wrote there, so a test can assert on the operator-facing
+// signal the capture server emits (its clients post via sendBeacon, so stderr
+// is the only place a refusal ever surfaces).
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	read := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		read <- string(b)
+	}()
+	fn()
+	os.Stderr = old
+	w.Close()
+	got := <-read
+	r.Close()
+	return got
+}
 
 // newTestServer builds a server writing into a fresh temp session directory,
 // mirroring Serve's stream files.
@@ -334,6 +360,56 @@ func TestWriteEndpointGuard(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestWiderBindWarnsCaptureStaysLoopback pins the operator signal for the
+// advertised wider bind: an explicit non-loopback host serves the page to
+// other devices, but allowWrite still pins capture posts to loopback clients,
+// so every remote post is refused and both streams stay empty. Pre-fix nothing
+// said so anywhere — the operator learned only when merge counted 0 events.
+func TestWiderBindWarnsCaptureStaysLoopback(t *testing.T) {
+	dir := manifestDir(t)
+	var srv *http.Server
+	var err error
+	stderr := captureStderr(t, func() { srv, err = Serve("0.0.0.0:0", dir) })
+	if err != nil {
+		t.Skipf("cannot bind 0.0.0.0 here: %v", err)
+	}
+	defer Shutdown(srv)
+	if want := "capture posts are accepted from loopback clients only"; !strings.Contains(stderr, want) {
+		t.Errorf("wider bind printed no warning; want %q on stderr, got %q", want, stderr)
+	}
+
+	// A loopback bind stays quiet — the warning must not cry wolf.
+	quiet := captureStderr(t, func() {
+		s2, err := Serve(":0", manifestDir(t))
+		if err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+		Shutdown(s2)
+	})
+	if strings.Contains(quiet, "loopback clients only") {
+		t.Errorf("loopback bind printed the wider-bind warning: %q", quiet)
+	}
+}
+
+// TestRefusedCaptureWriteIsLogged pins the refusal signal itself: a capture
+// post refused by the Host/Origin/Content-Type guard answers an error status
+// the sendBeacon client cannot surface, so the refusal must reach the
+// operator's terminal, as a failed persist already does.
+func TestRefusedCaptureWriteIsLogged(t *testing.T) {
+	s, _ := newTestServer(t)
+	stderr := captureStderr(t, func() {
+		w := httptest.NewRecorder()
+		s.handleInteraction(w, jsonPost("/api/interactions", `{"t":1,"kind":"click"}`,
+			map[string]string{"Host": "evil.example:8737"}))
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", w.Code)
+		}
+	})
+	if want := "capture write refused"; !strings.Contains(stderr, want) {
+		t.Errorf("refused write logged nothing; want %q on stderr, got %q", want, stderr)
 	}
 }
 

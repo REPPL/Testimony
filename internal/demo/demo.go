@@ -176,6 +176,16 @@ func Serve(addr, dir string) (*http.Server, error) {
 		raw.Close()
 		return nil, err
 	}
+	// A deliberately wider bind serves the page to other devices, but allowWrite
+	// still pins capture posts to loopback clients — lifting that pin would
+	// reopen the CSRF/DNS-rebinding surface the guard exists for. The operator
+	// must hear the consequence up front: their clients post via sendBeacon,
+	// which surfaces no status to the page, so without this line the first
+	// signal that a remote participant's session recorded nothing was merge
+	// counting 0 events.
+	if !loopbackHost(bind) {
+		fmt.Fprintf(os.Stderr, "testimony demo: warning: bound to %s, but capture posts are accepted from loopback clients only — a page opened from another device is served yet records nothing\n", bind)
+	}
 	// The two stream files use direct O_APPEND writes (no buffering), so their
 	// data is durable without an explicit Close; the OS reclaims them on exit,
 	// as before. Not closing them on Shutdown avoids racing an in-flight write.
@@ -350,21 +360,27 @@ func tooLongForJSONL(line []byte) bool {
 // a preflight the server never answers permissively, so a cross-origin no-cors
 // "simple request" POST cannot reach the write. It writes the error response and
 // returns false when the request must be refused.
+// Each refusal is also logged to the operator's terminal, for the same reason
+// a failed persist is: the page posts via sendBeacon, which cannot report a
+// status back, so stderr is the only signal that capture posts are being
+// refused — whether by an attack or by a remote client behind a wider bind.
 func allowWrite(w http.ResponseWriter, r *http.Request) bool {
-	if !loopbackHost(r.Host) {
-		http.Error(w, "unexpected Host", http.StatusForbidden)
+	refuse := func(reason, status string, code int) bool {
+		fmt.Fprintf(os.Stderr, "testimony demo: capture write refused (%s) from %s\n", reason, r.RemoteAddr)
+		http.Error(w, status, code)
 		return false
+	}
+	if !loopbackHost(r.Host) {
+		return refuse(fmt.Sprintf("unexpected Host %q", r.Host), "unexpected Host", http.StatusForbidden)
 	}
 	if o := r.Header.Get("Origin"); o != "" {
 		u, err := url.Parse(o)
 		if err != nil || !loopbackHost(u.Host) {
-			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
-			return false
+			return refuse(fmt.Sprintf("cross-origin Origin %q", o), "cross-origin request rejected", http.StatusForbidden)
 		}
 	}
 	if !isJSONContentType(r.Header.Get("Content-Type")) {
-		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
-		return false
+		return refuse(fmt.Sprintf("Content-Type %q", r.Header.Get("Content-Type")), "Content-Type must be application/json", http.StatusUnsupportedMediaType)
 	}
 	return true
 }
@@ -421,8 +437,10 @@ func CheckAddr(addr string) error {
 // listenAddr binds the capture server to loopback by default: a bare ":8737"
 // (empty host) becomes "127.0.0.1:8737", so the unauthenticated write endpoints
 // are not published to the LAN even though the banner prints "localhost". An
-// operator who deliberately wants a wider bind can still pass an explicit host
-// (e.g. "0.0.0.0:8737").
+// operator who deliberately passes an explicit host (e.g. "0.0.0.0:8737") gets
+// the wider bind, but it serves the PAGE only: allowWrite keeps refusing
+// capture posts from non-loopback clients, and Serve warns about exactly that
+// at startup.
 //
 // An addr that does not parse into host and port is refused outright rather
 // than passed through to net.Listen. Passing it through defeated the very
