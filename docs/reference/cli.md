@@ -66,7 +66,7 @@ Behaviour: with `-audio`, requires ffmpeg on PATH and converts the recording to 
 - `persisted: audio.wav converted from an external recording (+3.20s)` — read back from `audio.offset.json`, the printed value being the persisted offset;
 - `default 0: session audio.wav captured at t0` — a session whose `audio.wav` was captured here and has no sidecar.
 
-It then prints `transcribed N utterances → <path>`. With `-audio`, and on a bare run whose session already has an `audio.offset.json`, the offset in force is written to that sidecar, so a later bare run reuses it.
+It then prints `transcribed N utterances → <path>`. With `-audio`, the offset in force is written to `audio.offset.json`; without it, the sidecar is rewritten only when an explicit `-offset` is given and the session already has one. A later bare run reuses the persisted value.
 
 ## `testimony merge`
 

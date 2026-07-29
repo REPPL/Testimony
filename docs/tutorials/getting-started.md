@@ -7,8 +7,9 @@ You follow the same path Alice takes on her first session: she installs Testimon
 ## 1. Install Testimony
 
 One command installs the `testimony` binary into `~/.local/bin` — no admin
-rights needed — and then offers to set up the transcription dependencies
-(ffmpeg and a local speech-recognition engine), which step 6 relies on:
+rights needed — and then offers to set up two dependencies: ffmpeg, which
+step 2's recording needs, and a local speech-recognition engine, which step 6
+relies on:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | sh
@@ -16,8 +17,10 @@ curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | s
 
 Each prompt lists the exact replies it accepts. Answer **brew** when it offers
 ffmpeg — or **local** if you have no Homebrew, which is the only install option
-the prompt then lists — and **whisperx** when it offers the engine. Any other
-reply, including `y`, skips that dependency, and step 2 needs ffmpeg.
+the prompt then lists — and **whisperx** when it offers the engine. At those
+two prompts any other reply, including `y`, skips that dependency — and step 2
+needs ffmpeg. The one yes/no confirmation inside the whisperx setup (installing
+its `uv` tool) is the exception: there `y` accepts.
 
 The installer verifies the `testimony` binary against the release's published
 `SHA256SUMS` and, when the GitHub CLI (`gh`) is installed, against its SLSA
