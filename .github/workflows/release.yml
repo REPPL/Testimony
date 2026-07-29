@@ -220,9 +220,10 @@ jobs:
             dist/SHA256SUMS
 
       - name: Create the GitHub Release and upload the tarballs + SHA256SUMS
-        # --verify-tag: the tag must already exist (it triggered this run) and point
-        # at the checked-out commit. --generate-notes lists the merged PRs since the
-        # previous tag.
+        # --verify-tag: the tag must already exist in the remote (it triggered this
+        # run) — that is all gh checks; the moved-tag protection is the checkout of
+        # github.sha above, which pins what gets built regardless of where the tag
+        # points by now. --generate-notes lists the merged PRs since the previous tag.
         run: gh release create "$TAG" dist/testimony_*.tar.gz dist/SHA256SUMS --verify-tag --title "$TAG" --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -258,6 +259,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
+          # This step runs under !cancelled(), so the env-recording step may have
+          # failed before writing these; report that instead of dying on set -u.
+          if [ -z "${DEFAULT_BRANCH_START_SHA:-}" ] || [ -z "${DEFAULT_BRANCH:-}" ]; then
+            echo "tripwire inconclusive: the default-branch tip was never recorded (an earlier step failed first)."
+            exit 0
+          fi
           end="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}" --jq '.object.sha')"
           if [ "$end" = "${DEFAULT_BRANCH_START_SHA}" ]; then
             echo "default branch unchanged across the release job (${end}); the job pushed nothing."
