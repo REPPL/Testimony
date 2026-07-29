@@ -27,7 +27,7 @@ const usage = `testimony — usability evidence, on the record
 
 Usage:
   testimony record      [-out sessions] [-app NAME] [-participant P1] [-task ...]   managed capture: session dir + manifest, start recorders, run until Ctrl+C
-                        [-video|-no-video] [-demo [-addr :8737]]
+                        [-commit HASH] [-video|-no-video] [-demo [-addr :8737]]
   testimony demo        [-addr :8737] [-out sessions]   serve the instrumented demo app, capture a session
   testimony transcribe   -session DIR [-audio FILE]     transcribe a voice recording into transcript.jsonl (reuses the session's audio.wav when -audio is omitted)
                         [-engine auto|whisperx|whispercpp] [-model large-v3-turbo] [-language en] [-offset SECONDS]
@@ -39,6 +39,7 @@ Usage:
   testimony review       -session DIR                    interactively record verdicts on unverified findings (TTY-gated)
   testimony review       -session DIR -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
   testimony version
+  testimony help
 
 A session directory is described in docs/reference/session-directory.md.
 `

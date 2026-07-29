@@ -202,6 +202,17 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 	}
 }
 
+// TestUsageListsEveryFlagAndCommand pins the top-level usage text against the
+// documented invocation surface: record's -commit flag and the help command
+// are part of docs/reference/cli.md but were absent from `testimony help`.
+func TestUsageListsEveryFlagAndCommand(t *testing.T) {
+	for _, want := range []string{"-commit HASH", "testimony help"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage text does not mention %q", want)
+		}
+	}
+}
+
 // TestMissingSessionIsAUsageError pins the exit-status contract of
 // docs/reference/cli.md: a wrong invocation exits 2 and a runtime failure of a
 // well-formed command exits 1. A missing required -session was reported as a
