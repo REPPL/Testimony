@@ -14,10 +14,18 @@ rights needed — and then offers to set up the transcription dependencies
 curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | sh
 ```
 
-Answer **y** when it offers ffmpeg and choose **whisperx** as the engine. The
-installer verifies the binary against the release's published checksums and SLSA
-build-provenance attestation (when the GitHub CLI is installed), verifies each
-dependency against the publisher's signature, and tells you if `~/.local/bin`
+Each prompt lists the exact replies it accepts. Answer **brew** when it offers
+ffmpeg — or **local** if you have no Homebrew, which is the only install option
+the prompt then lists — and **whisperx** when it offers the engine. Any other
+reply, including `y`, skips that dependency, and step 2 needs ffmpeg.
+
+The installer verifies the `testimony` binary against the release's published
+`SHA256SUMS` and, when the GitHub CLI (`gh`) is installed, against its SLSA
+build-provenance attestation too, refusing to install on a mismatch. The
+dependencies carry weaker guarantees: the **local** ffmpeg build for macOS is
+checked against a pinned publisher key only when `gpg` is on your machine, and
+it warns you when it installs one unverified; `uv` and whisperx are fetched from
+their publishers unverified. The installer also tells you if `~/.local/bin`
 still needs adding to your `PATH`.
 
 Check the install:
