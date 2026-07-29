@@ -64,11 +64,13 @@ A minimal capture script, following the same conventions as the demo app — pre
         ? navigator.sendBeacon(url, new Blob([json], { type: "application/json" }))
         : false;
       if (!queued) {
-        fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: json, keepalive: true });
+        fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: json, keepalive: true })
+          .catch(function () { /* an async refusal must not surface as an unhandled rejection */ });
       }
     } catch (e) { /* capture must never break the app */ }
   }
   function interaction(kind, el, extra) {
+    if (!(el instanceof Element)) return; // a non-Element target must not throw in a capture listener
     var payload = {
       t: Date.now(),
       kind: kind,
