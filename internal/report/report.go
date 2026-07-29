@@ -41,8 +41,8 @@ func Render(dir string, window float64) (string, error) {
 	// from a hand-edited or exchanged timeline) previously vanished from the
 	// rendered timeline while end() still counted its time into the Duration
 	// header — the report asserted a session span its own timeline never
-	// reached, and the entry's id stayed citable by findings. Checked before the
-	// sort so the named line matches the file.
+	// reached, and the entry's id stayed citable by findings. Checked before
+	// the sort so the named entry ordinal reflects the file's record order.
 	if err := timeline.CheckSrc(entries); err != nil {
 		return "", err
 	}

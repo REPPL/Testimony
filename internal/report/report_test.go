@@ -593,7 +593,7 @@ func TestRenderRefusesUnknownSrc(t *testing.T) {
 	if err == nil {
 		t.Fatal("Render silently accepted a timeline entry with unknown src")
 	}
-	if !strings.Contains(err.Error(), "unknown src") || !strings.Contains(err.Error(), "line 3") {
-		t.Fatalf("error must name the unknown src and its line: %v", err)
+	if !strings.Contains(err.Error(), "unknown src") || !strings.Contains(err.Error(), "entry 3") {
+		t.Fatalf("error must name the unknown src and its entry: %v", err)
 	}
 }
