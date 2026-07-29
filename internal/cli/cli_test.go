@@ -110,8 +110,8 @@ func TestReportRejectsNonFiniteWindow(t *testing.T) {
 		stderr := captureStderr(t, func() {
 			code = Run([]string{"report", "-session", dir, "-window", w})
 		})
-		if code == 0 {
-			t.Fatalf("-window %s returned success; want a refusal", w)
+		if code != 2 {
+			t.Fatalf("-window %s: exit %d, want 2 (usage error, like every other bad invocation)", w, code)
 		}
 		if !strings.Contains(stderr, "testimony: report: -window must be a finite number") {
 			t.Fatalf("-window %s: want the finite-window refusal on stderr, got %q", w, stderr)

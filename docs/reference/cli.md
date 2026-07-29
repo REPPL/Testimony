@@ -12,7 +12,7 @@ Running `testimony` with no command, or with an unknown command, prints the usag
 |---|---|
 | 0 | success |
 | 1 | runtime error — the message is printed to stderr as `testimony: <error>` |
-| 2 | usage error — no command, an unknown command, an unparseable flag, or a missing required flag |
+| 2 | usage error — no command, an unknown command, an unparseable or invalid flag value, or a missing required flag |
 
 ## `testimony demo`
 

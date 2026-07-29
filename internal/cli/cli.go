@@ -93,7 +93,7 @@ func Run(args []string) int {
 		// participant was doing while they spoke, and the command exits 0. A negative
 		// window is legitimate (it narrows the join), so only finiteness is required.
 		if math.IsNaN(*window) || math.IsInf(*window, 0) {
-			return fail(fmt.Errorf("report: -window must be a finite number of seconds, got %v", *window))
+			return usageErr(fmt.Errorf("report: -window must be a finite number of seconds, got %v", *window))
 		}
 		md, err := report.Render(*dir, *window)
 		if err != nil {
