@@ -33,7 +33,7 @@
 set -eu
 
 REPO="REPPL/Testimony"
-VERSION="v0.1.0"
+VERSION="v0.4.0"
 
 # Pinned OpenPGP fingerprint of the evermeet.cx ffmpeg publisher key
 # (Helmut K. C. Tessarek, key id 0x476C4B611A660874). The local-macOS ffmpeg
