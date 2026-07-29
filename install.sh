@@ -199,15 +199,18 @@ Refusing to install."
         say "        https://cli.github.com  — then re-run this installer."
     fi
 
-    mkdir -p "$INSTALL_DIR"
     tar -xzf "$tmp/$tarball" -C "$tmp" testimony
+    # Prove the extracted binary runs and is the release it claims BEFORE it
+    # is installed, so a refusal cannot clobber a previously good binary: a
+    # failing command substitution inside say's argument does not trip
+    # `set -e`, so an unrunnable binary (a wrong-platform asset) previously
+    # replaced the installed one and printed "Installed: ... ()" at exit 0.
+    # Releases predating the version stamp (v0.1.0) report "testimony dev"
+    # and are refused here; every release since prints its own tag.
+    installed_version="$("$tmp/testimony" version)" || die "the release binary failed to run on this machine (a wrong-platform asset?): $tarball"
+    [ "$installed_version" = "testimony $VERSION" ] || die "the release binary reports \"$installed_version\", expected \"testimony $VERSION\"; refusing to install it"
+    mkdir -p "$INSTALL_DIR"
     install -m 0755 "$tmp/testimony" "$INSTALL_DIR/testimony"
-    # Prove the installed binary runs and is the release it claims before
-    # announcing success: a failing command substitution inside say's argument
-    # does not trip `set -e`, so an unrunnable binary (a wrong-platform asset,
-    # a noexec mount) previously printed "Installed: ... ()" and exited 0.
-    installed_version="$("$INSTALL_DIR/testimony" version)" || die "the installed binary failed to run: $INSTALL_DIR/testimony"
-    [ "$installed_version" = "testimony $VERSION" ] || die "the installed binary reports \"$installed_version\", expected \"testimony $VERSION\""
     say "Installed: $INSTALL_DIR/testimony ($installed_version)"
 
     case ":$PATH:" in
