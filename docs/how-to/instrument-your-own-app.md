@@ -15,7 +15,7 @@ This creates a fresh session directory (with `manifest.json` anchoring the sessi
 | `POST /api/interactions` | one normalised interaction (a single JSON object) | `interactions.jsonl` (one line per request) |
 | `POST /api/events` | a batch of raw rrweb events (a JSON array) | `events.rrweb.jsonl` (one line per array element) |
 
-Both endpoints accept POST only (anything else returns 405), cap the body at 8 MiB, and return `204 No Content` on success. `/api/interactions` rejects invalid JSON with 400; `/api/events` rejects anything that is not a JSON array with 400.
+Both endpoints accept POST only (anything else returns 405) and return `204 No Content` on success. `/api/interactions` caps the body at 4 MiB — the readable JSONL line limit, since one request becomes one line — and rejects invalid JSON with 400; `/api/events` caps the batch body at 8 MiB and rejects anything that is not a JSON array with 400. A body over its cap gets 413, as does a batch element that would itself exceed the 4 MiB line limit.
 
 To defend the evidence against cross-origin forgery (CSRF) and DNS-rebinding, the write endpoints require `Content-Type: application/json`, a loopback `Host`, and — when present — a same-origin `Origin`. Post from your app's own origin (see the proxy in step 5) and always set the JSON content type, as the snippet below does. Each accepted body is re-encoded to a single line, so one request is always exactly one JSONL record.
 
