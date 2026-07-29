@@ -335,7 +335,7 @@ func checkedUtterances(path string, raw []rawUtterance) ([]Utterance, error) {
 		}
 		if id := session.SafeText(r.ID); id != "" {
 			if prev, dup := seen[id]; dup {
-				return nil, fmt.Errorf("%s: utterance %d reuses id %q (first used by utterance %d); ids must be unique for findings to cite them unambiguously", path, i+1, id, prev)
+				return nil, fmt.Errorf("%s: utterance %d reuses id %q (first used by utterance %d; ids are compared with invisible characters stripped); ids must be unique for findings to cite them unambiguously", path, i+1, id, prev)
 			}
 			seen[id] = i + 1
 		}
@@ -425,6 +425,25 @@ func Merge(dir string) (speech, events int, err error) {
 	}
 
 	entries := BuildEntries(t0, utts, ints)
+	// The last id gate: checkedUtterances refuses an utterance reusing another
+	// utterance's id, but a transcript utterance named into the ev-NNN
+	// namespace collides with the event ids BuildEntries has just synthesised
+	// — producing a duplicate-id timeline from merge itself, which analyze
+	// then refuses while the repairable defect lives in transcript.jsonl.
+	// Scanning the built entries closes that cross-namespace case (and any
+	// future id source), so a merge-produced timeline never carries a
+	// duplicate id — the guarantee the CLI reference states.
+	seen := map[string]bool{}
+	for _, e := range entries {
+		id := session.SafeText(e.ID)
+		if id == "" {
+			continue
+		}
+		if seen[id] {
+			return 0, 0, fmt.Errorf("%s: utterance id %q collides with a synthesized event id; utterance ids must stay outside the ev-NNN namespace", uttsPath, id)
+		}
+		seen[id] = true
+	}
 	if err := session.WriteJSONL(filepath.Join(dir, session.TimelineFile), entries); err != nil {
 		return 0, 0, fmt.Errorf("write timeline: %w", err)
 	}

@@ -544,3 +544,34 @@ func TestMergeRejectsDuplicateUtteranceID(t *testing.T) {
 		t.Fatalf("timeline.jsonl was written despite the duplicate id")
 	}
 }
+
+// TestMergeRejectsUtteranceIDInEventNamespace pins the cross-namespace half of
+// the duplicate-id gate: checkedUtterances only compares utterances with each
+// other, so a transcript utterance named into the ev-NNN namespace previously
+// collided with the event ids BuildEntries synthesises — merge exited 0 with a
+// duplicate-id timeline that analyze then refused, blaming the generated file.
+func TestMergeRejectsUtteranceIDInEventNamespace(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	utt := `{"id":"ev-001","t0":1.0,"t1":2.0,"speaker":"P1","text":"first"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(utt), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	ev := `{"t":` + strconv.FormatInt(t0+1500, 10) + `,"kind":"click"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.InteractionsFile), []byte(ev), 0o644); err != nil {
+		t.Fatalf("write interactions: %v", err)
+	}
+
+	_, _, err := Merge(dir)
+	if err == nil {
+		t.Fatalf("expected a namespace-collision error, got nil")
+	}
+	if !strings.Contains(err.Error(), `"ev-001"`) || !strings.Contains(err.Error(), session.TranscriptFile) {
+		t.Fatalf("error should name the colliding id and the transcript, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the collision")
+	}
+}
