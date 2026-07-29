@@ -27,9 +27,10 @@ is installed, its SLSA build-provenance attestation):
 curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | sh
 ```
 
-The installer then offers to set up what `transcribe` needs — ffmpeg and a local
-ASR engine (WhisperX or whisper.cpp) — via Homebrew where available, or as
-user-local installs for machines without admin rights. Prefer to read before you
+The installer then offers to set up the pipeline's two dependencies — ffmpeg,
+which `record`'s capture (and `transcribe -audio`'s conversion) needs, and a
+local ASR engine (WhisperX or whisper.cpp) for `transcribe` — via Homebrew
+where available, or as user-local installs for machines without admin rights. Prefer to read before you
 run (sensible), or pass flags:
 
 ```sh
@@ -84,7 +85,9 @@ Each session is one folder of small, inspectable files:
 ```
 sessions/<timestamp>/
   manifest.json        # app, participant, tasks, t0_epoch_ms (the shared clock anchor)
-  audio.wav            # 16 kHz mono extract (local only)
+  audio.wav            # 16 kHz mono ASR input, captured or converted (local only)
+  audio.offset.json    # audio→session offset for an external recording (local only)
+  screen.mp4           # screen capture, with record -video (local only)
   events.rrweb.jsonl   # raw rrweb stream (archival)
   interactions.jsonl   # normalised interaction events
   transcript.jsonl     # time-aligned utterances

@@ -36,7 +36,7 @@ Each interaction is one JSON object. The fields the pipeline consumes:
 | Field | Type | Meaning |
 |---|---|---|
 | `t` | integer, **required** | event time in epoch milliseconds (`Date.now()`) |
-| `kind` | string | event kind, e.g. `"click"` or `"input"` |
+| `kind` | string, **required** | event kind, e.g. `"click"` or `"input"` |
 | `selector` | string | CSS-like anchor, ideally `[data-testid=...]` |
 | `text` | string | short human-readable label of the element |
 | `value` | string | new value for input events |

@@ -178,14 +178,17 @@ Refusing to install."
 }
 
 # --- dependencies -----------------------------------------------------------
-# transcribe needs: ffmpeg, plus one ASR engine (WhisperX preferred, whisper.cpp
-# works too). demo/merge/report need nothing. Local options never require admin
-# rights; brew needs a Homebrew install but not sudo on default setups.
+# record's capture needs ffmpeg (so does transcribe -audio's conversion; a bare
+# transcribe needs none), and transcribe needs one ASR engine (WhisperX
+# preferred, whisper.cpp works too). demo/merge/report need nothing. Local
+# options never require admin rights; brew needs a Homebrew install but not
+# sudo on default setups.
 
 dep_ffmpeg() {
     if have ffmpeg; then say "ffmpeg: already installed ($(command -v ffmpeg))"; return; fi
     say ""
-    say "ffmpeg is required by 'testimony transcribe' (audio conversion)."
+    say "ffmpeg is required by 'testimony record' (audio/screen capture) and by"
+    say "'testimony transcribe -audio' (converting an external recording)."
     if have brew; then
         c=$(choose "Install ffmpeg via" "brew" "local")
     else
@@ -298,10 +301,11 @@ dep_asr() {
         whisper.cpp)
             brew install whisper-cpp
             say ""
-            say "whisper.cpp needs a ggml model. Download once (~1.5 GB), user-local:"
-            say "  mkdir -p ~/.local/share/testimony/models && curl -fL -o ~/.local/share/testimony/models/ggml-large-v3-turbo.bin \\"
+            say "whisper.cpp needs a ggml model. Download once (~1.5 GB), user-local,"
+            say "into a directory '-model NAME' searches:"
+            say "  mkdir -p ~/.cache/whisper.cpp && curl -fL -o ~/.cache/whisper.cpp/ggml-large-v3-turbo.bin \\"
             say "    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
-            say "Then: testimony transcribe -engine whispercpp -model ~/.local/share/testimony/models/ggml-large-v3-turbo.bin ..."
+            say "Then: testimony transcribe -engine whispercpp ...   (-model large-v3-turbo is the default)"
             ;;
         skip)
             say "Skipped. Later: uv tool install whisperx   or   brew install whisper-cpp" ;;
@@ -327,7 +331,7 @@ main() {
 
     if [ "$NO_DEPS" = 1 ]; then
         say ""
-        say "Dependencies skipped (--no-deps). 'testimony transcribe' needs ffmpeg + whisperx or whisper.cpp."
+        say "Dependencies skipped (--no-deps). 'testimony record' needs ffmpeg; 'testimony transcribe' needs whisperx or whisper.cpp (and ffmpeg with -audio)."
         exit 0
     fi
 
