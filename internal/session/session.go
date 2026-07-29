@@ -416,7 +416,11 @@ func WriteJSONL[T any](path string, values []T) error {
 		// tooLongForJSONL draws the boundary on the same side, so the capture and
 		// artefact writers accept exactly the same set of records.
 		if buf.Len() > MaxJSONLLine {
-			return fmt.Errorf("%s: record %d encodes to %d bytes, over the %d-byte JSONL line limit", path, i, buf.Len(), MaxJSONLLine)
+			// 1-based, and named as a line of the file being written: the caller's
+			// slice is already merged and time-sorted, so a 0-based slice index
+			// pointed the operator at nothing they could count to — "record 0" is
+			// no line of any file, and no line of the source transcript either.
+			return fmt.Errorf("%s: line %d of the output encodes to %d bytes, over the %d-byte JSONL line limit", path, i+1, buf.Len(), MaxJSONLLine)
 		}
 	}
 

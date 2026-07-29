@@ -276,8 +276,11 @@ func TestWriteJSONLRefusesOverlongRecord(t *testing.T) {
 	if err == nil {
 		t.Fatal("WriteJSONL persisted a record over MaxJSONLLine; want refusal")
 	}
-	if !strings.Contains(err.Error(), "record 0") {
-		t.Errorf("error does not name the offending index: %v", err)
+	// The offending record is named as a 1-based line of the output file — the
+	// only position an operator can count to. The earlier "record 0" was a
+	// 0-based index into the caller's already-sorted slice, a line of no file.
+	if !strings.Contains(err.Error(), "line 1 of the output") {
+		t.Errorf("error does not name the offending output line: %v", err)
 	}
 
 	// The earlier artefact is intact: nothing was written, not even a truncation.
