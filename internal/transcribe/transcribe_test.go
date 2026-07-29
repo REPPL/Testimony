@@ -590,6 +590,49 @@ func TestRenameFailureRollsBackSidecar(t *testing.T) {
 	}
 }
 
+// TestRenameFailureKeepsUncapturablePriorSidecar pins the third rollback
+// state: a prior sidecar too large to capture (the bounded read refuses it —
+// a received session can ship anything at this name) must survive a failed
+// finalise as whatever this run wrote, never be removed. Removing a sidecar
+// the run did not create would relabel external audio as record-origin — the
+// silent shift the sidecar exists to prevent. The bound itself is the point:
+// the capture read stops at the cap instead of buffering an arbitrarily large
+// attacker-authored file.
+func TestRenameFailureKeepsUncapturablePriorSidecar(t *testing.T) {
+	fakeTools(t)
+	dir, wav := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+	// An over-cap prior: readable, regular, but past maxOffsetSidecarBytes.
+	huge := make([]byte, maxOffsetSidecarBytes+2)
+	for i := range huge {
+		huge[i] = 'x'
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.AudioOffsetFile), huge, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := convertRunner
+	t.Cleanup(func() { convertRunner = old })
+	convertRunner = func(_, _, tmpPath string) error {
+		if err := os.WriteFile(tmpPath, []byte("RIFF converted external recording"), 0o644); err != nil {
+			return err
+		}
+		if err := os.Remove(wav); err != nil {
+			return err
+		}
+		if err := os.Mkdir(wav, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(wav, "occupied"), []byte("x"), 0o644)
+	}
+
+	_, err := Run(Options{SessionDir: dir, Audio: externalRecording(t), Engine: EngineWhisperX, Log: io.Discard})
+	if err == nil {
+		t.Fatal("a failed finalise must fail the run")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.AudioOffsetFile)); statErr != nil {
+		t.Errorf("the sidecar was removed on rollback despite a pre-existing one the run could not capture: %v", statErr)
+	}
+}
+
 // TestRunRefusesNonRegularExternalAudio is the hang regression on the offset
 // derivation. The refusals that make -audio safe to open — the accepted-container
 // check and the regular-file check — lived inside convertAudio, so hoisting the

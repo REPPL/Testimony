@@ -124,20 +124,31 @@ func Run(opts Options) (int, error) {
 		// record-origin capture at exit 1 with no offset recorded. Written in
 		// this order, a refused sidecar aborts with the session byte-for-byte
 		// as it was found; and if the rename itself then fails, the sidecar is
-		// rolled back (restored, or removed when none preceded it) so the
-		// session never claims a persisted offset for audio that was never
-		// converted — which would prime every later bare run to shift a
-		// record-origin capture at exit 0. The prior-bytes read is best-effort:
-		// a sidecar the no-follow guard refuses to read is one it will refuse
-		// to overwrite too, so the write below fails first.
+		// rolled back so the session never claims a persisted offset for audio
+		// that was never converted — which would prime every later bare run to
+		// shift a record-origin capture at exit 0.
+		//
+		// The prior-bytes capture is bounded like every other untrusted read on
+		// the session surface: a received session can ship an arbitrarily large
+		// file at this name, and an unbounded ReadAll buffered it whole before
+		// the conversion even started. Three prior states drive the rollback:
+		// absent (remove the sidecar this run wrote), captured (restore the
+		// prior bytes), and present-but-uncapturable — over the cap, or a read
+		// the no-follow guard refuses — where the rollback must NOT remove:
+		// deleting a sidecar this run did not create would relabel external
+		// audio as record-origin, the exact silent shift the sidecar prevents.
 		sidecar := filepath.Join(opts.SessionDir, session.AudioOffsetFile)
 		var prior []byte
 		priorExists := false
+		priorCaptured := false
 		if f, rerr := session.OpenFileNoFollowRead(sidecar); rerr == nil {
-			if b, rerr := io.ReadAll(f); rerr == nil {
-				prior, priorExists = b, true
+			priorExists = true
+			if b, rerr := io.ReadAll(io.LimitReader(f, maxOffsetSidecarBytes+1)); rerr == nil && len(b) <= maxOffsetSidecarBytes {
+				prior, priorCaptured = b, true
 			}
 			f.Close()
+		} else if !errors.Is(rerr, os.ErrNotExist) {
+			priorExists = true
 		}
 		wrote := false
 		convErr := convertAudio(opts.Audio, wav, func() error {
@@ -149,11 +160,15 @@ func Run(opts Options) (int, error) {
 		})
 		if convErr != nil {
 			if wrote {
-				if priorExists {
+				switch {
+				case priorCaptured:
 					_ = session.WriteFileNoFollow(sidecar, prior, 0o644)
-				} else {
+				case !priorExists:
 					_ = os.Remove(sidecar)
 				}
+				// priorExists && !priorCaptured: the sidecar this run wrote stays —
+				// restoring is impossible and removing would erase the one durable
+				// fact still true of the session, that audio.wav is external.
 			}
 			return 0, convErr
 		}
