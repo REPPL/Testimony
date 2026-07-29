@@ -21,13 +21,15 @@
 #
 # Trust model. The binary install downloads the platform tarball AND the release's
 # published SHA256SUMS, and verifies the tarball against it (integrity — the bytes
-# are exactly what the release published). When `gh` (the GitHub CLI) is available
-# it ALSO runs `gh attestation verify` against the release workflow's SLSA
-# build-provenance (authenticity — cryptographic proof the tarball was built by
-# REPPL/Testimony's own release.yml, the strong anchor). Without gh it proceeds on
-# the checksum alone and prints a note that installing gh enables provenance
-# verification. No per-release hash is pinned in this script: the checksums are
-# fetched from the release itself and the attestation binds them to the workflow.
+# are exactly what the release published). When an AUTHENTICATED `gh` (the GitHub
+# CLI) is available it ALSO runs `gh attestation verify` against the release
+# workflow's SLSA build-provenance (authenticity — cryptographic proof the tarball
+# was built by REPPL/Testimony's own release.yml, the strong anchor). A gh that
+# cannot attempt the verification — absent, unauthenticated, or too old to know
+# attestations — means the install proceeds on the checksum alone, with a note
+# saying so; only a verification gh performs and rejects refuses the install.
+# No per-release hash is pinned in this script: the checksums are fetched from
+# the release itself and the attestation binds them to the workflow.
 # Everything installs into user-owned locations by default; sudo is never invoked.
 
 set -eu
@@ -116,11 +118,14 @@ install_binary() {
     base="https://github.com/$REPO/releases/download/$VERSION"
 
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/testimony-install.XXXXXX")
-    trap 'rm -rf "$tmp"' EXIT
-    # A caught INT/TERM must also STOP the script: a trap that only cleans up
-    # returns control after the handler, so Ctrl+C at a dependency prompt read
-    # was swallowed into the safe-default answer and the run carried on.
-    trap 'rm -rf "$tmp"; trap - EXIT; exit 130' INT TERM
+    # Both traps sweep every mktemp dir the script can hold ($tmp here; $tmp2,
+    # $gnupg, $uvd in the dependency stage — unset expansions vanish), so an
+    # interrupt mid-dependency leaks nothing. A caught INT/TERM must also STOP
+    # the script: a trap that only cleans up returns control after the handler,
+    # so Ctrl+C at a dependency prompt read was swallowed into the safe-default
+    # answer and the run carried on.
+    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"}' EXIT
+    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"}; trap - EXIT; exit 130' INT TERM
 
     say "Downloading $tarball ..."
     # A bad --version (or a platform the release never published) surfaces from
@@ -160,7 +165,7 @@ Refusing to install."
     # than no gh at all, refusing a tarball whose checksum had just verified.
     # Only a verification gh actually performed and rejected refuses the
     # install, and gh's own output is shown instead of being swallowed.
-    if have gh && ! gh auth status >/dev/null 2>&1; then
+    if have gh && ! gh auth status --hostname github.com >/dev/null 2>&1; then
         say "NOTE: 'gh' is installed but not authenticated — installed on the checksum alone."
         say "      'gh attestation verify' needs an authenticated gh; run 'gh auth login'"
         say "      (or set GH_TOKEN) and re-run to also verify SLSA build-provenance."
@@ -366,7 +371,8 @@ Passing flags through a pipe:
   curl -fsSL .../install.sh | sh -s -- --yes --dir "$HOME/bin"
 
 Flags:
-  -d, --dir DIR     install directory (default: ~/.local/bin — no admin rights needed)
+  -d, --dir DIR     install directory (default: ~/.local/bin, or $TESTIMONY_INSTALL_DIR
+                    when set — no admin rights needed)
   -y, --yes         non-interactive: accept dependency installs (brew if present,
                     otherwise the local, admin-free option)
       --no-deps     install the binary only; print dependency guidance and exit
