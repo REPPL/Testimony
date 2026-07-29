@@ -81,6 +81,24 @@ jobs:
           grep -q "## Findings" examples/sample-session/report.md
           grep -q "### Confirmed (1)" examples/sample-session/report.md
           grep -q "\*\*F-001\*\* bug" examples/sample-session/report.md
+          # The event half of the pipeline: every assertion above is satisfiable
+          # from the transcript and findings alone (verified: deleting
+          # interactions.jsonl left them all green), so the header counts and an
+          # event-only selector string gate the interactions → timeline → report
+          # path too. The exact counts pin the bundled fixture; extending the
+          # sample session means updating them here and in release.yml.
+          grep -q "\*\*Utterances:\*\* 10 · \*\*Events:\*\* 10" examples/sample-session/report.md
+          grep -q "data-testid=save-btn" examples/sample-session/report.md
+
+      # install.sh is served live from main as the documented install path, so
+      # a merged syntax error breaks `curl | sh` for every new user with no
+      # gate having run. Parse it with both shells an operator realistically
+      # pipes it into.
+      - name: Installer syntax
+        run: |
+          set -euo pipefail
+          sh -n install.sh
+          bash -n install.sh
 
   # Secrets never land in history: full-history scan on every push/PR. Run as a
   # pinned, checksum-verified CLI (no PR-comment / SARIF GitHub-API integration

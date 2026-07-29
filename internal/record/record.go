@@ -158,7 +158,14 @@ func Run(opts Options) error {
 		}
 	}
 
-	printStatus(opts.Log, recorders, opts.Demo, opts.Addr)
+	// Print the address the demo server actually bound (Serve records it on
+	// the returned server), not the requested one: with -addr :0 the requested
+	// form renders the unopenable http://localhost:0.
+	statusAddr := opts.Addr
+	if srv != nil && srv.Addr != "" {
+		statusAddr = srv.Addr
+	}
+	printStatus(opts.Log, recorders, opts.Demo, statusAddr)
 
 	// Nothing is running to wait on (degraded platform, no demo): the session
 	// dir and manifest are written; print next steps and exit cleanly.

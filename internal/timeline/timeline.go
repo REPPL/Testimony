@@ -132,6 +132,31 @@ func BuildEntries(t0EpochMS int64, utts []Utterance, ints []Interaction) []Entry
 	return entries
 }
 
+// CheckSrc refuses a timeline whose entries carry a src outside the
+// documented "speech" | "event" set. Merge only ever writes those two, so
+// this bites solely on a hand-edited or exchanged timeline.jsonl — where an
+// unknown src previously vanished without a word: report bucketed entries by
+// src with no default case, so the entry was absent from the rendered
+// timeline while end() still counted its time into the Duration header, and
+// analyze still indexed its id as citable evidence. Silently omitting an
+// entry from the human evidence artefact is the outcome the report package's
+// own +Inf-sentinel fix rules out, so an unrenderable entry refuses loudly,
+// naming its 1-based entry ordinal — the position among the file's records in
+// order, which is the file's line number only when the file carries no blank
+// lines (ReadJSONL skips those). The src value is routed through
+// session.SafeText because it is attacker-authorable and the message reaches
+// a terminal.
+func CheckSrc(entries []Entry) error {
+	for i, e := range entries {
+		switch e.Src {
+		case "speech", "event":
+		default:
+			return fmt.Errorf("timeline entry %d: unknown src %q (want \"speech\" or \"event\")", i+1, session.SafeText(e.Src))
+		}
+	}
+	return nil
+}
+
 // SpeechEnd returns the end time of a speech entry (its t1), falling back to
 // its start time.
 func SpeechEnd(e Entry) float64 {
@@ -293,9 +318,26 @@ func CheckInteraction(line []byte, t0EpochMS int64) error {
 // window would be the disproportionate answer.
 func checkedUtterances(path string, raw []rawUtterance) ([]Utterance, error) {
 	out := make([]Utterance, 0, len(raw))
+	// Refuse a duplicated utterance id at the boundary where the operator can
+	// repair it. BuildEntries copies each utterance's id verbatim, so a
+	// transcript reusing one would flow into timeline.jsonl and be refused only
+	// by analyze — naming a generated file the next merge would recreate,
+	// instead of the transcript that carries the defect. Ids are compared in
+	// their session.SafeText form, the form analyze indexes and the emitted
+	// request shows, so two ids distinct only by stripped bytes count as the
+	// collision they later become; empty ids are skipped (they cannot be cited,
+	// and calling two id-less utterances duplicates of "" would misname the
+	// problem).
+	seen := map[string]int{}
 	for i, r := range raw {
 		if r.T0 == nil {
 			return nil, fmt.Errorf("%s: utterance %d is missing t0; cannot place it on the session clock", path, i+1)
+		}
+		if id := session.SafeText(r.ID); id != "" {
+			if prev, dup := seen[id]; dup {
+				return nil, fmt.Errorf("%s: utterance %d reuses id %q (first used by utterance %d; ids are compared with invisible characters stripped); ids must be unique for findings to cite them unambiguously", path, i+1, id, prev)
+			}
+			seen[id] = i + 1
 		}
 		// A present t1 is accepted only when it does not precede t0. An explicit
 		// t1 < t0 is the same inverted-window hazard the nil case is defaulted away
@@ -383,6 +425,25 @@ func Merge(dir string) (speech, events int, err error) {
 	}
 
 	entries := BuildEntries(t0, utts, ints)
+	// The last id gate: checkedUtterances refuses an utterance reusing another
+	// utterance's id, but a transcript utterance named into the ev-NNN
+	// namespace collides with the event ids BuildEntries has just synthesised
+	// — producing a duplicate-id timeline from merge itself, which analyze
+	// then refuses while the repairable defect lives in transcript.jsonl.
+	// Scanning the built entries closes that cross-namespace case (and any
+	// future id source), so a merge-produced timeline never carries a
+	// duplicate id — the guarantee the CLI reference states.
+	seen := map[string]bool{}
+	for _, e := range entries {
+		id := session.SafeText(e.ID)
+		if id == "" {
+			continue
+		}
+		if seen[id] {
+			return 0, 0, fmt.Errorf("%s: utterance id %q collides with a synthesized event id; utterance ids must stay outside the ev-NNN namespace", uttsPath, id)
+		}
+		seen[id] = true
+	}
 	if err := session.WriteJSONL(filepath.Join(dir, session.TimelineFile), entries); err != nil {
 		return 0, 0, fmt.Errorf("write timeline: %w", err)
 	}

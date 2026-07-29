@@ -25,9 +25,13 @@
 # CLI) is available it ALSO runs `gh attestation verify` against the release
 # workflow's SLSA build-provenance (authenticity — cryptographic proof the tarball
 # was built by REPPL/Testimony's own release.yml, the strong anchor). A gh that
-# cannot attempt the verification — absent, unauthenticated, or too old to know
-# attestations — means the install proceeds on the checksum alone, with a note
-# saying so; only a verification gh performs and rejects refuses the install.
+# cannot attempt the verification — absent, too old to know attestations, or
+# unable to establish its authentication (which an unreachable API also causes
+# at the auth check) — means the install proceeds on the checksum alone, with
+# a note saying so. Once the verification is attempted, any failure refuses
+# the install, fail closed: a rejection, and equally a verification that
+# could not complete, because mid-verification failure cannot be told apart
+# from an attacker blocking it. Re-run when connectivity returns.
 # No per-release hash is pinned in this script: the checksums are fetched from
 # the release itself and the attestation binds them to the workflow.
 # Everything installs into user-owned locations by default; sudo is never invoked.
@@ -124,8 +128,8 @@ install_binary() {
     # the script: a trap that only cleans up returns control after the handler,
     # so Ctrl+C at a dependency prompt read was swallowed into the safe-default
     # answer and the run carried on.
-    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"}' EXIT
-    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"}; trap - EXIT; exit 130' INT TERM
+    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"} ${staged:+"$staged"}' EXIT
+    trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"} ${staged:+"$staged"}; trap - EXIT; exit 130' INT TERM
 
     say "Downloading $tarball ..."
     # A bad --version (or a platform the release never published) surfaces from
@@ -163,8 +167,14 @@ Refusing to install."
     # command or --signer-workflow fails the same way — treating those as
     # "attestation FAILED" made a freshly `brew install`ed gh strictly worse
     # than no gh at all, refusing a tarball whose checksum had just verified.
-    # Only a verification gh actually performed and rejected refuses the
-    # install, and gh's own output is shown instead of being swallowed.
+    # Once the verification is attempted, every failure refuses the install,
+    # fail closed — a rejected attestation, and equally a verification that
+    # fails mid-way (network, API outage): at that point an inconclusive
+    # answer cannot be told apart from one an attacker is blocking. The auth
+    # check above draws the attempt boundary: a gh whose authentication
+    # cannot be established — which an unreachable API also causes — is the
+    # checksum-fallback case, with a note naming it. gh's own output is shown
+    # instead of being swallowed.
     if have gh && ! gh auth status --hostname github.com >/dev/null 2>&1; then
         say "NOTE: 'gh' is installed but not authenticated — installed on the checksum alone."
         say "      'gh attestation verify' needs an authenticated gh; run 'gh auth login'"
@@ -191,10 +201,26 @@ Refusing to install."
         say "        https://cli.github.com  — then re-run this installer."
     fi
 
-    mkdir -p "$INSTALL_DIR"
     tar -xzf "$tmp/$tarball" -C "$tmp" testimony
-    install -m 0755 "$tmp/testimony" "$INSTALL_DIR/testimony"
-    say "Installed: $INSTALL_DIR/testimony ($("$INSTALL_DIR/testimony" version))"
+    # Prove the binary runs and is the release it claims BEFORE it replaces
+    # anything: a failing command substitution inside say's argument does not
+    # trip `set -e`, so an unrunnable binary (a wrong-platform asset)
+    # previously replaced the installed one and printed "Installed: ... ()"
+    # at exit 0. The probe runs from a staged copy inside INSTALL_DIR — the
+    # download's temp directory may sit on a noexec mount (a hardened /tmp,
+    # a noexec TMPDIR), where executing "$tmp/testimony" fails for a
+    # perfectly good binary — and only the verified copy is renamed onto the
+    # final name, so a refusal leaves any previously installed binary
+    # untouched. Releases predating the version stamp (v0.1.0) report
+    # "testimony dev" and are refused here; every release since prints its
+    # own tag.
+    mkdir -p "$INSTALL_DIR"
+    staged="$INSTALL_DIR/.testimony.staged.$$"
+    install -m 0755 "$tmp/testimony" "$staged"
+    installed_version="$("$staged" version)" || { rm -f "$staged"; die "the release binary failed to run from $INSTALL_DIR (a wrong-platform asset, or a noexec mount?): $tarball"; }
+    [ "$installed_version" = "testimony $VERSION" ] || { rm -f "$staged"; die "the release binary reports \"$installed_version\", expected \"testimony $VERSION\"; refusing to install it"; }
+    mv -f "$staged" "$INSTALL_DIR/testimony"
+    say "Installed: $INSTALL_DIR/testimony ($installed_version)"
 
     case ":$PATH:" in
         *":$INSTALL_DIR:"*) : ;;

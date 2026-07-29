@@ -9,9 +9,9 @@ timestamped interaction stream, rendered as a report that shows what was said ne
 to what was done.
 
 ```
- voice ──► local Whisper ──► transcript.jsonl ─┐
-                                               ├─► timeline.jsonl ─► report.md
- clicks ──► rrweb / hooks ──► interactions.jsonl ┘
+ voice ──► local Whisper ──► transcript.jsonl ─────┐
+                                                   ├─► timeline.jsonl ─► report.md
+ clicks ──► rrweb / hooks ──► interactions.jsonl ──┘
 ```
 
 Raw audio and video never leave your machine; only derived text is analysed. See
@@ -56,9 +56,12 @@ open examples/sample-session/report.md
 ```
 
 Then capture a real one: `testimony record -demo` starts a capture session —
-recording your voice and clicks in one command — and prints every step. The
-[getting-started tutorial](docs/tutorials/getting-started.md) walks the whole
-path — record, think aloud, transcribe, merge, report — in about five minutes. The result interleaves speech with interface events:
+recording your voice and clicks in one command — and prints every step. Voice
+and screen capture need macOS; elsewhere, `record` skips those streams and
+says so, and an external recording joins the session via `transcribe -audio`.
+The [getting-started tutorial](docs/tutorials/getting-started.md) walks the
+whole path — record, think aloud, transcribe, merge, report — in about five
+minutes. The result interleaves speech with interface events:
 
 ```
 **[00:22] P1:** “Hm. I clicked save and nothing happened. No message, no

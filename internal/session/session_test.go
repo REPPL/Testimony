@@ -276,8 +276,11 @@ func TestWriteJSONLRefusesOverlongRecord(t *testing.T) {
 	if err == nil {
 		t.Fatal("WriteJSONL persisted a record over MaxJSONLLine; want refusal")
 	}
-	if !strings.Contains(err.Error(), "record 0") {
-		t.Errorf("error does not name the offending index: %v", err)
+	// The offending record is named as a 1-based line of the output file — the
+	// only position an operator can count to. The earlier "record 0" was a
+	// 0-based index into the caller's already-sorted slice, a line of no file.
+	if !strings.Contains(err.Error(), "line 1 of the output") {
+		t.Errorf("error does not name the offending output line: %v", err)
 	}
 
 	// The earlier artefact is intact: nothing was written, not even a truncation.
@@ -508,5 +511,85 @@ func TestLoadManifestAcceptsOrdinary(t *testing.T) {
 	}
 	if m.Session != "s" {
 		t.Fatalf("want session s, got %q", m.Session)
+	}
+}
+
+// TestWriteFileAtomicNoFollowRefusesSymlink keeps the atomic write under the
+// same planted-symlink refusal as WriteFileNoFollow: rename would replace the
+// link rather than follow it, but a hostile session directory must not be able
+// to retarget an artefact name at all.
+func TestWriteFileAtomicNoFollowRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("original\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := WriteFileAtomicNoFollow(link, []byte("clobber\n"), 0o644); err == nil {
+		t.Fatal("WriteFileAtomicNoFollow wrote through a symlink; want refusal")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "original\n" {
+		t.Fatalf("symlink target disturbed: %q, %v", got, err)
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("planted symlink removed: %v", err)
+	}
+}
+
+// TestWriteFileAtomicNoFollowReplaces covers the happy path: content replaced,
+// no temp file left behind.
+func TestWriteFileAtomicNoFollowReplaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := WriteFileAtomicNoFollow(path, []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("WriteFileAtomicNoFollow: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "new\n" {
+		t.Fatalf("content: %q, %v", got, err)
+	}
+	names, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(names) != 1 {
+		t.Fatalf("temp file left behind: %v", names)
+	}
+}
+
+// TestWriteFileAtomicNoFollowPreservesExistingMode pins the permission
+// semantics the atomic write shares with a plain truncating open: replacing an
+// existing regular file keeps that file's own mode, so an operator-tightened
+// artefact (a 0600 sidecar) does not silently widen to the caller's default
+// perm on rewrite.
+func TestWriteFileAtomicNoFollowPreservesExistingMode(t *testing.T) {
+	// Both a tightened and a widened mode round-trip exactly: preservation is
+	// applied with fchmod on the temp file, which the umask does not filter.
+	for _, mode := range []os.FileMode{0o600, 0o664} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "f")
+		if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		if err := WriteFileAtomicNoFollow(path, []byte("new\n"), 0o644); err != nil {
+			t.Fatalf("WriteFileAtomicNoFollow: %v", err)
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		if got := fi.Mode().Perm(); got != mode {
+			t.Fatalf("existing file's mode not preserved: got %o, want %o", got, mode)
+		}
 	}
 }

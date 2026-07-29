@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
@@ -56,6 +57,11 @@ type segment struct {
 // Run performs the full pipeline and returns the number of utterances
 // written to transcript.jsonl in the session directory.
 func Run(opts Options) (int, error) {
+	// Default the log sink as record.Run does, so a caller that leaves Log nil
+	// gets progress on stderr instead of a panic at the first status line.
+	if opts.Log == nil {
+		opts.Log = os.Stderr
+	}
 	man, err := session.LoadManifest(opts.SessionDir)
 	if err != nil {
 		return 0, err
@@ -162,7 +168,7 @@ func Run(opts Options) (int, error) {
 			if wrote {
 				switch {
 				case priorCaptured:
-					_ = session.WriteFileNoFollow(sidecar, prior, 0o644)
+					_ = session.WriteFileAtomicNoFollow(sidecar, prior, 0o644)
 				case !priorExists:
 					_ = os.Remove(sidecar)
 				}
@@ -314,14 +320,19 @@ const maxOffsetSidecarBytes = 64 << 10
 const maxOffsetSeconds = 1e9
 
 // writeOffsetSidecar persists offset (with its provenance, for the operator)
-// beside audio.wav via the no-follow write guard, so a session's own directory
-// cannot redirect the write through a planted symlink.
+// beside audio.wav. The write is atomic (temp + rename) as well as
+// no-follow: a plain truncating write destroyed the prior sidecar's bytes
+// before writing the new ones, so a write failure in between left a
+// truncated sidecar behind — and because the caller's rollback triggers only
+// on a write that SUCCEEDED before the conversion failed, that truncated
+// file was never restored: every later bare transcribe then refused on the
+// unreadable sidecar, with the prior offset unrecoverable from the session.
 func writeOffsetSidecar(dir string, offset float64, provenance string) error {
 	b, err := json.Marshal(offsetSidecar{OffsetSeconds: offset, Provenance: provenance})
 	if err != nil {
 		return err
 	}
-	return session.WriteFileNoFollow(filepath.Join(dir, session.AudioOffsetFile), append(b, '\n'), 0o644)
+	return session.WriteFileAtomicNoFollow(filepath.Join(dir, session.AudioOffsetFile), append(b, '\n'), 0o644)
 }
 
 // offsetSidecarExists reports whether a sidecar is already present beside
@@ -330,8 +341,8 @@ func writeOffsetSidecar(dir string, offset float64, provenance string) error {
 // (malformed, oversized) is precisely the one an explicit -offset repairs — the
 // guidance readOffsetSidecar prints says so — so parsing here would refuse the
 // repair. os.Lstat, not os.Stat: a symlink planted at the sidecar name must
-// count as present, so the rewrite meets session.WriteFileNoFollow's refusal
-// rather than being mistaken for absence and skipped.
+// count as present, so the rewrite meets session.WriteFileAtomicNoFollow's
+// refusal rather than being mistaken for absence and skipped.
 func offsetSidecarExists(dir string) (bool, error) {
 	if _, err := os.Lstat(filepath.Join(dir, session.AudioOffsetFile)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -446,7 +457,14 @@ func tail(b []byte) string {
 	s := strings.TrimSpace(string(b))
 	const max = 800
 	if len(s) > max {
-		s = "…" + s[len(s)-max:]
+		// Advance the cut to the next rune boundary so the tail never opens
+		// mid-rune: a split UTF-8 sequence (a non-ASCII path in the engine's
+		// output straddling the cut) renders as replacement garbage.
+		i := len(s) - max
+		for i < len(s) && !utf8.RuneStart(s[i]) {
+			i++
+		}
+		s = "…" + s[i:]
 	}
 	return s
 }

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // proc is the minimal process surface the lifecycle drives, so the SIGINT →
@@ -100,7 +101,14 @@ func (l *lockedBuffer) tail() string {
 	const max = 1200
 	b := l.buf
 	if len(b) > max {
-		return "…" + string(b[len(b)-max:])
+		// Advance the cut to the next rune boundary so the tail never opens
+		// mid-rune: a split UTF-8 sequence (a non-ASCII device name in ffmpeg's
+		// listing straddling the cut) renders as replacement garbage.
+		i := len(b) - max
+		for i < len(b) && !utf8.RuneStart(b[i]) {
+			i++
+		}
+		return "…" + string(b[i:])
 	}
 	if l.dropped {
 		return "…" + string(b)

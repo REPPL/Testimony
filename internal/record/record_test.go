@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/REPPL/Testimony/internal/demo"
 	"github.com/REPPL/Testimony/internal/session"
@@ -1169,4 +1170,59 @@ func TestAnyExitReportsDeadChild(t *testing.T) {
 
 	// Clean up the still-live child so no goroutine lingers.
 	stopChild(live, time.Second)
+}
+
+// TestClassifyRecorderExitBannerIsNotAPermissionsSignature pins the signature
+// list to device-open failures only. ffmpeg prints its avfoundation input
+// banner on every SUCCESSFUL open, so with the bare module name in the list a
+// start-up failure whose real cause followed the banner — a full disk, a
+// missing encoder, an unwritable session directory — was headlined "most
+// likely a permissions issue" with a System Settings pointer, misdirecting
+// the operator to grant a permission they already hold.
+func TestClassifyRecorderExitBannerIsNotAPermissionsSignature(t *testing.T) {
+	tails := map[string]string{
+		"full disk":       "Input #0, avfoundation, from ':default':\n  Duration: N/A, start: 761698.132517, bitrate: 1536 kb/s\nav_interleaved_write_frame(): No space left on device",
+		"missing encoder": "Input #0, avfoundation, from '1:none':\nUnknown encoder 'libx264'",
+		"unwritable dir":  "Input #0, avfoundation, from ':default':\nsessions/2026-07-29/audio.wav: Permission denied",
+	}
+	for name, tail := range tails {
+		if looksLikeAVFailure(tail) {
+			t.Fatalf("%s: the avfoundation input banner alone must not read as a device-open failure: %q", name, tail)
+		}
+		msg := classifyRecorderExit(streamMicrophone, errors.New("exit status 1"), tail, true)
+		if strings.Contains(msg, "permissions") || strings.Contains(msg, "Privacy & Security") {
+			t.Fatalf("%s: must not claim permissions: %q", name, msg)
+		}
+	}
+	// The genuine TCC denial lines keep matching.
+	for _, tail := range []string{
+		"[AVFoundation indev @ 0x14f604580] Failed to create AVCaptureDeviceInput: -11852",
+		"[AVFoundation indev @ 0x0] Failed to open device.",
+		"[avfoundation @ 0x0] audio device not authorized to capture (status 0)",
+	} {
+		if !looksLikeAVFailure(tail) {
+			t.Fatalf("a real device-open failure must keep matching: %q", tail)
+		}
+	}
+}
+
+// TestTailsCutOnRuneBoundaries pins the rune-aligned truncation of the two
+// diagnostic tails in this package: a byte-offset cut could open the tail
+// mid-rune (a non-ASCII device name straddling it), rendering replacement
+// garbage at the head of an operator-facing message.
+func TestTailsCutOnRuneBoundaries(t *testing.T) {
+	// 2-byte runes with one trailing ASCII byte put every rune start on an even
+	// offset while the cut lands on an odd one — mid-rune before the fix.
+	long := strings.Repeat("é", 700) + "a"
+
+	if got := outputTail([]byte(long)); !utf8.ValidString(got) {
+		t.Fatalf("outputTail split a rune: %q...", got[:12])
+	}
+	var lb lockedBuffer
+	if _, err := lb.Write([]byte(long)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := lb.tail(); !utf8.ValidString(got) {
+		t.Fatalf("lockedBuffer.tail split a rune: %q...", got[:12])
+	}
 }

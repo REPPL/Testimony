@@ -123,6 +123,9 @@ jobs:
           grep -q "## Findings" examples/sample-session/report.md
           grep -q "### Confirmed (1)" examples/sample-session/report.md
           grep -q "\*\*F-001\*\* bug" examples/sample-session/report.md
+          # The event half of the pipeline — see ci.yml's identical assertions.
+          grep -q "\*\*Utterances:\*\* 10 · \*\*Events:\*\* 10" examples/sample-session/report.md
+          grep -q "data-testid=save-btn" examples/sample-session/report.md
 
   # Build and publish ONLY after verify is green. Tarballs are cross-compiled from
   # the same pushed commit (github.sha) that verify just gated, so the shipped
@@ -246,6 +249,32 @@ jobs:
           gh attestation verify "$DL/testimony_${TAG}_linux_amd64.tar.gz" \
             --repo "${GITHUB_REPOSITORY}" \
             --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assert the released binary reports the tag
+        # The version stamp rides on the -X flag naming internal/cli.Version,
+        # and the Go linker silently ignores -X for a symbol that does not
+        # exist — rename or move the variable and every tarball ships
+        # reporting "testimony dev" while the release stays green, the first
+        # observer being an end user. Download one tarball fresh from the
+        # published Release and require the binary's own version output to
+        # name the tag. Unlike the attestation step above this runs on private
+        # repos too, so it is a separate step with its own download.
+        run: |
+          set -euo pipefail
+          DL="$RUNNER_TEMP/version-check"
+          mkdir -p "$DL"
+          gh release download "$TAG" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "testimony_${TAG}_linux_amd64.tar.gz" \
+            --dir "$DL"
+          tar -xzf "$DL/testimony_${TAG}_linux_amd64.tar.gz" -C "$DL" testimony
+          got="$("$DL/testimony" version)"
+          if [ "$got" != "testimony $TAG" ]; then
+            echo "released binary reports \"$got\", expected \"testimony $TAG\"" >&2
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

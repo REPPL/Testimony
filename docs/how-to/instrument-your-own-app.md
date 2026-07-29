@@ -17,7 +17,7 @@ This creates a fresh session directory (with `manifest.json` anchoring the sessi
 
 Both endpoints accept POST only (anything else returns 405) and return `204 No Content` on success. `/api/interactions` caps the body at 4 MiB — the readable JSONL line limit, since one request becomes one line — and rejects with 400 anything the merge step could not read back: invalid JSON, a body that is not a JSON object, or an object missing the required `t` or `kind` from the table below; `/api/events` caps the batch body at 8 MiB and rejects anything that is not a JSON array with 400. A body over its cap gets 413, as does a batch element that would itself exceed the 4 MiB line limit.
 
-To defend the evidence against cross-origin forgery (CSRF) and DNS-rebinding, the write endpoints require `Content-Type: application/json`, a loopback `Host`, and — when present — a same-origin `Origin`. Post from your app's own origin (see the proxy in step 5) and always set the JSON content type, as the snippet below does. Each accepted body is re-encoded to a single line, so one request is always exactly one JSONL record.
+To defend the evidence against cross-origin forgery (CSRF) and DNS-rebinding, the write endpoints require `Content-Type: application/json`, a loopback `Host`, and — when present — a loopback `Origin` (any loopback host, whatever its port; anything else gets 403). Post from your app's own origin (see the proxy in step 5) and always set the JSON content type, as the snippet below does. Each accepted body is re-encoded to a single line, so one request is always exactly one JSONL record.
 
 ## 2. Add stable `data-testid` attributes
 
@@ -54,11 +54,24 @@ A minimal capture script, following the same conventions as the demo app — pre
     if (el.id) return el.tagName.toLowerCase() + "#" + el.id;
     return el.tagName.toLowerCase();
   }
+  function labelFor(el) {
+    if (!(el instanceof Element)) return "";
+    var t = (el.closest("[data-testid]") || el).textContent || "";
+    return t.trim().replace(/\s+/g, " ").slice(0, 40);
+  }
   function post(url, body) {
     try {
-      navigator.sendBeacon
-        ? navigator.sendBeacon(url, new Blob([JSON.stringify(body)], { type: "application/json" }))
-        : fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), keepalive: true });
+      var json = JSON.stringify(body);
+      // sendBeacon returns false when the UA refuses to queue the body
+      // (e.g. the in-flight beacon quota): fall back to fetch so the
+      // records are not lost silently.
+      var queued = navigator.sendBeacon
+        ? navigator.sendBeacon(url, new Blob([json], { type: "application/json" }))
+        : false;
+      if (!queued) {
+        fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: json, keepalive: true })
+          .catch(function () { /* an async refusal must not surface as an unhandled rejection */ });
+      }
     } catch (e) { /* capture must never break the app */ }
   }
   function interaction(kind, el, extra) {
@@ -66,7 +79,7 @@ A minimal capture script, following the same conventions as the demo app — pre
       t: Date.now(),
       kind: kind,
       selector: selectorFor(el),
-      text: ((el.closest("[data-testid]") || el).textContent || "").trim().replace(/\s+/g, " ").slice(0, 40),
+      text: labelFor(el),
       route: location.hash || location.pathname
     };
     if (extra) for (var k in extra) payload[k] = extra[k];

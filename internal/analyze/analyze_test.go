@@ -766,3 +766,49 @@ func TestEmitRequestSanitisesTimelineBidi(t *testing.T) {
 		t.Fatalf("sanitised timeline text missing from the emitted request:\n%s", got)
 	}
 }
+
+// TestIngestRefusesDuplicateTimelineIDs pins the duplicate-id refusal in
+// loadTimeline. Before it, indexTimeline's id-keyed uttText map silently kept
+// only the LAST utterance sharing an id, so against this timeline a quote
+// spoken in the second utt-001 validated for a finding anchored at the first
+// one's time — the exact quote-to-moment fabrication the verbatim gate exists
+// to prevent — while an honest quote of the first utterance was rejected.
+func TestIngestRefusesDuplicateTimelineIDs(t *testing.T) {
+	const dupTimeline = `{"t":1,"src":"speech","id":"utt-001","payload":{"speaker":"P1","t1":2,"text":"first thing"}}
+{"t":19.2,"src":"event","id":"ev-003","payload":{"kind":"click","route":"#general","selector":"[data-testid=save-btn]","text":"Save"}}
+{"t":40,"src":"speech","id":"utt-001","payload":{"speaker":"P1","t1":45,"text":"second thing entirely"}}
+`
+	const answer = `{"findings":[
+ {"id":"F-001","t":1.0,"type":"bug","severity":3,"quote":"second thing entirely",
+  "evidence":["utt-001","ev-003"]}
+]}`
+	dir := writeSession(t, dupTimeline)
+	_, err := Ingest(dir, strings.NewReader(answer))
+	if err == nil {
+		t.Fatal("Ingest accepted a timeline with duplicate utterance ids")
+	}
+	if !strings.Contains(err.Error(), "utt-001") {
+		t.Fatalf("error must name the duplicated id: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.FindingsFile)); statErr == nil {
+		t.Fatal("findings.jsonl written despite the refusal")
+	}
+}
+
+// TestIngestRefusesUnknownTimelineSrc pins the CheckSrc gate on analyze's
+// read path: an entry with an unrecognised src previously still contributed
+// its id to the citable evidence set and its time to the session end bound,
+// although report would never render it.
+func TestIngestRefusesUnknownTimelineSrc(t *testing.T) {
+	const badSrc = `{"t":22,"src":"speech","id":"utt-004","payload":{"speaker":"P1","t1":28,"text":"I clicked save and nothing happened"}}
+{"t":100,"src":"Event","id":"ev-009","payload":{"kind":"click","selector":"[data-testid=save-btn]"}}
+`
+	dir := writeSession(t, badSrc)
+	_, err := Ingest(dir, strings.NewReader(goodAnswer))
+	if err == nil {
+		t.Fatal("Ingest accepted a timeline entry with unknown src")
+	}
+	if !strings.Contains(err.Error(), "unknown src") || !strings.Contains(err.Error(), "entry 2") {
+		t.Fatalf("error must name the unknown src and its entry: %v", err)
+	}
+}

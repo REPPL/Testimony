@@ -21,11 +21,43 @@ import (
 const maxAnswerBytes = 16 << 20
 
 // loadTimeline reads the merged timeline, hinting to run merge first when it is
-// missing (matching report).
+// missing (matching report). It refuses a timeline this package cannot validate
+// findings against: an unknown src (timeline.CheckSrc) or a duplicate entry id.
+// The duplicate check exists because analyze is the one id-keyed consumer left:
+// indexTimeline keys uttText by id, so of two utterances sharing an id only the
+// later survives the index — an honest verbatim quote of the first is rejected,
+// while a quote of the second validates for a finding anchored at the first's
+// time, durably pairing a quote with a moment it was never spoken at. Merge
+// refuses a duplicated utterance id at the transcript boundary and an
+// utterance id colliding with the event ids it synthesises (see
+// timeline.checkedUtterances and the id scan in timeline.Merge), so this
+// check bites on a hand-edited or exchanged timeline.jsonl, which reaches this
+// reader without passing through merge — report deliberately stays positional
+// and keeps rendering such a file. Ids are compared in their session.SafeText
+// form, the form the index and the emitted request use, so two ids distinct
+// only by stripped bytes count as duplicates too. Entries with an empty id are
+// skipped: they cannot be cited, and calling two id-less lines "duplicates of
+// \"\"" would misname the actual problem. Positions are 1-based entry
+// ordinals, which match file lines only when the file has no blank lines
+// (ReadJSONL skips those).
 func loadTimeline(dir string) ([]timeline.Entry, error) {
 	entries, err := session.ReadJSONL[timeline.Entry](filepath.Join(dir, session.TimelineFile))
 	if err != nil {
 		return nil, fmt.Errorf("read timeline (run `testimony merge` first?): %w", err)
+	}
+	if err := timeline.CheckSrc(entries); err != nil {
+		return nil, err
+	}
+	seen := map[string]int{}
+	for i, e := range entries {
+		id := session.SafeText(e.ID)
+		if id == "" {
+			continue
+		}
+		if prev, dup := seen[id]; dup {
+			return nil, fmt.Errorf("timeline id %q appears at entries %d and %d: ids must be unique for evidence to cite them unambiguously", id, prev, i+1)
+		}
+		seen[id] = i + 1
 	}
 	return entries, nil
 }

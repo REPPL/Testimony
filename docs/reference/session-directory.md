@@ -65,7 +65,7 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `id` | string | yes | sequential utterance ID: `utt-001`, `utt-002`, … |
+| `id` | string | yes | sequential utterance ID: `utt-001`, `utt-002`, …; unique within the file and outside the `ev-NNN` namespace `merge` synthesises for events (`merge` refuses a reused or colliding id, since findings cite evidence by id) |
 | `t0` | number | yes | utterance start, session-relative seconds |
 | `t1` | number | yes | utterance end, session-relative seconds |
 | `speaker` | string | no | speaker label; `"P1"` when the engine supplies no diarisation |
@@ -96,7 +96,7 @@ The merged record — one entry per line, speech and interface events on the sha
 | Field | Type | Meaning |
 |---|---|---|
 | `t` | number | entry time, session-relative seconds |
-| `src` | string | `"speech"` or `"event"` |
+| `src` | string | `"speech"` or `"event"` (a closed set: `report` and `analyze` refuse any other value); entry ids must be unique for `analyze`, which resolves cited evidence by id |
 | `id` | string | `utt-NNN` (from the transcript) or `ev-NNN` (assigned at merge, in input order) |
 | `payload` | object | source-dependent, see below |
 
@@ -120,7 +120,7 @@ Ingest validates every finding against the merged timeline and is the sole valid
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `id` | string | yes | `F-NNN`, zero-padded (`^F-\d{3}$`); unique within the file |
-| `t` | number | yes | finding time, session-relative seconds; within `[sessionStart, sessionEnd]` (`sessionStart` is `0` unless the timeline holds negative-time utterances from a recording predating `t0`; `sessionEnd` is the latest moment on the timeline — the end (`t1`) of the last utterance when speech closes the session, else the latest entry time) |
+| `t` | number | yes | finding time, session-relative seconds; within `[sessionStart, sessionEnd]` (`sessionStart` is `0` unless the timeline holds negative-time utterances from a recording predating `t0`; `sessionEnd` is the latest moment on the timeline — the maximum over all entries, taking an utterance's end (`t1`) and an event's time) |
 | `type` | string | yes | one of `bug`, `friction`, `inconsistency`, `preference`, `idea` |
 | `severity` | integer | yes | usability-severity scale `1..4`: cosmetic, minor, major, blocker |
 | `mode` | string | no | `A` or `B`, default `A`; only Mode A is produced today |
@@ -154,6 +154,6 @@ A finding's effective status starts `unverified`; verdict records apply in file 
 
 Human-readable Markdown rendered from the timeline and findings:
 
-- a header with session name, app, participant, duration (`MM:SS`, from the last entry), and utterance/event counts, plus the task list;
+- a header with session name, app, participant, duration (`MM:SS`, the latest moment on the timeline — the maximum over all entries, taking an utterance's end `t1` and an event's time), and utterance/event counts, plus the task list;
 - a **Timeline** section: each utterance as `**[MM:SS] <speaker>:** "<text>"`, with the events joined to it (within the report's join window) as indented bullets `[MM:SS] <kind> <selector> "<text>" value="…" (<route>)`; events matched by no utterance appear as standalone bullets in time order;
 - a **Findings** section rendering `findings.jsonl` grouped by effective status (Confirmed, Unverified, Duplicate, Rejected), each group headed with a count and each finding line carrying its id, type, severity, clock, quote, anchor, and any verdict and date. When there is no `findings.jsonl` the section is a short notice pointing at `analyze` and `review`.

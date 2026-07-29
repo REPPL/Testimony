@@ -16,10 +16,12 @@ package session
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,6 +254,89 @@ func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 	return f.Close()
 }
 
+// WriteFileAtomicNoFollow replaces path with data all-or-nothing: the bytes
+// are written to a same-directory temp file and renamed into place, so a
+// failure at any point leaves whatever was at path untouched. WriteFileNoFollow
+// cannot promise that — its O_TRUNC open destroys the prior bytes before the
+// first write, so a write that then fails leaves a truncated file AND an error,
+// which for the offset sidecar meant the one durable record of an external
+// audio's clock offset was gone with nothing to roll back to. The no-follow
+// guarantee is kept by refusing up front when path names a symlink (rename
+// would otherwise replace the planted link rather than follow it, but refusal
+// matches WriteFileNoFollow so a hostile session directory cannot even retarget
+// the name); the temp file is created fresh in the same directory, so the
+// rename never crosses a filesystem.
+//
+// Permission semantics: a NEW file is created with perm filtered by the
+// process umask, exactly as WriteFileNoFollow's open(2) would create it; an
+// EXISTING regular file's own mode is preserved exactly across the
+// replacement (applied with fchmod on the temp file, which the umask does not
+// filter), so an operator-tightened sidecar stays tightened and a
+// deliberately widened one is not silently narrowed. Two deliberate
+// differences from a truncating open, both inherent to rename-into-place: a
+// read-only target is replaced (rename consults the directory's permissions,
+// not the file's), and a crash between create and rename can leave a
+// dot-prefixed ".<name>.tmp-*" file behind — nothing reads it, and the next
+// successful write does not depend on it. Temp names carry a random suffix so
+// an attacker who can write the directory cannot pre-plant the whole name
+// space and deterministically block the write (O_EXCL already stops
+// write-through).
+func WriteFileAtomicNoFollow(path string, data []byte, perm os.FileMode) error {
+	priorPerm, havePrior := os.FileMode(0), false
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write %s: it is a symlink", path)
+		}
+		if fi.Mode().IsRegular() {
+			priorPerm, havePrior = fi.Mode().Perm(), true
+		}
+	}
+	dir, base := filepath.Dir(path), filepath.Base(path)
+	var f *os.File
+	var tmp string
+	for i := 0; ; i++ {
+		var rnd [4]byte
+		if _, err := rand.Read(rnd[:]); err != nil {
+			return err
+		}
+		tmp = filepath.Join(dir, fmt.Sprintf(".%s.tmp-%x", base, rnd))
+		var err error
+		f, err = os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) || i >= 100 {
+			return err
+		}
+	}
+	cleanup := func() {
+		f.Close()
+		os.Remove(tmp)
+	}
+	if havePrior {
+		if err := f.Chmod(priorPerm); err != nil {
+			cleanup()
+			return err
+		}
+	}
+	if _, err := f.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	// Close before rename, and surface the Close error: a filesystem that
+	// defers write-back errors to close would otherwise rename a corrupt temp
+	// file into place (see WriteJSONL's identical stance).
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // SafeText neutralises untrusted text before it is written into a human-facing
 // artefact (report.md) or a terminal line (review). It strips C0/C1 control
 // bytes — including the newline and carriage return that could forge report
@@ -369,7 +454,11 @@ func WriteJSONL[T any](path string, values []T) error {
 		// tooLongForJSONL draws the boundary on the same side, so the capture and
 		// artefact writers accept exactly the same set of records.
 		if buf.Len() > MaxJSONLLine {
-			return fmt.Errorf("%s: record %d encodes to %d bytes, over the %d-byte JSONL line limit", path, i, buf.Len(), MaxJSONLLine)
+			// 1-based, and named as a line of the file being written: the caller's
+			// slice is already merged and time-sorted, so a 0-based slice index
+			// pointed the operator at nothing they could count to — "record 0" is
+			// no line of any file, and no line of the source transcript either.
+			return fmt.Errorf("%s: line %d of the output encodes to %d bytes, over the %d-byte JSONL line limit", path, i+1, buf.Len(), MaxJSONLLine)
 		}
 	}
 

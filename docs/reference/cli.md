@@ -97,7 +97,7 @@ testimony report -session DIR [-window 2.5]
 | `-session` | *(required)* | session directory |
 | `-window` | `2.5` | utterance-to-event join window, in seconds |
 
-Behaviour: attaches each event to the first utterance whose span, widened by the window on both sides, contains it; events matched by no utterance appear as standalone lines. Writes `report.md` into the session directory and prints `wrote <path>`.
+Behaviour: reads `manifest.json` (required) and `timeline.jsonl`, plus `findings.jsonl` when present (the Findings section; without the file it is a short notice pointing at `analyze` and `review`). A timeline entry whose `src` is neither `speech` nor `event` is refused rather than silently omitted from the rendered record. Attaches each event to the first utterance whose span, widened by the window on both sides, contains it; events matched by no utterance appear as standalone lines. Writes `report.md` into the session directory and prints `wrote <path>`.
 
 ## `testimony record`
 
@@ -120,7 +120,7 @@ testimony record [-out sessions] [-app NAME] [-participant P1] [-commit HASH]
 | `-demo` | off | also serve the instrumented demo app into the same session directory |
 | `-addr` | `:8737` | demo server listen address (with `-demo`) |
 
-Behaviour: creates a new session directory named after the current time (`YYYY-MM-DD_HHMMSS`) under the `-out` root and writes `manifest.json` (app, participant, tasks, commit, `t0_epoch_ms` set to now) through the same code path as `demo`. On macOS it captures the default microphone to `audio.wav` (16 kHz mono PCM, the canonical ASR input — no re-conversion needed downstream) and, with `-video`, the screen to `screen.mp4`. Audio-only is the default; `-video` opts in. With `-demo` it also serves the demo app so one command captures voice and clicks into the same directory.
+Behaviour: creates a new session directory named after the current time (`YYYY-MM-DD_HHMMSS`) under the `-out` root and writes `manifest.json` (app, participant, tasks, commit, `t0_epoch_ms` set to now) through the same code path as `demo`. On macOS it captures the default microphone to `audio.wav` (16 kHz mono PCM, the canonical ASR input — no re-conversion needed downstream) and, with `-video`, the screen to `screen.mp4`; both recorders need ffmpeg on `PATH`. Audio-only is the default; `-video` opts in. With `-demo` it also serves the demo app so one command captures voice and clicks into the same directory.
 
 The command blocks until interrupted (`Ctrl+C`). On SIGINT/SIGTERM — and on SIGHUP, so closing the terminal window mid-session finalises exactly like Ctrl+C — it sends each recorder an interrupt so it finalises its container, waits up to five seconds, and hard-kills only on timeout. It then validates each recorder's artefact — `audio.wav`, and `screen.mp4` with `-video` — and prints the exact next commands with the real session directory: with a usable `audio.wav` in place it offers `transcribe` → `merge` → `report` without `-audio`, because the recording is already present.
 
@@ -141,7 +141,7 @@ testimony analyze -session DIR -ingest FILE       # validate the answer → find
 | `-out` | *(stdout)* | emit mode: write the request to `FILE` instead of stdout |
 | `-ingest` | *(off)* | ingest mode: validate the answer JSON at `FILE` (or `-` for stdin) into `findings.jsonl` |
 
-`analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`). Combining `-out` and `-ingest` is an error. Emit reads `manifest.json` and `timeline.jsonl`; ingest reads `timeline.jsonl` only. Both hint to run `merge` first when the timeline is missing.
+`analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`). Combining `-out` and `-ingest` is an error. Emit reads `manifest.json` and `timeline.jsonl`; ingest reads `timeline.jsonl` only. Both hint to run `merge` first when the timeline is missing, and both refuse a timeline whose entries carry a `src` other than `speech` or `event`, or a duplicated entry id — findings cite evidence by id, so a reused one cannot be resolved unambiguously (a `merge`-produced timeline never carries either defect: `merge` refuses a transcript whose utterance ids repeat or collide with the `ev-NNN` event ids it synthesises).
 
 Emit behaviour: writes a single self-contained prompt — the rubric version header (`testimony-analysis/v1`), the second-coder stance, two-pass instructions (segment coding, then session synthesis), the rubric body (five `type` definitions, the `1..4` severity scale, the evidence hard-constraints), the session context (app, participant, tasks), the timeline lines inline, and the required output shape with a worked example. Nothing in the session directory is mutated. The timeline is emitted whole (v1 does not chunk by task boundary; the manifest carries no task timestamps). With `-out FILE` the prompt goes to a file and the command prints `wrote <path>`; otherwise it prints to stdout.
 
