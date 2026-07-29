@@ -514,3 +514,33 @@ func TestMergeClampsUtteranceInvertedSpan(t *testing.T) {
 		t.Fatalf("want the event to attach to the utterance, got %v", near)
 	}
 }
+
+// TestMergeRejectsDuplicateUtteranceID pins the transcript-boundary refusal of
+// reused utterance ids. BuildEntries copies each utterance's id verbatim, so a
+// transcript reusing one previously merged at exit 0 and produced a
+// duplicate-id timeline.jsonl — which analyze then refuses while naming the
+// generated file the next merge would recreate, not the transcript that
+// carries the defect and that the operator can actually repair.
+func TestMergeRejectsDuplicateUtteranceID(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	lines := "" +
+		`{"id":"utt-001","t0":1.0,"t1":2.0,"speaker":"P1","text":"first"}` + "\n" +
+		`{"id":"utt-001","t0":40.0,"t1":45.0,"speaker":"P1","text":"second"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TranscriptFile), []byte(lines), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	_, _, err := Merge(dir)
+	if err == nil {
+		t.Fatalf("expected a duplicate-id error, got nil")
+	}
+	if !strings.Contains(err.Error(), "utterance 2") || !strings.Contains(err.Error(), `"utt-001"`) {
+		t.Fatalf("error should name the reusing utterance and the id, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.TimelineFile)); statErr == nil {
+		t.Fatalf("timeline.jsonl was written despite the duplicate id")
+	}
+}
