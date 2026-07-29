@@ -87,7 +87,7 @@ Written by `transcribe` only when the audio came from an external recording (a `
 
 ## `events.rrweb.jsonl`
 
-One raw [rrweb](https://github.com/rrweb-io/rrweb) event per line, exactly as emitted by the recorder (DOM snapshots, incremental mutations, pointer movement). Archival only: nothing downstream reads it; it exists so full session replay stays possible later.
+One raw [rrweb](https://github.com/rrweb-io/rrweb) event per line, exactly as emitted by the recorder (DOM snapshots, incremental mutations, pointer movement). Archival only: nothing downstream reads it; it exists so full session replay stays possible later. The demo page loads the rrweb recorder from a public CDN, so on a machine without network access (or with the CDN blocked) the file is created but stays empty — the session still captures `interactions.jsonl`, which carries the evidence the pipeline consumes.
 
 ## `timeline.jsonl`
 
@@ -106,7 +106,7 @@ Event payload (`src: "event"`): `kind`, plus `selector`, `text`, `value`, and `r
 
 ```json
 {"t":19.2,"src":"event","id":"ev-003","payload":{"kind":"click","route":"#general","selector":"[data-testid=save-btn]","text":"Save"}}
-{"t":16,"src":"speech","id":"utt-003","payload":{"speaker":"P1","t1":21,"text":"Now I expect this save button to confirm somehow."}}
+{"t":16,"src":"speech","id":"utt-003","payload":{"speaker":"P1","t1":21,"text":"Now I expect this save button to confirm somehow.","words":[{"w":"Now","t":17.6},{"w":"I","t":17.92}]}}
 ```
 
 ## `findings.jsonl`
@@ -120,12 +120,12 @@ Ingest validates every finding against the merged timeline and is the sole valid
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `id` | string | yes | `F-NNN`, zero-padded (`^F-\d{3}$`); unique within the file |
-| `t` | number | yes | finding time, session-relative seconds; within `[sessionStart, sessionEnd]` (the earliest and latest timeline entry times; `sessionStart` is `0` unless the timeline holds negative-time utterances from a recording predating `t0`) |
+| `t` | number | yes | finding time, session-relative seconds; within `[sessionStart, sessionEnd]` (`sessionStart` is `0` unless the timeline holds negative-time utterances from a recording predating `t0`; `sessionEnd` is the latest moment on the timeline — the end (`t1`) of the last utterance when speech closes the session, else the latest entry time) |
 | `type` | string | yes | one of `bug`, `friction`, `inconsistency`, `preference`, `idea` |
 | `severity` | integer | yes | usability-severity scale `1..4`: cosmetic, minor, major, blocker |
 | `mode` | string | no | `A` or `B`, default `A`; only Mode A is produced today |
 | `quote` | string | yes | a verbatim substring of the `text` of one *cited* evidence utterance — no normalisation, never joined across utterances |
-| `evidence` | array of strings | yes | non-empty; every id exists in `timeline.jsonl`; at least one `utt-*` (a spoken anchor) |
+| `evidence` | array of strings | yes | non-empty, at most 64 ids; every id exists in `timeline.jsonl`; at least one `utt-*` (a spoken anchor) |
 | `ui` | object | no | `{selector?, route?}`; when present, each must match a real timeline event's `selector`/`route` |
 | `status` | string | yes | always `"unverified"` on ingest |
 

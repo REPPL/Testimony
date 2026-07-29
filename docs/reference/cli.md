@@ -12,7 +12,7 @@ Running `testimony` with no command, or with an unknown command, prints the usag
 |---|---|
 | 0 | success |
 | 1 | runtime error — the message is printed to stderr as `testimony: <error>` |
-| 2 | usage error — no command, an unknown command, an unparseable or invalid flag value, a missing required flag, or a flag combination that is not allowed |
+| 2 | usage error — no command, an unknown command, a stray positional argument (no command takes one), an unparseable or invalid flag value, a missing required flag, or a flag combination that is not allowed |
 
 ## `testimony demo`
 
@@ -27,12 +27,14 @@ testimony demo [-addr :8737] [-out sessions]
 | `-addr` | `:8737` | listen address (a bare `:port` binds loopback `127.0.0.1` only) |
 | `-out` | `sessions` | root directory for new session folders |
 
-Behaviour: creates a new session directory named after the current time (`YYYY-MM-DD_HHMMSS`) under the `-out` root, writes `manifest.json` (participant `P1`, `t0_epoch_ms` set to now), serves the demo page at `/`, and appends captured events via two endpoints:
+Behaviour: creates a new session directory named after the current time (`YYYY-MM-DD_HHMMSS`) under the `-out` root, writes `manifest.json` (app `testimony demo`, participant `P1`, one seeded default task, `t0_epoch_ms` set to now), serves the demo page at `/`, and appends captured events via two endpoints:
 
 - `POST /api/interactions` — one JSON object per request, appended as one line of `interactions.jsonl`.
 - `POST /api/events` — a JSON array per request, each element appended as one line of `events.rrweb.jsonl`.
 
-Both accept POST only (405 otherwise), return 204 on success, and 400 on malformed bodies. `POST /api/interactions` limits the body to 4 MiB — the readable JSONL line limit, since one request becomes one line — and `POST /api/events` limits the batch body to 8 MiB; a body over its limit is refused with 413, as is a batch element that would itself exceed the 4 MiB line limit. The command blocks until interrupted (`Ctrl+C`).
+Both accept POST only (405 otherwise) and require `Content-Type: application/json` (415 otherwise), a loopback `Host`, and — when an `Origin` header is present — a loopback origin (403 otherwise): the guard against cross-site and DNS-rebinding forgery of the unauthenticated write endpoints. They return 204 on success and 400 on malformed bodies; `/api/interactions` also refuses with 400 any record `merge` would refuse — a body that is not a JSON object, or one missing the required `t` (a positive epoch-millisecond time on a plausible session clock) or `kind`. `POST /api/interactions` limits the body to 4 MiB — the readable JSONL line limit, since one request becomes one line — and `POST /api/events` limits the batch body to 8 MiB; a body over its limit is refused with 413, as is a batch element that would itself exceed the 4 MiB line limit. Every refused capture write is logged to stderr, the operator's only signal, since the page posts via `sendBeacon`, which surfaces no status. The command blocks until interrupted (`Ctrl+C`).
+
+The loopback `Host` requirement means an explicit non-loopback `-addr` host (e.g. `0.0.0.0:8737`) serves the page to other devices but refuses their capture posts; the command warns at startup that such a bind serves the page only.
 
 ## `testimony transcribe`
 
@@ -112,7 +114,7 @@ testimony record [-out sessions] [-app NAME] [-participant P1] [-commit HASH]
 | `-app` | *(empty)* | application under test; with `-demo`, defaults to the demo app |
 | `-participant` | `P1` | participant pseudonym |
 | `-commit` | *(empty)* | build/commit hash under test |
-| `-task` | *(none)* | a task the participant will attempt; repeat the flag for several tasks |
+| `-task` | *(none)* | a task the participant will attempt; repeat the flag for several tasks. With `-demo` and no `-task`, the demo app's default task is seeded, matching a standalone `demo` session |
 | `-video` | off | also capture the screen to `screen.mp4` (needs Screen Recording permission) |
 | `-no-video` | — | explicitly disable screen capture; this is the default, and it wins when both `-video` and `-no-video` are given |
 | `-demo` | off | also serve the instrumented demo app into the same session directory |
@@ -120,7 +122,7 @@ testimony record [-out sessions] [-app NAME] [-participant P1] [-commit HASH]
 
 Behaviour: creates a new session directory named after the current time (`YYYY-MM-DD_HHMMSS`) under the `-out` root and writes `manifest.json` (app, participant, tasks, commit, `t0_epoch_ms` set to now) through the same code path as `demo`. On macOS it captures the default microphone to `audio.wav` (16 kHz mono PCM, the canonical ASR input — no re-conversion needed downstream) and, with `-video`, the screen to `screen.mp4`. Audio-only is the default; `-video` opts in. With `-demo` it also serves the demo app so one command captures voice and clicks into the same directory.
 
-The command blocks until interrupted (`Ctrl+C`). On SIGINT/SIGTERM it sends each recorder an interrupt so it finalises its container, waits up to five seconds, and hard-kills only on timeout. It then validates each recorder's artefact — `audio.wav`, and `screen.mp4` with `-video` — and prints the exact next commands with the real session directory: with a usable `audio.wav` in place it offers `transcribe` → `merge` → `report` without `-audio`, because the recording is already present.
+The command blocks until interrupted (`Ctrl+C`). On SIGINT/SIGTERM — and on SIGHUP, so closing the terminal window mid-session finalises exactly like Ctrl+C — it sends each recorder an interrupt so it finalises its container, waits up to five seconds, and hard-kills only on timeout. It then validates each recorder's artefact — `audio.wav`, and `screen.mp4` with `-video` — and prints the exact next commands with the real session directory: with a usable `audio.wav` in place it offers `transcribe` → `merge` → `report` without `-audio`, because the recording is already present.
 
 If a recorder leaves no usable artefact — most often because its macOS permission was never granted, so it blocked on the prompt and captured nothing — the command names the missing file, points at the exact System Settings pane (Privacy & Security → Microphone, or → Screen Recording), appends the recorder's output, and exits with status 1. When there is no `audio.wav`, the next-command block omits the bare `transcribe` line and instead keeps `merge` and `report` (interactions may still be captured) and explains how to get audio: re-run `record` after granting the permission, or transcribe an external recording with `-audio FILE`. A recorder that instead exits on its own before it is asked to stop is reported the same way, distinguishing a start-up permissions denial from an unexpected mid-session stop. On platforms other than macOS, capture is unavailable — the command still writes a valid manifest and session directory, states what was skipped, and exits 0.
 
@@ -139,11 +141,11 @@ testimony analyze -session DIR -ingest FILE       # validate the answer → find
 | `-out` | *(stdout)* | emit mode: write the request to `FILE` instead of stdout |
 | `-ingest` | *(off)* | ingest mode: validate the answer JSON at `FILE` (or `-` for stdin) into `findings.jsonl` |
 
-`analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`). Combining `-out` and `-ingest` is an error. Both modes read `manifest.json` and `timeline.jsonl`, hinting to run `merge` first when the timeline is missing.
+`analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`). Combining `-out` and `-ingest` is an error. Emit reads `manifest.json` and `timeline.jsonl`; ingest reads `timeline.jsonl` only. Both hint to run `merge` first when the timeline is missing.
 
 Emit behaviour: writes a single self-contained prompt — the rubric version header (`testimony-analysis/v1`), the second-coder stance, two-pass instructions (segment coding, then session synthesis), the rubric body (five `type` definitions, the `1..4` severity scale, the evidence hard-constraints), the session context (app, participant, tasks), the timeline lines inline, and the required output shape with a worked example. Nothing in the session directory is mutated. The timeline is emitted whole (v1 does not chunk by task boundary; the manifest carries no task timestamps). With `-out FILE` the prompt goes to a file and the command prints `wrote <path>`; otherwise it prints to stdout.
 
-Ingest behaviour: reads the answer from `FILE` (or stdin when `-`), accepting a top-level object with a `findings` array (optionally a `rubric`, which must be a known version) or a bare array. Ingest is the sole validation boundary and never trusts the model. Each finding is decoded with unknown fields disallowed, then checked against every schema rule (see [session directory reference](session-directory.md#findingsjsonl)): id format and uniqueness, `t` within the session, the `type` and `severity` enums, non-empty `evidence` with every id real and at least one spoken `utt-*` anchor, a `quote` that is a verbatim substring of one *cited* evidence utterance, and any `ui` selector/route matching a real event. Validation is transactional — all errors are reported at once and nothing is written on any failure. On success every finding is forced to `status: unverified`, `findings.jsonl` is written, and the command prints `validated N findings → <path> (all unverified)`. An answer with no findings (a bare `[]`, `{"findings":[]}`, or a truncated file) is refused rather than written, so it cannot erase a prior `findings.jsonl`. Ingest refuses to overwrite a `findings.jsonl` that already holds verdict records — counting any `kind:"verdict"` line, even one whose value is outside the closed enum.
+Ingest behaviour: reads the answer from `FILE` (or stdin when `-`), accepting a top-level object with a `findings` array (optionally a `rubric`, which must be a known version) or a bare array. Ingest is the sole validation boundary and never trusts the model. Each finding is decoded with unknown fields disallowed, then checked against every schema rule (see [session directory reference](session-directory.md#findingsjsonl)): id format and uniqueness, `t` within the session, the `type` and `severity` enums, non-empty `evidence` of at most 64 ids with every id real and at least one spoken `utt-*` anchor, a `quote` that is a verbatim substring of one *cited* evidence utterance, and any `ui` selector/route matching a real event. Validation is transactional — all errors are reported at once and nothing is written on any failure. On success every finding is forced to `status: unverified`, `findings.jsonl` is written, and the command prints `validated N findings → <path> (all unverified)`. An answer with no findings (a bare `[]`, `{"findings":[]}`, or a truncated file) is refused rather than written, so it cannot erase a prior `findings.jsonl`. Ingest refuses to overwrite a `findings.jsonl` that already holds verdict records — counting any `kind:"verdict"` line, even one whose value is outside the closed enum.
 
 ## `testimony review`
 
