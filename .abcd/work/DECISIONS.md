@@ -244,3 +244,14 @@ Architecture-shaping decisions graduate to an ADR under
   silently recorded in the real mic's place; startRecorders logs the detected
   audio-input roster so a surprising default stays visible. NOTE: the avfoundation
   capture path is not exercised by CI — verify on macOS hardware before release.
+- 2026-07-29 — Bug-hunt round 8 (first loop round): four hunters, six
+  adversarial refuters, 21 confirmed findings (10 substantive, 11 nitpick),
+  5 candidates refuted. Headlines: transcribe resolves the audio offset
+  before the conversion mutates the session (a refused external run no
+  longer strands converted audio without its sidecar); install.sh installs
+  v0.4.0 and release.yml gates the pin against the tag; usage errors
+  uniformly exit 2; docs corrected against the code (installer prompts and
+  verification, endpoint caps, offset provenance, session file inventory,
+  AGENTS.md current state). The /dev/null TTY-gate nitpick is recorded but
+  unfixed (a true isatty check needs a dependency); the AGENTS.md fence's
+  dangling brief link is an upstream abcd defect, not fixable here.

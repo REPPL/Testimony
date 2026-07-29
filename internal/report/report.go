@@ -36,6 +36,16 @@ func Render(dir string, window float64) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read timeline (run `testimony merge` first?): %w", err)
 	}
+	// Order the record by time rather than trusting the file's line order. The
+	// timeline this reads is not necessarily the one merge wrote: a hand-edited or
+	// exchanged timeline.jsonl reaches Render directly — the same assumption the
+	// join step below already refuses to make about ids — and an out-of-order one
+	// rendered [00:50] above [00:10], so report.md, which is read as the
+	// chronological record of the session, silently misstated when things happened.
+	// The standalone-event flush below also walks events forward on the assumption
+	// they ascend. sort.SliceStable with the same less function timeline.Merge uses
+	// keeps the two orderings identical, so a merge-produced timeline is unchanged.
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].T < entries[j].T })
 
 	var speech, events []timeline.Entry
 	for _, e := range entries {

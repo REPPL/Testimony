@@ -65,8 +65,8 @@ jobs:
 
       # The full pipeline against the bundled sample session: merge must produce
       # a timeline, report must render it, and both outputs must be non-empty.
-      # Runs on both OSes — it also proves the freshly built binary actually runs
-      # the pipeline on each host.
+      # Ubuntu-only, like the rest of this job — it also proves the freshly built
+      # binary actually runs the pipeline, not merely that it compiles.
       - name: Pipeline smoke test
         run: |
           set -euo pipefail

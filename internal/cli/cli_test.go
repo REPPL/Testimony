@@ -1,14 +1,40 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/REPPL/Testimony/internal/session"
 )
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns
+// everything it wrote there, so a test can assert on the operator-facing
+// message and not merely on the exit code.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	read := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		read <- string(b)
+	}()
+	fn()
+	os.Stderr = old
+	w.Close()
+	got := <-read
+	r.Close()
+	return got
+}
 
 // miniSession writes a minimal but valid session (manifest + one timeline entry)
 // so `analyze` reaches its -out write / -ingest read without failing earlier.
@@ -67,5 +93,83 @@ func TestAnalyzeIngestRefusesFIFO(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("analyze -ingest blocked on a FIFO instead of refusing it")
+	}
+}
+
+// TestReportRejectsNonFiniteWindow is the fabricated-join regression: -window
+// took any float64 strconv would parse, so NaN and ±Inf reached report.Render.
+// Every comparison against NaN is false, so a NaN window detached every event
+// from the speech it accompanied; +Inf made every event fall inside the first
+// utterance's window and be filed under it. Both wrote a report.md that misstates
+// what the participant was doing while they spoke, and both exited 0. A negative
+// window is legitimate (it narrows the join) and must stay accepted.
+func TestReportRejectsNonFiniteWindow(t *testing.T) {
+	for _, w := range []string{"NaN", "Inf", "-Inf"} {
+		dir := miniSession(t)
+		var code int
+		stderr := captureStderr(t, func() {
+			code = Run([]string{"report", "-session", dir, "-window", w})
+		})
+		if code != 2 {
+			t.Fatalf("-window %s: exit %d, want 2 (usage error, like every other bad invocation)", w, code)
+		}
+		if !strings.Contains(stderr, "testimony: report: -window must be a finite number") {
+			t.Fatalf("-window %s: want the finite-window refusal on stderr, got %q", w, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(dir, session.ReportFile)); !os.IsNotExist(err) {
+			t.Fatalf("-window %s rendered a report anyway (err=%v)", w, err)
+		}
+	}
+
+	for _, w := range []string{"2.5", "-1"} {
+		dir := miniSession(t)
+		if code := Run([]string{"report", "-session", dir, "-window", w}); code != 0 {
+			t.Fatalf("-window %s must still render, got exit %d", w, code)
+		}
+		if _, err := os.Stat(filepath.Join(dir, session.ReportFile)); err != nil {
+			t.Fatalf("-window %s wrote no report: %v", w, err)
+		}
+	}
+}
+
+// TestMissingSessionIsAUsageError pins the exit-status contract of
+// docs/reference/cli.md: a wrong invocation exits 2 and a runtime failure of a
+// well-formed command exits 1. A missing required -session was reported as a
+// runtime error (1), so it was indistinguishable to a caller from a session that
+// genuinely could not be read, while the sibling usage errors — no command, an
+// unknown command, a flag-parse failure — all exited 2.
+func TestMissingSessionIsAUsageError(t *testing.T) {
+	for _, cmd := range []string{"merge", "report", "transcribe", "analyze", "review"} {
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{cmd}) })
+		if code != 2 {
+			t.Errorf("%s without -session: exit %d, want 2 (usage error)", cmd, code)
+		}
+		if want := "testimony: " + cmd + ": -session is required"; !strings.Contains(stderr, want) {
+			t.Errorf("%s without -session: want %q on stderr, got %q", cmd, want, stderr)
+		}
+	}
+
+	// Mutually exclusive flags are a wrong invocation too.
+	{
+		var code int
+		stderr := captureStderr(t, func() {
+			code = Run([]string{"analyze", "-session", t.TempDir(), "-out", "f.md", "-ingest", "-"})
+		})
+		if code != 2 {
+			t.Errorf("analyze -out with -ingest: exit %d, want 2 (usage error)", code)
+		}
+		if want := "testimony: analyze: -out and -ingest cannot be combined"; !strings.Contains(stderr, want) {
+			t.Errorf("analyze -out with -ingest: want %q on stderr, got %q", want, stderr)
+		}
+	}
+
+	// A well-formed command that fails at runtime keeps exit 1.
+	var code int
+	captureStderr(t, func() {
+		code = Run([]string{"merge", "-session", filepath.Join(t.TempDir(), "absent")})
+	})
+	if code != 1 {
+		t.Errorf("merge on an unreadable session: exit %d, want 1 (runtime error)", code)
 	}
 }

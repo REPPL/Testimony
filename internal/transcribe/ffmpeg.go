@@ -18,21 +18,37 @@ import (
 // and plain WAV. Everything is normalised through ffmpeg regardless.
 var audioExts = map[string]bool{".m4a": true, ".mov": true, ".wav": true}
 
-// convertAudio produces the canonical ASR input — 16 kHz mono PCM WAV — from
-// the original recording via an ffmpeg subprocess.
-func convertAudio(in, out string) error {
+// checkExternalAudio validates the operator-named recording before anything
+// opens it. It lives apart from convertAudio because the conversion is no longer
+// the first thing to touch the path: transcribe.Run resolves the audio→session
+// offset first (so a refused run cannot destroy the session's audio.wav), and
+// that derivation hands the same path to an ffprobe subprocess. Both subprocesses
+// open without O_NONBLOCK, so a FIFO at -audio blocks their open(2) for ever and
+// hangs the command; and ffprobe is a media parser, so pointing it at a file
+// whose container the pipeline does not even accept widens its exposure for
+// nothing. Run calls this on the external branch and convertAudio calls it again,
+// so the guard keeps one home and neither entry point is unguarded.
+//
+// os.Stat resolves a symlink, so an operator pointing -audio at a symlinked
+// recording is fine; what must be refused is a non-regular target.
+func checkExternalAudio(in string) error {
 	ext := strings.ToLower(filepath.Ext(in))
 	if !audioExts[ext] {
 		return fmt.Errorf("unsupported audio format %q: expected .m4a, .mov, or .wav", ext)
 	}
-	// os.Stat resolves a symlink, so an operator pointing -audio at a symlinked
-	// recording is fine; what must be refused is a non-regular target, because a
-	// FIFO handed to ffmpeg as its input blocks the subprocess's open(2) for ever,
-	// waiting for a writer that never arrives.
 	if fi, err := os.Stat(in); err != nil {
 		return fmt.Errorf("audio file: %w", err)
 	} else if !fi.Mode().IsRegular() {
 		return fmt.Errorf("refusing to read %s: it is not a regular file", in)
+	}
+	return nil
+}
+
+// convertAudio produces the canonical ASR input — 16 kHz mono PCM WAV — from
+// the original recording via an ffmpeg subprocess.
+func convertAudio(in, out string) error {
+	if err := checkExternalAudio(in); err != nil {
+		return err
 	}
 	if err := checkPlainOutput(out); err != nil {
 		return err

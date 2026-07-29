@@ -73,24 +73,56 @@ func Run(opts Options) (int, error) {
 	wav := filepath.Join(opts.SessionDir, session.AudioFile)
 	external := opts.Audio != "" && !sameFile(opts.Audio, wav)
 	if external {
-		if err := convertAudio(opts.Audio, wav); err != nil {
+		// Refuse an unusable -audio before anything opens it. The offset derivation
+		// below probes this path with ffprobe, whose open(2) on a FIFO never returns,
+		// so this guard has to fire ahead of it rather than waiting for convertAudio.
+		if err := checkExternalAudio(opts.Audio); err != nil {
 			return 0, err
 		}
 	} else if err := checkSessionAudio(wav, opts.SessionDir); err != nil {
 		return 0, err
 	}
 
+	// Resolve the offset BEFORE the conversion replaces audio.wav. Resolution
+	// reads only the manifest and the external recording, so it can run first —
+	// and it must, because every way it fails (an unusable manifest t0, an
+	// implausible derived offset) refuses the run. Converting first destroyed the
+	// session's record-origin capture and left no sidecar behind, so the session
+	// became indistinguishable from one recorded here (no sidecar ⇒ captured at
+	// t0, docs/reference/session-directory.md): the next bare `transcribe` took
+	// the in-place branch, reported "captured at t0", and wrote a silently
+	// time-shifted transcript at exit 0. A refused run now leaves the session
+	// byte-for-byte as it found it.
 	offset, provenance, err := resolveOffset(opts, man, external)
 	if err != nil {
 		return 0, err
 	}
+	if external {
+		if err := convertAudio(opts.Audio, wav); err != nil {
+			return 0, err
+		}
+	}
+
 	// An external recording's audio.wav is NOT captured at t0, and disk bytes
 	// cannot distinguish it from a record-origin audio.wav. Persist the offset
 	// beside audio.wav so a later bare `transcribe` (a re-run with a different
 	// model, reusing audio.wav) reads it back instead of silently assuming 0 and
 	// shifting every utterance by the forgotten offset. record-origin audio.wav
 	// writes no sidecar and correctly defaults to 0.
-	if external {
+	//
+	// An explicit -offset on the in-place path rewrites an EXISTING sidecar: that
+	// is the operator correcting an offset a previous external run got wrong, and
+	// leaving the stale value in place applied the correction to one transcript
+	// only, for the next bare re-run to silently resurrect. A session with no
+	// sidecar is record-origin and stays that way — inventing one would make every
+	// later bare run inherit a one-off flag.
+	persist := external
+	if !persist && opts.OffsetSet {
+		if persist, err = offsetSidecarExists(opts.SessionDir); err != nil {
+			return 0, err
+		}
+	}
+	if persist {
 		if err := writeOffsetSidecar(opts.SessionDir, offset, provenance); err != nil {
 			return 0, fmt.Errorf("persist audio offset: %w", err)
 		}
@@ -240,6 +272,24 @@ func writeOffsetSidecar(dir string, offset float64, provenance string) error {
 		return err
 	}
 	return session.WriteFileNoFollow(filepath.Join(dir, session.AudioOffsetFile), append(b, '\n'), 0o644)
+}
+
+// offsetSidecarExists reports whether a sidecar is already present beside
+// audio.wav, without parsing it. The caller only needs to know whether this
+// session already carries an external-audio offset, and an unusable sidecar
+// (malformed, oversized) is precisely the one an explicit -offset repairs — the
+// guidance readOffsetSidecar prints says so — so parsing here would refuse the
+// repair. os.Lstat, not os.Stat: a symlink planted at the sidecar name must
+// count as present, so the rewrite meets session.WriteFileNoFollow's refusal
+// rather than being mistaken for absence and skipped.
+func offsetSidecarExists(dir string) (bool, error) {
+	if _, err := os.Lstat(filepath.Join(dir, session.AudioOffsetFile)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // readOffsetSidecar reads the offset sidecar if present. ok is false with no

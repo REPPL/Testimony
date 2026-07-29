@@ -4,11 +4,12 @@ Every capture session lives in one directory (by default under `sessions/`):
 
 ```
 sessions/<timestamp>/
-  manifest.json        # session metadata, including t0_epoch_ms (written by demo)
-  audio.wav            # 16 kHz mono ASR input (written by transcribe; local only)
+  manifest.json        # session metadata, including t0_epoch_ms (written by demo and record)
+  audio.wav            # 16 kHz mono ASR input (captured by record, or converted by transcribe -audio; local only)
   audio.offset.json    # audio→session offset for an external recording (written by transcribe; local only)
-  events.rrweb.jsonl   # raw rrweb stream, archival (written by demo)
-  interactions.jsonl   # normalised interaction events (written by demo)
+  screen.mp4           # screen capture, H.264, 30 fps with cursor (written by record -video; local only)
+  events.rrweb.jsonl   # raw rrweb stream, archival (written by demo and record -demo)
+  interactions.jsonl   # normalised interaction events (written by demo and record -demo)
   transcript.jsonl     # time-aligned utterances (written by transcribe)
   timeline.jsonl       # merged, session-relative timeline (written by merge)
   findings.jsonl       # analysis findings + appended verdicts (written by analyze/review)
@@ -77,7 +78,7 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 
 ## `audio.offset.json`
 
-Written by `transcribe` only when the audio came from an external recording (a `-audio FILE` that is not the session's own `audio.wav`), which is not captured at `t0`. It records the audio→session offset so a later bare `transcribe` (for example, a re-run with a different model that reuses `audio.wav`) recovers the same offset instead of assuming `0`. A session recorded with `testimony record` captures `audio.wav` at `t0` and has no sidecar; its offset is `0`. If the sidecar is present but unreadable or malformed, `transcribe` refuses rather than guess, and asks for an explicit `-audio` or `-offset`.
+Written by `transcribe` only when the audio came from an external recording (a `-audio FILE` that is not the session's own `audio.wav`), which is not captured at `t0`. It records the audio→session offset so a later bare `transcribe` (for example, a re-run with a different model that reuses `audio.wav`) recovers the same offset instead of assuming `0`. A session recorded with `testimony record` captures `audio.wav` at `t0` and has no sidecar; its offset is `0`, and an explicit `-offset` on such a session applies to that run alone rather than creating a sidecar. On a session that already has one, an explicit `-offset` rewrites it, so the correction carries into later bare runs. If the sidecar is present but unreadable or malformed, `transcribe` refuses rather than guess, and asks for an explicit `-audio` or `-offset`. The sidecar must be a regular file: `transcribe` refuses to read — or rewrite — one that is a symlink.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|

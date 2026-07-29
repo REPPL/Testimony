@@ -16,7 +16,9 @@ request, then validate the answer into `findings.jsonl`) and `review`
 host-delegated: the CLI never calls a model, holds no keys, and adds no
 network dependency; every finding is born `unverified` and ingest is the sole
 validation boundary. Next is codebase mapping (itd-3), then Mode B / the
-pattern library (itd-4). Design in `docs/architecture.md`.
+pattern library (itd-4). Command and file contracts in
+[`../../docs/reference/cli.md`](../../docs/reference/cli.md) and
+[`../../docs/reference/session-directory.md`](../../docs/reference/session-directory.md).
 
 ## Live constraints / sharp edges
 

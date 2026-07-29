@@ -12,7 +12,7 @@ Running `testimony` with no command, or with an unknown command, prints the usag
 |---|---|
 | 0 | success |
 | 1 | runtime error — the message is printed to stderr as `testimony: <error>` |
-| 2 | usage error or unknown command |
+| 2 | usage error — no command, an unknown command, an unparseable or invalid flag value, a missing required flag, or a flag combination that is not allowed |
 
 ## `testimony demo`
 
@@ -32,7 +32,7 @@ Behaviour: creates a new session directory named after the current time (`YYYY-M
 - `POST /api/interactions` — one JSON object per request, appended as one line of `interactions.jsonl`.
 - `POST /api/events` — a JSON array per request, each element appended as one line of `events.rrweb.jsonl`.
 
-Both accept POST only (405 otherwise), limit the body to 8 MiB, return 204 on success, and 400 on malformed bodies. The command blocks until interrupted (`Ctrl+C`).
+Both accept POST only (405 otherwise), return 204 on success, and 400 on malformed bodies. `POST /api/interactions` limits the body to 4 MiB — the readable JSONL line limit, since one request becomes one line — and `POST /api/events` limits the batch body to 8 MiB; a body over its limit is refused with 413, as is a batch element that would itself exceed the 4 MiB line limit. The command blocks until interrupted (`Ctrl+C`).
 
 ## `testimony transcribe`
 
@@ -56,9 +56,17 @@ testimony transcribe -session DIR [-audio FILE]
 | `-device` | `auto` | (whisperx) inference device: `auto`, `cpu`, or `cuda`. `auto` picks `cuda` only when an NVIDIA GPU is present, and never on macOS |
 | `-compute_type` | `auto` | (whisperx) compute type: `auto`, `int8`, `float16`, … . `auto` follows the device: `float16` on CUDA, `int8` on CPU |
 | `-vad` | `auto` | (whisperx) VAD method: `auto`, `silero`, or `pyannote`. `auto` picks `silero`; `pyannote` fails under newer torch versions |
-| `-offset` | derived | audio-to-session clock offset in seconds. When not given, derived from the recording's creation time minus the manifest's `t0_epoch_ms`; 0 when derivation is impossible |
+| `-offset` | derived | audio-to-session clock offset in seconds. When not given: with `-audio`, derived from the recording's creation time minus the manifest's `t0_epoch_ms`, or 0 when derivation is impossible; without it, read back from `audio.offset.json` when the session has one, else 0 |
 
-Behaviour: with `-audio`, requires ffmpeg on PATH and converts the recording to 16 kHz mono `audio.wav` in the session directory; without it (or when `-audio` points at the session's own `audio.wav`), it uses the existing `audio.wav` in place and skips the conversion. It then runs the engine, applies the offset, and writes `transcript.jsonl`. Always prints the offset it used and its provenance (`from -offset flag`, `derived: audio creation_time − manifest t0`, or `default 0: audio creation time unavailable`), then `transcribed N utterances → <path>`.
+Behaviour: with `-audio`, requires ffmpeg on PATH and converts the recording to 16 kHz mono `audio.wav` in the session directory; without it (or when `-audio` points at the session's own `audio.wav`), it uses the existing `audio.wav` in place and skips the conversion. It then runs the engine, applies the offset, and writes `transcript.jsonl`. Always prints the offset it used and its provenance — one of:
+
+- `from -offset flag` — the explicit flag, which always wins;
+- `derived: audio creation_time − manifest t0` — derived for an external recording;
+- `default 0: audio creation time unavailable` — an external recording whose creation time could not be read;
+- `persisted: audio.wav converted from an external recording (+3.20s)` — read back from `audio.offset.json`, the printed value being the persisted offset;
+- `default 0: session audio.wav captured at t0` — a session whose `audio.wav` was captured here and has no sidecar.
+
+It then prints `transcribed N utterances → <path>`. With `-audio`, the offset in force is written to `audio.offset.json`; without it, the sidecar is rewritten only when an explicit `-offset` is given and the session already has one. A later bare run reuses the persisted value.
 
 ## `testimony merge`
 

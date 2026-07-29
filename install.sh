@@ -33,7 +33,7 @@
 set -eu
 
 REPO="REPPL/Testimony"
-VERSION="v0.1.0"
+VERSION="v0.4.0"
 
 # Pinned OpenPGP fingerprint of the evermeet.cx ffmpeg publisher key
 # (Helmut K. C. Tessarek, key id 0x476C4B611A660874). The local-macOS ffmpeg
@@ -64,12 +64,15 @@ ask() {
     return 1
 }
 
-# choose "Question" "option-a" "option-b" → prints the chosen word.
+# choose "Question" "option-a" "option-b" → prints the chosen word. When both
+# options are the same word there is only one choice to offer, so it is rendered
+# (and matched) once: [local/skip], never [local/local/skip].
 choose() {
     q="$1"; a="$2"; b="$3"
     if [ "$ASSUME_YES" = 1 ]; then printf '%s' "$a"; return; fi
+    if [ "$a" = "$b" ]; then opts="$a"; else opts="$a/$b"; fi
     if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-        printf '%s [%s/%s/skip] ' "$q" "$a" "$b" > /dev/tty
+        printf '%s [%s/skip] ' "$q" "$opts" > /dev/tty
         IFS= read -r reply < /dev/tty || reply=""
         case "$reply" in
             "$a") printf '%s' "$a" ;;
@@ -116,7 +119,14 @@ install_binary() {
     trap 'rm -rf "$tmp"' EXIT INT TERM
 
     say "Downloading $tarball ..."
-    fetch "$base/$tarball" "$tmp/$tarball"
+    # A bad --version (or a platform the release never published) surfaces from
+    # curl/wget as a bare 404 in the middle of "Downloading". Name the actual
+    # cause instead. Still fail-closed: die exits non-zero, nothing is retried.
+    fetch "$base/$tarball" "$tmp/$tarball" || die "could not download $tarball
+  Release \"$VERSION\" — or its $plat asset — was not found at
+    $base/$tarball
+  Release tags are of the form vX.Y.Z (note the leading 'v').
+  Releases: https://github.com/$REPO/releases"
 
     # Integrity: verify the tarball against the release's published SHA256SUMS.
     # No hash is pinned in this script — it is fetched from the release itself.
