@@ -20,8 +20,9 @@ Raw audio and video never leave your machine; only derived text is analysed. See
 ## Install
 
 One line, no admin rights required (binary goes to `~/.local/bin`; the download
-is verified against the release's published checksums and, when the GitHub CLI
-is installed, its SLSA build-provenance attestation):
+is verified against the release's published checksums and, when an
+authenticated GitHub CLI (`gh`) is available, its SLSA build-provenance
+attestation):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | sh

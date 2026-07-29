@@ -27,6 +27,11 @@ Invocation contract (from the round-8 bug-hunt):
   `audio.wav`; an explicit `-offset` now rewrites an existing sidecar.
 - `report` renders a hand-ordered (or hand-edited) `timeline.jsonl` in time
   order instead of trusting the file's line order.
+- `install.sh` installs the current release: its version pin had been left at
+  `v0.1.0`, handing new users a three-release-old binary, and the release
+  workflow now gates the pin against the tag so it cannot go stale again. The
+  installer also renders single-option prompts correctly and names the actual
+  cause when a release download fails.
 
 Invocation contract (round 9):
 

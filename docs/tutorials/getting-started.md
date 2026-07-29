@@ -23,8 +23,12 @@ needs ffmpeg. The one yes/no confirmation inside the whisperx setup (installing
 its `uv` tool) is the exception: there `y` accepts.
 
 The installer verifies the `testimony` binary against the release's published
-`SHA256SUMS` and, when the GitHub CLI (`gh`) is installed, against its SLSA
-build-provenance attestation too, refusing to install on a mismatch. The
+`SHA256SUMS` and, when an authenticated GitHub CLI (`gh`) is available, against
+its SLSA build-provenance attestation too, refusing to install whenever that
+verification does not confirm the build. A `gh` that cannot attempt the verification —
+not authenticated, or too old to know attestations — is told apart from a
+failed verification: the installer says so and proceeds on the checksum alone,
+exactly as it does with no `gh` at all. The
 dependencies carry weaker guarantees: the **local** ffmpeg build for macOS is
 checked against a pinned publisher key only when `gpg` is on your machine, and
 it warns you when it installs one unverified; `uv` and whisperx are fetched from
