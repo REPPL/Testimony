@@ -25,13 +25,13 @@
 # CLI) is available it ALSO runs `gh attestation verify` against the release
 # workflow's SLSA build-provenance (authenticity — cryptographic proof the tarball
 # was built by REPPL/Testimony's own release.yml, the strong anchor). A gh that
-# cannot attempt the verification — absent, unauthenticated, or too old to know
-# attestations — means the install proceeds on the checksum alone, with a note
-# saying so. Any other gh failure refuses the install, fail closed: that covers
-# a verification gh performed and rejected, and equally one it could not
-# complete (the attestation API unreachable), because an inconclusive
-# verification cannot be told apart from one an attacker is blocking. Re-run
-# when connectivity returns.
+# cannot attempt the verification — absent, too old to know attestations, or
+# unable to establish its authentication (which an unreachable API also causes
+# at the auth check) — means the install proceeds on the checksum alone, with
+# a note saying so. Once the verification is attempted, any failure refuses
+# the install, fail closed: a rejection, and equally a verification that
+# could not complete, because mid-verification failure cannot be told apart
+# from an attacker blocking it. Re-run when connectivity returns.
 # No per-release hash is pinned in this script: the checksums are fetched from
 # the release itself and the attestation binds them to the workflow.
 # Everything installs into user-owned locations by default; sudo is never invoked.
@@ -167,12 +167,14 @@ Refusing to install."
     # command or --signer-workflow fails the same way — treating those as
     # "attestation FAILED" made a freshly `brew install`ed gh strictly worse
     # than no gh at all, refusing a tarball whose checksum had just verified.
-    # Every other failure refuses the install, fail closed — a rejected
-    # attestation, and equally a verification gh could not complete (network,
-    # API outage): an inconclusive verification cannot be told apart from one
-    # an attacker is blocking, and that attacker is exactly the one who could
-    # also serve a substituted tarball with a matching SHA256SUMS. gh's own
-    # output is shown instead of being swallowed.
+    # Once the verification is attempted, every failure refuses the install,
+    # fail closed — a rejected attestation, and equally a verification that
+    # fails mid-way (network, API outage): at that point an inconclusive
+    # answer cannot be told apart from one an attacker is blocking. The auth
+    # check above draws the attempt boundary: a gh whose authentication
+    # cannot be established — which an unreachable API also causes — is the
+    # checksum-fallback case, with a note naming it. gh's own output is shown
+    # instead of being swallowed.
     if have gh && ! gh auth status --hostname github.com >/dev/null 2>&1; then
         say "NOTE: 'gh' is installed but not authenticated — installed on the checksum alone."
         say "      'gh attestation verify' needs an authenticated gh; run 'gh auth login'"
