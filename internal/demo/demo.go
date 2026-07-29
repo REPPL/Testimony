@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/REPPL/Testimony/internal/session"
+	"github.com/REPPL/Testimony/internal/timeline"
 )
 
 //go:embed assets/index.html
@@ -32,6 +33,7 @@ type server struct {
 	mu           sync.Mutex
 	interactions *os.File
 	rawEvents    *os.File
+	t0           int64 // manifest t0_epoch_ms, anchoring the interaction shape check
 }
 
 // DefaultApp is the app-under-test name a demo session records.
@@ -133,6 +135,18 @@ func Serve(addr, dir string) (*http.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The interaction shape check needs the manifest's t0 anchor, and every
+	// caller creates the session (and so the manifest) before serving into it.
+	// Loading it here also refuses a session whose anchor merge could never
+	// use, before any capture is accepted against it.
+	man, err := session.LoadManifest(dir)
+	if err != nil {
+		return nil, err
+	}
+	t0, err := man.T0()
+	if err != nil {
+		return nil, err
+	}
 	open := func(name string) (*os.File, error) {
 		return session.OpenFileNoFollow(filepath.Join(dir, name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	}
@@ -145,7 +159,7 @@ func Serve(addr, dir string) (*http.Server, error) {
 		inter.Close()
 		return nil, err
 	}
-	s := &server{interactions: inter, rawEvents: raw}
+	s := &server{interactions: inter, rawEvents: raw, t0: t0}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +254,17 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 		line, err := compactLine(body)
 		if err != nil {
 			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		// The write side must respect the read side's shape invariant too, not
+		// just its line-length one: merge refuses an interactions.jsonl record
+		// that is not an object carrying the required t and kind, so accepting
+		// one here (204) would durably persist a line that fails the whole
+		// session's merge after the participant has gone. This is the single-
+		// record interaction path only; a raw-event batch is archival and no
+		// reader constrains its element shape.
+		if err := timeline.CheckInteraction(line, s.t0); err != nil {
+			http.Error(w, fmt.Sprintf("interaction %v", err), http.StatusBadRequest)
 			return
 		}
 		if tooLongForJSONL(line) {

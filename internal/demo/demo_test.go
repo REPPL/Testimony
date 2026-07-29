@@ -27,7 +27,20 @@ func newTestServer(t *testing.T) (*server, string) {
 	inter := open(session.InteractionsFile)
 	raw := open(session.RawEventsFile)
 	t.Cleanup(func() { inter.Close(); raw.Close() })
-	return &server{interactions: inter, rawEvents: raw}, dir
+	// t0 anchors the interaction shape check; 1 keeps the toy `"t":1` records
+	// these tests post at a session-relative time of 0.
+	return &server{interactions: inter, rawEvents: raw, t0: 1}, dir
+}
+
+// manifestDir builds a temp session directory holding a manifest with a usable
+// t0 anchor, which Serve now loads for the interaction shape check.
+func manifestDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", App: "a", Participant: "P1", T0EpochMS: 1}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	return dir
 }
 
 // jsonPost builds a POST that passes the loopback/JSON guard by default; hdr
@@ -120,7 +133,7 @@ func TestServeRefusesUnparseableAddr(t *testing.T) {
 // it alive for ever and the shutdown waited on it, leaving 'testimony record'
 // hanging after Ctrl+C instead of finalising the session.
 func TestServeBoundsRequestTimeouts(t *testing.T) {
-	srv, err := Serve(":0", t.TempDir())
+	srv, err := Serve(":0", manifestDir(t))
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
@@ -324,6 +337,39 @@ func TestWriteEndpointGuard(t *testing.T) {
 	}
 }
 
+// TestInteractionRefusedWhenMergeWouldRefuseIt is the write/read shape
+// regression: the endpoint accepted any JSON value — an array, a bare string,
+// null, a number, an object missing the required t or kind — with 204, and the
+// record was durably persisted for merge to refuse later, breaking the whole
+// session (docs/reference/cli.md promises one JSON object per request and 400
+// on malformed bodies). The write side must refuse exactly what the reader
+// cannot take back.
+func TestInteractionRefusedWhenMergeWouldRefuseIt(t *testing.T) {
+	cases := map[string]string{
+		"array":          `[1,2,3]`,
+		"string":         `"hello"`,
+		"null":           `null`,
+		"number":         `42`,
+		"missing t":      `{"kind":"click"}`,
+		"missing kind":   `{"t":1}`,
+		"non-positive t": `{"t":0,"kind":"click"}`,
+		"absurd t":       `{"t":9000000000000000000,"kind":"click"}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, dir := newTestServer(t)
+			w := httptest.NewRecorder()
+			s.handleInteraction(w, jsonPost("/api/interactions", body, nil))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", w.Code)
+			}
+			if lines := fileLines(t, filepath.Join(dir, session.InteractionsFile)); len(lines) != 0 {
+				t.Fatalf("refused record still wrote %d lines: %q", len(lines), lines)
+			}
+		})
+	}
+}
+
 // jsonRecordOfSize builds a single valid, whitespace-free interaction JSON
 // object of exactly n bytes, padding its text field. Because it carries no
 // insignificant whitespace, json.Compact leaves it byte-for-byte, so its stored
@@ -415,7 +461,7 @@ func TestOversizedBatchRecordIsRefusedWhole(t *testing.T) {
 // TestServeRefusesSymlinkStream ensures the capture server will not open its
 // stream files through a pre-planted symlink (arbitrary-file append).
 func TestServeRefusesSymlinkStream(t *testing.T) {
-	dir := t.TempDir()
+	dir := manifestDir(t)
 	outside := filepath.Join(t.TempDir(), "victim")
 	if err := os.WriteFile(outside, []byte("keep\n"), 0o644); err != nil {
 		t.Fatal(err)
