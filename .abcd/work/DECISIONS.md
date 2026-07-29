@@ -2,7 +2,7 @@
 
 Append-only, one line per decision, newest last. Date-prefixed.
 Architecture-shaping decisions graduate to an ADR under
-[`../development/decisions/adrs/`](../development/decisions/adrs/).
+`.abcd/development/decisions/adrs/` (created with the first ADR).
 
 - 2026-07-17 — Adopt the three-tier working-state layout (`.abcd/development/`
   durable, `.abcd/work/` shared, `.abcd/.work.local/` local-only) and the

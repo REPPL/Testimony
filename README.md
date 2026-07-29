@@ -57,8 +57,9 @@ open examples/sample-session/report.md
 
 Then capture a real one: `testimony record -demo` starts a capture session —
 recording your voice and clicks in one command — and prints every step. Voice
-and screen capture need macOS; on Linux, `record` skips those streams and says
-so, and an external recording joins the session via `transcribe -audio`. The
+and screen capture need macOS; elsewhere, `record` skips those streams and
+says so, and an external recording joins the session via `transcribe -audio`.
+The
 [getting-started tutorial](docs/tutorials/getting-started.md) walks the whole
 path — record, think aloud, transcribe, merge, report — in about five minutes. The result interleaves speech with interface events:
 

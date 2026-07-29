@@ -10,7 +10,7 @@ import (
 // cause — but because a busy or absent device fails the same way, the message
 // is phrased as "most likely", never asserted.
 //
-// Each signature must indicate a device-open failure on its own. The list once
+// Each signature must indicate a device failure on its own. The list once
 // held the bare module name "avfoundation" and the bare "failed to" — but
 // ffmpeg prints "Input #0, avfoundation, from ':default':" on every SUCCESSFUL
 // input open (no -hide_banner is passed), so the module name sits in the
@@ -21,7 +21,12 @@ import (
 // branch of classifyRecorderExit was unreachable for any failure past the
 // input dump. The real macOS denial lines stay matched: TCC prints
 // "[AVFoundation indev @ …] Failed to create AVCaptureDeviceInput" /
-// "Failed to open device" and "not authorized to capture video".
+// "Failed to open device" and "not authorized to capture video". The list is
+// a heuristic on both sides, deliberately: "input/output error" appears in
+// real denial tails but is also the generic EIO string, so a genuine disk I/O
+// failure at start-up still earns the permissions headline (phrased "most
+// likely", with the raw tail appended); and dropping the bare "abort" trades
+// away detection of a denial whose only trace is a crash line.
 var avSignatures = []string{
 	"input/output error",
 	"not authorized",

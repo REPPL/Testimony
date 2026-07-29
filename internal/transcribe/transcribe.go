@@ -341,8 +341,8 @@ func writeOffsetSidecar(dir string, offset float64, provenance string) error {
 // (malformed, oversized) is precisely the one an explicit -offset repairs — the
 // guidance readOffsetSidecar prints says so — so parsing here would refuse the
 // repair. os.Lstat, not os.Stat: a symlink planted at the sidecar name must
-// count as present, so the rewrite meets session.WriteFileNoFollow's refusal
-// rather than being mistaken for absence and skipped.
+// count as present, so the rewrite meets session.WriteFileAtomicNoFollow's
+// refusal rather than being mistaken for absence and skipped.
 func offsetSidecarExists(dir string) (bool, error) {
 	if _, err := os.Lstat(filepath.Join(dir, session.AudioOffsetFile)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {

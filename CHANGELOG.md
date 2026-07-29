@@ -6,8 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a
 leading `v`.
 
 Before v1.0.0, minor releases may make breaking changes; a change that can
-break an existing invocation is called out where it is recorded (to date,
-under **Changed**).
+break an existing invocation is called out as **Behaviour:** where it is
+recorded.
 
 ## [Unreleased]
 
@@ -15,13 +15,16 @@ under **Changed**).
 
 Evidence integrity:
 
-- `analyze` refuses a timeline carrying duplicate entry ids: of two
-  utterances sharing an id, only the later one reached the quote validator,
-  so an honest verbatim quote of the first was rejected while a quote of the
-  second validated for a finding anchored at the first one's time. `report`,
-  whose join is positional, still renders such a file.
-- `report` and `analyze` refuse a timeline entry whose `src` is neither
-  `speech` nor `event`, instead of dropping it from the rendered timeline
+- **Behaviour:** `merge` refuses a transcript that reuses an utterance id,
+  and `analyze` refuses a timeline carrying duplicate entry ids — inputs
+  earlier versions accepted. Of two utterances sharing an id, only the later
+  one reached the quote validator, so an honest verbatim quote of the first
+  was rejected while a quote of the second validated for a finding anchored
+  at the first one's time. `report`, whose join is positional, still renders
+  such a timeline.
+- **Behaviour:** `report` and `analyze` refuse a timeline entry whose `src`
+  is neither `speech` nor `event` — previously accepted at exit 0 — instead
+  of dropping it from the rendered timeline
   while counting its time into the header duration and keeping its id
   citable as evidence.
 - The audio offset sidecar is written atomically (temp file and rename): a
@@ -32,7 +35,7 @@ Evidence integrity:
 Capture and diagnostics:
 
 - A recorder start-up failure is headlined as a likely permissions issue
-  only when the ffmpeg output carries a device-open failure; the module
+  only when the ffmpeg output carries a device-failure signature; the module
   banner alone — printed on every successful open — used to route a full
   disk or a missing encoder to the System Settings pane.
 - `demo -addr :0` prints the actually-bound address instead of the
@@ -52,13 +55,15 @@ Checks and installer:
   satisfiable from the transcript and findings alone, so a regression that
   dropped all events kept the gate green.
 - The release workflow downloads a published tarball and requires the
-  binary's own version output to name the tag; the checks parse `install.sh`
-  with both shells the documented one-liner pipes it into.
-- `install.sh` verifies the installed binary runs and reports the pinned
-  release before announcing success; an unrunnable binary (a wrong-platform
-  asset, a `noexec` mount) used to print a success line at exit 0. Its
-  trust-model comments state the fail-closed attestation behaviour the
-  implementation has always had.
+  binary's own version output to name the tag; the checks parse `install.sh` with
+  `sh -n` and `bash -n`.
+- `install.sh` verifies the release binary runs and reports the pinned
+  release before installing it; an unrunnable binary (a wrong-platform
+  asset) used to replace any previously installed one and print a success
+  line at exit 0. Its trust-model comments now state precisely which
+  attestation failures refuse the install (a verification attempted and
+  rejected, or failed mid-way) and which fall back to the checksum with a
+  note (a gh that cannot attempt it).
 
 Documentation:
 
@@ -89,7 +94,6 @@ Invocation contract:
   workflow now gates the pin against the tag so it cannot go stale again. The
   installer also renders single-option prompts correctly and names the actual
   cause when a release download fails.
-
 - A stray positional argument is refused as a usage error; it used to be
   silently swallowed together with every flag after it, so the command ran
   with defaults at exit 0.

@@ -105,9 +105,9 @@ open sessions/<dir>/report.md
 The Findings section lists findings under **Confirmed**, **Unverified**,
 **Duplicate**, and **Rejected**, each with its quote, anchor, and — where you
 recorded one — the verdict and its date. Change a verdict at any time with
-`testimony review -finding F-NNN -verdict <verdict>` (the interactive walk
-offers only findings that are still unverified); the latest one wins, and the
-history is kept.
+`testimony review -session sessions/<dir> -finding F-NNN -verdict <verdict>`
+(the interactive walk offers only findings that are still unverified); the
+latest one wins, and the history is kept.
 
 For the exact field rules, see the
 [session directory reference](../reference/session-directory.md#findingsjsonl);

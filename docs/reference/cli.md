@@ -97,7 +97,7 @@ testimony report -session DIR [-window 2.5]
 | `-session` | *(required)* | session directory |
 | `-window` | `2.5` | utterance-to-event join window, in seconds |
 
-Behaviour: reads `manifest.json` (required) and `timeline.jsonl`, plus `findings.jsonl` when present (the Findings section; without the file it is a short notice pointing at `analyze` and `review`). Attaches each event to the first utterance whose span, widened by the window on both sides, contains it; events matched by no utterance appear as standalone lines. Writes `report.md` into the session directory and prints `wrote <path>`.
+Behaviour: reads `manifest.json` (required) and `timeline.jsonl`, plus `findings.jsonl` when present (the Findings section; without the file it is a short notice pointing at `analyze` and `review`). A timeline entry whose `src` is neither `speech` nor `event` is refused rather than silently omitted from the rendered record. Attaches each event to the first utterance whose span, widened by the window on both sides, contains it; events matched by no utterance appear as standalone lines. Writes `report.md` into the session directory and prints `wrote <path>`.
 
 ## `testimony record`
 
@@ -141,7 +141,7 @@ testimony analyze -session DIR -ingest FILE       # validate the answer → find
 | `-out` | *(stdout)* | emit mode: write the request to `FILE` instead of stdout |
 | `-ingest` | *(off)* | ingest mode: validate the answer JSON at `FILE` (or `-` for stdin) into `findings.jsonl` |
 
-`analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`). Combining `-out` and `-ingest` is an error. Emit reads `manifest.json` and `timeline.jsonl`; ingest reads `timeline.jsonl` only. Both hint to run `merge` first when the timeline is missing.
+`analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`). Combining `-out` and `-ingest` is an error. Emit reads `manifest.json` and `timeline.jsonl`; ingest reads `timeline.jsonl` only. Both hint to run `merge` first when the timeline is missing, and both refuse a timeline whose entries carry a `src` other than `speech` or `event`, or a duplicated entry id — findings cite evidence by id, so a reused one cannot be resolved unambiguously (a `merge`-produced timeline never carries either defect: `merge` refuses a transcript that reuses an utterance id and synthesises event ids itself).
 
 Emit behaviour: writes a single self-contained prompt — the rubric version header (`testimony-analysis/v1`), the second-coder stance, two-pass instructions (segment coding, then session synthesis), the rubric body (five `type` definitions, the `1..4` severity scale, the evidence hard-constraints), the session context (app, participant, tasks), the timeline lines inline, and the required output shape with a worked example. Nothing in the session directory is mutated. The timeline is emitted whole (v1 does not chunk by task boundary; the manifest carries no task timestamps). With `-out FILE` the prompt goes to a file and the command prints `wrote <path>`; otherwise it prints to stdout.
 
