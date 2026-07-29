@@ -131,3 +131,31 @@ func TestReportRejectsNonFiniteWindow(t *testing.T) {
 		}
 	}
 }
+
+// TestMissingSessionIsAUsageError pins the exit-status contract of
+// docs/reference/cli.md: a wrong invocation exits 2 and a runtime failure of a
+// well-formed command exits 1. A missing required -session was reported as a
+// runtime error (1), so it was indistinguishable to a caller from a session that
+// genuinely could not be read, while the sibling usage errors — no command, an
+// unknown command, a flag-parse failure — all exited 2.
+func TestMissingSessionIsAUsageError(t *testing.T) {
+	for _, cmd := range []string{"merge", "report", "transcribe", "analyze", "review"} {
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{cmd}) })
+		if code != 2 {
+			t.Errorf("%s without -session: exit %d, want 2 (usage error)", cmd, code)
+		}
+		if want := "testimony: " + cmd + ": -session is required"; !strings.Contains(stderr, want) {
+			t.Errorf("%s without -session: want %q on stderr, got %q", cmd, want, stderr)
+		}
+	}
+
+	// A well-formed command that fails at runtime keeps exit 1.
+	var code int
+	captureStderr(t, func() {
+		code = Run([]string{"merge", "-session", filepath.Join(t.TempDir(), "absent")})
+	})
+	if code != 1 {
+		t.Errorf("merge on an unreadable session: exit %d, want 1 (runtime error)", code)
+	}
+}

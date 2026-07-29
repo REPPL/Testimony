@@ -67,7 +67,7 @@ func Run(args []string) int {
 		dir := fs.String("session", "", "session directory")
 		fs.Parse(rest)
 		if *dir == "" {
-			return fail(fmt.Errorf("merge: -session is required"))
+			return usageErr(fmt.Errorf("merge: -session is required"))
 		}
 		speech, events, err := timeline.Merge(*dir)
 		if err != nil {
@@ -83,7 +83,7 @@ func Run(args []string) int {
 		window := fs.Float64("window", 2.5, "utterance↔event join window, seconds")
 		fs.Parse(rest)
 		if *dir == "" {
-			return fail(fmt.Errorf("report: -session is required"))
+			return usageErr(fmt.Errorf("report: -session is required"))
 		}
 		// A non-finite window is not a join window at all, and Render has no way to
 		// notice: every comparison against NaN is false, so a NaN window silently
@@ -147,7 +147,7 @@ func Run(args []string) int {
 		offset := fs.Float64("offset", 0, "audio→session clock offset in seconds (default: derived from the recording's creation time)")
 		fs.Parse(rest)
 		if *dir == "" {
-			return fail(fmt.Errorf("transcribe: -session is required"))
+			return usageErr(fmt.Errorf("transcribe: -session is required"))
 		}
 		offsetSet := false
 		fs.Visit(func(f *flag.Flag) {
@@ -181,7 +181,7 @@ func Run(args []string) int {
 		ingest := fs.String("ingest", "", "validate answer JSON at FILE (or \"-\" for stdin) into findings.jsonl")
 		fs.Parse(rest)
 		if *dir == "" {
-			return fail(fmt.Errorf("analyze: -session is required"))
+			return usageErr(fmt.Errorf("analyze: -session is required"))
 		}
 		if *ingest != "" {
 			if *out != "" {
@@ -235,7 +235,7 @@ func Run(args []string) int {
 		verdict := fs.String("verdict", "", "non-interactive: confirmed | rejected | duplicate-of-F-NNN")
 		fs.Parse(rest)
 		if *dir == "" {
-			return fail(fmt.Errorf("review: -session is required"))
+			return usageErr(fmt.Errorf("review: -session is required"))
 		}
 		if err := review.Run(review.Options{
 			Dir:     *dir,
@@ -264,9 +264,26 @@ func Run(args []string) int {
 	}
 }
 
-func fail(err error) int {
+// printErr writes an operator-facing error in the one shape every command uses.
+func printErr(err error) {
 	fmt.Fprintln(os.Stderr, "testimony:", err)
+}
+
+// fail reports a runtime failure of a well-formed command — the invocation was
+// right and the work could not be done (exit 1).
+func fail(err error) int {
+	printErr(err)
 	return 1
+}
+
+// usageErr reports a wrong invocation (exit 2), the status the no-command,
+// unknown-command, and flag-parse paths already use. A missing required flag
+// belongs with them: reported as a runtime error it was indistinguishable to a
+// caller — a script, CI — from a session that genuinely could not be read.
+// docs/reference/cli.md states the contract.
+func usageErr(err error) int {
+	printErr(err)
+	return 2
 }
 
 // isCharDevice reports whether f is an interactive terminal, gating review's
