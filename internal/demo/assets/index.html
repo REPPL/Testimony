@@ -146,14 +146,25 @@
     return s;
   }
   function labelFor(el) {
+    if (!(el instanceof Element)) return "";
     var t = (el.closest("[data-testid]") || el).textContent || "";
     return t.trim().replace(/\s+/g, " ").slice(0, 40);
   }
   function post(url, body) {
     try {
-      navigator.sendBeacon
-        ? navigator.sendBeacon(url, new Blob([JSON.stringify(body)], { type: "application/json" }))
-        : fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), keepalive: true });
+      var json = JSON.stringify(body);
+      // sendBeacon returns false (it does not throw) when the UA refuses to
+      // queue the body — most commonly the in-flight beacon quota, which a
+      // large rrweb batch can hit. By then the batch is already out of the
+      // buffer, and nothing reaches the server, so its stderr refusal log
+      // cannot see the drop either: fall back to fetch instead of losing the
+      // records silently.
+      var queued = navigator.sendBeacon
+        ? navigator.sendBeacon(url, new Blob([json], { type: "application/json" }))
+        : false;
+      if (!queued) {
+        fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: json, keepalive: true });
+      }
     } catch (e) { /* capture must never break the app under test */ }
   }
   function interaction(kind, el, extra) {

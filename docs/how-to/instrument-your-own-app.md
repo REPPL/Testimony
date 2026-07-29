@@ -56,9 +56,16 @@ A minimal capture script, following the same conventions as the demo app — pre
   }
   function post(url, body) {
     try {
-      navigator.sendBeacon
-        ? navigator.sendBeacon(url, new Blob([JSON.stringify(body)], { type: "application/json" }))
-        : fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), keepalive: true });
+      var json = JSON.stringify(body);
+      // sendBeacon returns false when the UA refuses to queue the body
+      // (e.g. the in-flight beacon quota): fall back to fetch so the
+      // records are not lost silently.
+      var queued = navigator.sendBeacon
+        ? navigator.sendBeacon(url, new Blob([json], { type: "application/json" }))
+        : false;
+      if (!queued) {
+        fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: json, keepalive: true });
+      }
     } catch (e) { /* capture must never break the app */ }
   }
   function interaction(kind, el, extra) {
