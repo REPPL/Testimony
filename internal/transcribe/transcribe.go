@@ -56,6 +56,11 @@ type segment struct {
 // Run performs the full pipeline and returns the number of utterances
 // written to transcript.jsonl in the session directory.
 func Run(opts Options) (int, error) {
+	// Default the log sink as record.Run does, so a caller that leaves Log nil
+	// gets progress on stderr instead of a panic at the first status line.
+	if opts.Log == nil {
+		opts.Log = os.Stderr
+	}
 	man, err := session.LoadManifest(opts.SessionDir)
 	if err != nil {
 		return 0, err

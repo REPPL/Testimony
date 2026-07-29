@@ -1284,3 +1284,15 @@ func TestWriteOffsetSidecarFailurePreservesPrior(t *testing.T) {
 		t.Fatalf("prior sidecar bytes not preserved:\ngot  %q\nwant %q", got, prior)
 	}
 }
+
+// TestRunDefaultsNilLog pins the log-sink default: record.Run defaults its
+// Log to os.Stderr, but transcribe.Run wrote its offset status line straight
+// to opts.Log, so a caller leaving Log nil panicked at the first Fprintf.
+func TestRunDefaultsNilLog(t *testing.T) {
+	fakeTools(t)
+	dir, _ := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+
+	if _, err := Run(Options{SessionDir: dir, Engine: EngineWhisperX}); err != nil {
+		t.Fatalf("Run with nil Log: %v", err)
+	}
+}
