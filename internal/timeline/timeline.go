@@ -4,6 +4,7 @@
 package timeline
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -198,33 +199,8 @@ const maxUtteranceSeconds = 1e9
 func checkedInteractions(path string, t0EpochMS int64, raw []rawInteraction) ([]Interaction, error) {
 	out := make([]Interaction, 0, len(raw))
 	for i, r := range raw {
-		if r.T == nil {
-			return nil, fmt.Errorf("%s: interaction %d is missing t; cannot place it on the session clock", path, i+1)
-		}
-		// t is epoch milliseconds, so a value at or below zero anchors the event at
-		// or before 1 January 1970 — no capture produces that, exactly the reasoning
-		// session.Manifest.T0 refuses a non-positive anchor on. Refusing it here also
-		// forecloses the extreme: a t near math.MinInt64 makes (t - t0EpochMS) wrap on
-		// signed overflow in BuildEntries and plant the event millions of years after
-		// session start, inflating the report's span while Merge still exits 0.
-		if *r.T <= 0 {
-			return nil, fmt.Errorf("%s: interaction %d has t %d; an epoch-millisecond time must be positive", path, i+1, *r.T)
-		}
-		// Bound the resulting session-relative magnitude, the epoch-ms twin of
-		// checkedUtterances' |t0| ≤ maxUtteranceSeconds check. The sign check above
-		// rules out the negative extreme, but a huge positive t (up to MaxInt64) still
-		// yields rel = (t − t0)/1000 of ~9e15 s — no session time — which merge writes
-		// while exiting 0, then report's end() reports as the session span and clock()
-		// renders as the broken "--:--", and it also inflates analyze.indexTimeline's
-		// idx.end so a finding may be anchored anywhere up to it. checkedUtterances
-		// refuses the same absurd magnitude on the speech side; without this the
-		// interaction side was the asymmetric gap, admitting a session-relative time
-		// its own twin rejects. t0 is the manifest anchor Merge resolved for this call.
-		if rel := float64(*r.T-t0EpochMS) / 1000.0; math.Abs(rel) > maxUtteranceSeconds {
-			return nil, fmt.Errorf("%s: interaction %d has t %d, a session-relative time of %gs that exceeds %g in magnitude", path, i+1, *r.T, rel, maxUtteranceSeconds)
-		}
-		if r.Kind == "" {
-			return nil, fmt.Errorf("%s: interaction %d is missing kind; an event must name what happened", path, i+1)
+		if err := checkInteraction(r, t0EpochMS); err != nil {
+			return nil, fmt.Errorf("%s: interaction %d %s", path, i+1, err)
 		}
 		out = append(out, Interaction{
 			T:        *r.T,
@@ -236,6 +212,61 @@ func checkedInteractions(path string, t0EpochMS int64, raw []rawInteraction) ([]
 		})
 	}
 	return out, nil
+}
+
+// checkInteraction enforces the required fields on one decoded interaction —
+// the rules docs/reference/session-directory.md states — phrased so a caller
+// can prefix the record's position ("interaction 3 …").
+//
+// t is epoch milliseconds, so a value at or below zero anchors the event at
+// or before 1 January 1970 — no capture produces that, exactly the reasoning
+// session.Manifest.T0 refuses a non-positive anchor on. Refusing it also
+// forecloses the extreme: a t near math.MinInt64 makes (t - t0EpochMS) wrap on
+// signed overflow in BuildEntries and plant the event millions of years after
+// session start, inflating the report's span while Merge still exits 0.
+//
+// The session-relative magnitude is bounded too — the epoch-ms twin of
+// checkedUtterances' |t0| ≤ maxUtteranceSeconds check. The sign check
+// rules out the negative extreme, but a huge positive t (up to MaxInt64) still
+// yields rel = (t − t0)/1000 of ~9e15 s — no session time — which merge writes
+// while exiting 0, then report's end() reports as the session span and clock()
+// renders as the broken "--:--", and it also inflates analyze.indexTimeline's
+// idx.end so a finding may be anchored anywhere up to it. checkedUtterances
+// refuses the same absurd magnitude on the speech side; without this the
+// interaction side was the asymmetric gap, admitting a session-relative time
+// its own twin rejects. t0EpochMS is the manifest anchor the caller resolved.
+//
+// A record with no kind is refused because it would join the timeline naming
+// no observed action.
+func checkInteraction(r rawInteraction, t0EpochMS int64) error {
+	if r.T == nil {
+		return errors.New("is missing t; cannot place it on the session clock")
+	}
+	if *r.T <= 0 {
+		return fmt.Errorf("has t %d; an epoch-millisecond time must be positive", *r.T)
+	}
+	if rel := float64(*r.T-t0EpochMS) / 1000.0; math.Abs(rel) > maxUtteranceSeconds {
+		return fmt.Errorf("has t %d, a session-relative time of %gs that exceeds %g in magnitude", *r.T, rel, maxUtteranceSeconds)
+	}
+	if r.Kind == "" {
+		return errors.New("is missing kind; an event must name what happened")
+	}
+	return nil
+}
+
+// CheckInteraction validates one interactions.jsonl record — a single JSON
+// object carrying the fields docs/reference/session-directory.md marks
+// required — against the same rules Merge enforces. It exists for the capture
+// write side: every reader refuses these records, so an endpoint that accepted
+// one would durably persist a line that later fails the whole session's merge.
+// t0EpochMS is the manifest anchor the session-relative bound is taken
+// against. The error is phrased to follow the word "interaction".
+func CheckInteraction(line []byte, t0EpochMS int64) error {
+	var r rawInteraction
+	if err := json.Unmarshal(line, &r); err != nil {
+		return errors.New("is not a JSON interaction object")
+	}
+	return checkInteraction(r, t0EpochMS)
 }
 
 // checkedUtterances enforces the one transcript field whose absence cannot be

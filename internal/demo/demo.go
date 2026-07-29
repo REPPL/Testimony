@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/REPPL/Testimony/internal/session"
+	"github.com/REPPL/Testimony/internal/timeline"
 )
 
 //go:embed assets/index.html
@@ -32,6 +33,7 @@ type server struct {
 	mu           sync.Mutex
 	interactions *os.File
 	rawEvents    *os.File
+	t0           int64 // manifest t0_epoch_ms, anchoring the interaction shape check
 }
 
 // DefaultApp is the app-under-test name a demo session records.
@@ -133,6 +135,18 @@ func Serve(addr, dir string) (*http.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The interaction shape check needs the manifest's t0 anchor, and every
+	// caller creates the session (and so the manifest) before serving into it.
+	// Loading it here also refuses a session whose anchor merge could never
+	// use, before any capture is accepted against it.
+	man, err := session.LoadManifest(dir)
+	if err != nil {
+		return nil, err
+	}
+	t0, err := man.T0()
+	if err != nil {
+		return nil, err
+	}
 	open := func(name string) (*os.File, error) {
 		return session.OpenFileNoFollow(filepath.Join(dir, name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	}
@@ -145,7 +159,7 @@ func Serve(addr, dir string) (*http.Server, error) {
 		inter.Close()
 		return nil, err
 	}
-	s := &server{interactions: inter, rawEvents: raw}
+	s := &server{interactions: inter, rawEvents: raw, t0: t0}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +175,16 @@ func Serve(addr, dir string) (*http.Server, error) {
 		inter.Close()
 		raw.Close()
 		return nil, err
+	}
+	// A deliberately wider bind serves the page to other devices, but allowWrite
+	// still pins capture posts to loopback clients — lifting that pin would
+	// reopen the CSRF/DNS-rebinding surface the guard exists for. The operator
+	// must hear the consequence up front: their clients post via sendBeacon,
+	// which surfaces no status to the page, so without this line the first
+	// signal that a remote participant's session recorded nothing was merge
+	// counting 0 events.
+	if !loopbackHost(bind) {
+		fmt.Fprintf(os.Stderr, "testimony demo: warning: bound to %s, but capture posts are accepted from loopback clients only — a page opened from another device is served yet records nothing\n", bind)
 	}
 	// The two stream files use direct O_APPEND writes (no buffering), so their
 	// data is durable without an explicit Close; the OS reclaims them on exit,
@@ -189,7 +213,7 @@ func (s *server) handleRawEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File, batch bool) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		refuseWrite(w, r, "method "+r.Method, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
 	if !allowWrite(w, r) {
@@ -209,11 +233,11 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		refuseWrite(w, r, fmt.Sprintf("unreadable body: %v", err), err.Error(), http.StatusBadRequest)
 		return
 	}
 	if int64(len(body)) > maxBody {
-		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		refuseWrite(w, r, "body over the size limit", "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -221,17 +245,17 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	if batch {
 		var msgs []json.RawMessage
 		if err := json.Unmarshal(body, &msgs); err != nil {
-			http.Error(w, "expected JSON array", http.StatusBadRequest)
+			refuseWrite(w, r, "body is not a JSON array", "expected JSON array", http.StatusBadRequest)
 			return
 		}
 		for _, m := range msgs {
 			line, err := compactLine(m)
 			if err != nil {
-				http.Error(w, "invalid JSON", http.StatusBadRequest)
+				refuseWrite(w, r, "invalid JSON in a batch element", "invalid JSON", http.StatusBadRequest)
 				return
 			}
 			if tooLongForJSONL(line) {
-				http.Error(w, "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
+				refuseWrite(w, r, "batch element over the JSONL line limit", "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
 				return
 			}
 			lines = append(lines, line)
@@ -239,11 +263,23 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	} else {
 		line, err := compactLine(body)
 		if err != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			refuseWrite(w, r, "invalid JSON", "invalid JSON", http.StatusBadRequest)
 			return
 		}
+		// The write side must respect the read side's shape invariant too, not
+		// just its line-length one: merge refuses an interactions.jsonl record
+		// that is not an object carrying the required t and kind, so accepting
+		// one here (204) would durably persist a line that fails the whole
+		// session's merge after the participant has gone. This is the single-
+		// record interaction path only; a raw-event batch is archival and no
+		// reader constrains its element shape.
 		if tooLongForJSONL(line) {
-			http.Error(w, "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
+			refuseWrite(w, r, "record over the JSONL line limit", "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if err := timeline.CheckInteraction(line, s.t0); err != nil {
+			msg := fmt.Sprintf("interaction %v", err)
+			refuseWrite(w, r, msg, msg, http.StatusBadRequest)
 			return
 		}
 		lines = append(lines, line)
@@ -327,21 +363,32 @@ func tooLongForJSONL(line []byte) bool {
 // returns false when the request must be refused.
 func allowWrite(w http.ResponseWriter, r *http.Request) bool {
 	if !loopbackHost(r.Host) {
-		http.Error(w, "unexpected Host", http.StatusForbidden)
+		refuseWrite(w, r, fmt.Sprintf("unexpected Host %q", r.Host), "unexpected Host", http.StatusForbidden)
 		return false
 	}
 	if o := r.Header.Get("Origin"); o != "" {
 		u, err := url.Parse(o)
 		if err != nil || !loopbackHost(u.Host) {
-			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+			refuseWrite(w, r, fmt.Sprintf("cross-origin Origin %q", o), "cross-origin request rejected", http.StatusForbidden)
 			return false
 		}
 	}
 	if !isJSONContentType(r.Header.Get("Content-Type")) {
-		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+		refuseWrite(w, r, fmt.Sprintf("Content-Type %q", r.Header.Get("Content-Type")), "Content-Type must be application/json", http.StatusUnsupportedMediaType)
 		return false
 	}
 	return true
+}
+
+// refuseWrite answers a refused capture request and logs the refusal to the
+// operator's terminal, for the same reason a failed persist is logged: the
+// page posts via sendBeacon, which cannot report a status back, so stderr is
+// the only signal that capture posts are being refused — by the forgery
+// guard, a malformed or mis-shaped record, or an over-long body. Every
+// refusal path answers through this one helper so none can go silent again.
+func refuseWrite(w http.ResponseWriter, r *http.Request, reason, status string, code int) {
+	fmt.Fprintf(os.Stderr, "testimony demo: capture write refused (%s) from %s\n", reason, r.RemoteAddr)
+	http.Error(w, status, code)
 }
 
 // loopbackHost reports whether hostport names the local machine: the literal
@@ -385,11 +432,21 @@ func DisplayURL(addr string) string {
 	return "http://" + net.JoinHostPort(host, port)
 }
 
+// CheckAddr validates a capture listen address without binding it, so the CLI
+// can refuse a malformed -addr as a usage error before any session directory
+// is created. Serve keeps applying the same rule when it binds.
+func CheckAddr(addr string) error {
+	_, err := listenAddr(addr)
+	return err
+}
+
 // listenAddr binds the capture server to loopback by default: a bare ":8737"
 // (empty host) becomes "127.0.0.1:8737", so the unauthenticated write endpoints
 // are not published to the LAN even though the banner prints "localhost". An
-// operator who deliberately wants a wider bind can still pass an explicit host
-// (e.g. "0.0.0.0:8737").
+// operator who deliberately passes an explicit host (e.g. "0.0.0.0:8737") gets
+// the wider bind, but it serves the PAGE only: allowWrite keeps refusing
+// capture posts from non-loopback clients, and Serve warns about exactly that
+// at startup.
 //
 // An addr that does not parse into host and port is refused outright rather
 // than passed through to net.Listen. Passing it through defeated the very

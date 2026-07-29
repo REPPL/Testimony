@@ -524,6 +524,115 @@ func assertSessionUntouched(t *testing.T, dir, wav string, converted *bool) {
 	}
 }
 
+// TestSidecarRefusalDoesNotDestroyAudio closes the residual gap in the
+// resolve-before-convert invariant: resolution was hoisted ahead of the
+// conversion, but the sidecar persist still ran after it, so a refused sidecar
+// write — a directory or symlink planted at audio.offset.json in a received
+// session, ENOSPC — exited 1 with the record-origin audio.wav already replaced
+// by the converted external recording and no offset recorded. The persist now
+// happens before the rename that replaces audio.wav, so this refusal too
+// leaves the session byte-for-byte as it found it.
+func TestSidecarRefusalDoesNotDestroyAudio(t *testing.T) {
+	fakeTools(t)
+	dir, wav := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+	stubConvert(t)
+	if err := os.Mkdir(filepath.Join(dir, session.AudioOffsetFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Run(Options{SessionDir: dir, Audio: externalRecording(t), Engine: EngineWhisperX, Log: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "persist audio offset") {
+		t.Fatalf("want the sidecar persist refusal, got %v", err)
+	}
+	if b, rerr := os.ReadFile(wav); rerr != nil || string(b) != recordOriginAudio {
+		t.Errorf("the record-origin %s was replaced by a run refused at the sidecar: %q (err=%v)", session.AudioFile, b, rerr)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 { // manifest.json, audio.wav, the planted directory
+		t.Errorf("a refused run left extra files behind: %v", entries)
+	}
+}
+
+// TestRenameFailureRollsBackSidecar pins the other half of the persist-before-
+// rename ordering: when the rename itself fails after the sidecar was written,
+// the sidecar must not survive — a session carrying a persisted offset for an
+// audio.wav that was never converted primes every later bare run to apply that
+// offset to record-origin audio at exit 0.
+func TestRenameFailureRollsBackSidecar(t *testing.T) {
+	fakeTools(t)
+	dir, wav := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+	old := convertRunner
+	t.Cleanup(func() { convertRunner = old })
+	convertRunner = func(_, _, tmpPath string) error {
+		if err := os.WriteFile(tmpPath, []byte("RIFF converted external recording"), 0o644); err != nil {
+			return err
+		}
+		// Sabotage the finalise: a non-empty directory at audio.wav makes the
+		// rename fail after the conversion (and the sidecar write) succeeded.
+		if err := os.Remove(wav); err != nil {
+			return err
+		}
+		if err := os.Mkdir(wav, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(wav, "occupied"), []byte("x"), 0o644)
+	}
+
+	_, err := Run(Options{SessionDir: dir, Audio: externalRecording(t), Engine: EngineWhisperX, Log: io.Discard})
+	if err == nil {
+		t.Fatal("a failed finalise must fail the run")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.AudioOffsetFile)); !os.IsNotExist(statErr) {
+		t.Errorf("the sidecar survived a failed finalise (err=%v); the session claims an offset for audio that was never converted", statErr)
+	}
+}
+
+// TestRenameFailureKeepsUncapturablePriorSidecar pins the third rollback
+// state: a prior sidecar too large to capture (the bounded read refuses it —
+// a received session can ship anything at this name) must survive a failed
+// finalise as whatever this run wrote, never be removed. Removing a sidecar
+// the run did not create would relabel external audio as record-origin — the
+// silent shift the sidecar exists to prevent. The bound itself is the point:
+// the capture read stops at the cap instead of buffering an arbitrarily large
+// attacker-authored file.
+func TestRenameFailureKeepsUncapturablePriorSidecar(t *testing.T) {
+	fakeTools(t)
+	dir, wav := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+	// An over-cap prior: readable, regular, but past maxOffsetSidecarBytes.
+	huge := make([]byte, maxOffsetSidecarBytes+2)
+	for i := range huge {
+		huge[i] = 'x'
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.AudioOffsetFile), huge, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := convertRunner
+	t.Cleanup(func() { convertRunner = old })
+	convertRunner = func(_, _, tmpPath string) error {
+		if err := os.WriteFile(tmpPath, []byte("RIFF converted external recording"), 0o644); err != nil {
+			return err
+		}
+		if err := os.Remove(wav); err != nil {
+			return err
+		}
+		if err := os.Mkdir(wav, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(wav, "occupied"), []byte("x"), 0o644)
+	}
+
+	_, err := Run(Options{SessionDir: dir, Audio: externalRecording(t), Engine: EngineWhisperX, Log: io.Discard})
+	if err == nil {
+		t.Fatal("a failed finalise must fail the run")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.AudioOffsetFile)); statErr != nil {
+		t.Errorf("the sidecar was removed on rollback despite a pre-existing one the run could not capture: %v", statErr)
+	}
+}
+
 // TestRunRefusesNonRegularExternalAudio is the hang regression on the offset
 // derivation. The refusals that make -audio safe to open — the accepted-container
 // check and the regular-file check — lived inside convertAudio, so hoisting the
@@ -717,7 +826,7 @@ func TestConvertAudioIntegration(t *testing.T) {
 	}
 
 	out := filepath.Join(dir, session.AudioFile)
-	if err := convertAudio(in, out); err != nil {
+	if err := convertAudio(in, out, nil); err != nil {
 		t.Fatalf("convertAudio: %v", err)
 	}
 	fi, err := os.Stat(out)
@@ -730,7 +839,7 @@ func TestConvertAudioIntegration(t *testing.T) {
 		t.Fatalf("conversion left temp files behind: %v", temps)
 	}
 
-	if err := convertAudio(filepath.Join(dir, "voice.mp3"), out); err == nil {
+	if err := convertAudio(filepath.Join(dir, "voice.mp3"), out, nil); err == nil {
 		t.Fatal("unsupported extension must error")
 	}
 
@@ -744,7 +853,7 @@ func TestConvertAudioIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	failOut := filepath.Join(failDir, session.AudioFile)
-	if err := convertAudio(corrupt, failOut); err == nil {
+	if err := convertAudio(corrupt, failOut, nil); err == nil {
 		t.Fatal("a corrupt input must fail the conversion")
 	}
 	if _, statErr := os.Stat(failOut); !os.IsNotExist(statErr) {
@@ -770,7 +879,7 @@ func TestAtomicConvertHonoursUmask(t *testing.T) {
 	out := filepath.Join(dir, session.AudioFile)
 	if err := atomicConvert(out, func(tmpPath string) error {
 		return os.WriteFile(tmpPath, []byte("RIFF....complete"), 0o644)
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("atomicConvert: %v", err)
 	}
 	fi, err := os.Stat(out)
@@ -815,7 +924,7 @@ func TestConvertAudioRoutesThroughTemp(t *testing.T) {
 		return errors.New("ffmpeg: killed by signal")
 	}
 
-	if err := convertAudio(in, out); err == nil {
+	if err := convertAudio(in, out, nil); err == nil {
 		t.Fatal("convertAudio must surface the conversion failure")
 	}
 	if producedAt == "" {
@@ -850,7 +959,7 @@ func TestAtomicConvertLeavesNoPartialOnFailure(t *testing.T) {
 			t.Fatalf("seed partial temp: %v", werr)
 		}
 		return errors.New("ffmpeg: killed by signal")
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("atomicConvert must surface the producer's error")
 	}
@@ -866,7 +975,7 @@ func TestAtomicConvertLeavesNoPartialOnFailure(t *testing.T) {
 	// A succeeding producer renames its temp into place and leaves no temp.
 	if err := atomicConvert(out, func(tmpPath string) error {
 		return os.WriteFile(tmpPath, []byte("RIFF....complete"), 0o644)
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("atomicConvert on success: %v", err)
 	}
 	if b, rerr := os.ReadFile(out); rerr != nil || string(b) != "RIFF....complete" {
@@ -917,7 +1026,7 @@ func TestConvertAudioRefusesSymlinkOutput(t *testing.T) {
 	// The guard must fire specifically on the symlink, before the ffmpeg PATH
 	// lookup — otherwise (with ffmpeg present) the victim would be overwritten,
 	// and on a machine without ffmpeg the error would merely be "not found".
-	err := convertAudio(in, out)
+	err := convertAudio(in, out, nil)
 	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
 		t.Fatalf("want symlink refusal, got %v", err)
 	}
@@ -945,7 +1054,7 @@ func TestConvertAudioRefusesFIFOOutput(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- convertAudio(in, out) }()
+	go func() { done <- convertAudio(in, out, nil) }()
 
 	select {
 	case err := <-done:
@@ -970,7 +1079,7 @@ func TestConvertAudioRefusesFIFOInput(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- convertAudio(in, filepath.Join(dir, session.AudioFile)) }()
+	go func() { done <- convertAudio(in, filepath.Join(dir, session.AudioFile), nil) }()
 
 	select {
 	case err := <-done:
@@ -991,7 +1100,7 @@ func TestConvertAudioRefusesFIFOInput(t *testing.T) {
 	}
 	// A symlinked recording is legitimate, so it must get past the input guard
 	// and fail (if at all) only later, on the ffmpeg lookup or the conversion.
-	if err := convertAudio(link, filepath.Join(dir, session.AudioFile)); err != nil &&
+	if err := convertAudio(link, filepath.Join(dir, session.AudioFile), nil); err != nil &&
 		strings.Contains(err.Error(), "not a regular file") {
 		t.Fatalf("symlink to a regular recording must be accepted, got %v", err)
 	}

@@ -45,8 +45,11 @@ func checkExternalAudio(in string) error {
 }
 
 // convertAudio produces the canonical ASR input — 16 kHz mono PCM WAV — from
-// the original recording via an ffmpeg subprocess.
-func convertAudio(in, out string) error {
+// the original recording via an ffmpeg subprocess. beforeFinalise, when
+// non-nil, runs after the conversion succeeded but before the rename replaces
+// out, so a caller can insert its own last refusal (the offset sidecar write)
+// while the session is still byte-for-byte as it was found.
+func convertAudio(in, out string, beforeFinalise func() error) error {
 	if err := checkExternalAudio(in); err != nil {
 		return err
 	}
@@ -63,7 +66,7 @@ func convertAudio(in, out string) error {
 	// treat as the whole recording.
 	return atomicConvert(out, func(tmpPath string) error {
 		return convertRunner(ffmpeg, in, tmpPath)
-	})
+	}, beforeFinalise)
 }
 
 // convertRunner runs the actual ffmpeg conversion into the temp path. A var
@@ -87,7 +90,9 @@ var convertRunner = func(ffmpeg, in, tmpPath string) error {
 // removed, so a failed conversion never leaves a truncated file that a later run would
 // mistake for the whole recording. The temp shares out's directory so the rename stays
 // on one filesystem and is atomic. The producer receives the temp path.
-func atomicConvert(out string, produce func(tmpPath string) error) error {
+// beforeFinalise, when non-nil, is the caller's last refusal: it runs
+// immediately before the rename, and its error aborts with out untouched.
+func atomicConvert(out string, produce func(tmpPath string) error, beforeFinalise func() error) error {
 	tmp, err := os.CreateTemp(filepath.Dir(out), ".audio-*.wav")
 	if err != nil {
 		return fmt.Errorf("audio convert: create temp: %w", err)
@@ -110,6 +115,11 @@ func atomicConvert(out string, produce func(tmpPath string) error) error {
 	syscall.Umask(um)
 	if err := os.Chmod(tmpPath, 0o644&^os.FileMode(um)); err != nil {
 		return fmt.Errorf("audio convert: finalise %s: %w", out, err)
+	}
+	if beforeFinalise != nil {
+		if err := beforeFinalise(); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(tmpPath, out); err != nil {
 		return fmt.Errorf("audio convert: finalise %s: %w", out, err)

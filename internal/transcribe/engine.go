@@ -39,6 +39,24 @@ func detectEngine(pref string) (engine, bin string, err error) {
 		}
 		return EngineWhisperCpp, p, nil
 	default:
-		return "", "", fmt.Errorf("unknown engine %q: want auto, whisperx, or whispercpp", pref)
+		if err := CheckEngine(pref); err != nil {
+			return "", "", err
+		}
+		// Unreachable while CheckEngine and the cases above agree on the valid
+		// set; a drift between them must fail loudly here rather than hand Run
+		// an empty engine that matches no adapter and writes an empty
+		// transcript at exit 0.
+		return "", "", fmt.Errorf("engine %q is valid but not wired to a binary", pref)
 	}
+}
+
+// CheckEngine validates an -engine value without touching PATH, so the CLI can
+// refuse an unknown name as a usage error before any work starts. detectEngine
+// keeps applying the same rule when it resolves a binary.
+func CheckEngine(pref string) error {
+	switch pref {
+	case "", EngineAuto, EngineWhisperX, EngineWhisperCpp:
+		return nil
+	}
+	return fmt.Errorf("unknown engine %q: want auto, whisperx, or whispercpp", pref)
 }

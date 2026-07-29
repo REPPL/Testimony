@@ -97,12 +97,6 @@ func Run(opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if external {
-		if err := convertAudio(opts.Audio, wav); err != nil {
-			return 0, err
-		}
-	}
-
 	// An external recording's audio.wav is NOT captured at t0, and disk bytes
 	// cannot distinguish it from a record-origin audio.wav. Persist the offset
 	// beside audio.wav so a later bare `transcribe` (a re-run with a different
@@ -122,7 +116,63 @@ func Run(opts Options) (int, error) {
 			return 0, err
 		}
 	}
-	if persist {
+	if external {
+		// The sidecar is persisted BETWEEN the conversion producing its temp
+		// file and the rename that replaces audio.wav, for the same reason the
+		// offset resolution above runs first: the sidecar write is the last
+		// remaining refusal, and refusing after the rename destroyed the
+		// record-origin capture at exit 1 with no offset recorded. Written in
+		// this order, a refused sidecar aborts with the session byte-for-byte
+		// as it was found; and if the rename itself then fails, the sidecar is
+		// rolled back so the session never claims a persisted offset for audio
+		// that was never converted — which would prime every later bare run to
+		// shift a record-origin capture at exit 0.
+		//
+		// The prior-bytes capture is bounded like every other untrusted read on
+		// the session surface: a received session can ship an arbitrarily large
+		// file at this name, and an unbounded ReadAll buffered it whole before
+		// the conversion even started. Three prior states drive the rollback:
+		// absent (remove the sidecar this run wrote), captured (restore the
+		// prior bytes), and present-but-uncapturable — over the cap, or a read
+		// the no-follow guard refuses — where the rollback must NOT remove:
+		// deleting a sidecar this run did not create would relabel external
+		// audio as record-origin, the exact silent shift the sidecar prevents.
+		sidecar := filepath.Join(opts.SessionDir, session.AudioOffsetFile)
+		var prior []byte
+		priorExists := false
+		priorCaptured := false
+		if f, rerr := session.OpenFileNoFollowRead(sidecar); rerr == nil {
+			priorExists = true
+			if b, rerr := io.ReadAll(io.LimitReader(f, maxOffsetSidecarBytes+1)); rerr == nil && len(b) <= maxOffsetSidecarBytes {
+				prior, priorCaptured = b, true
+			}
+			f.Close()
+		} else if !errors.Is(rerr, os.ErrNotExist) {
+			priorExists = true
+		}
+		wrote := false
+		convErr := convertAudio(opts.Audio, wav, func() error {
+			if werr := writeOffsetSidecar(opts.SessionDir, offset, provenance); werr != nil {
+				return fmt.Errorf("persist audio offset: %w", werr)
+			}
+			wrote = true
+			return nil
+		})
+		if convErr != nil {
+			if wrote {
+				switch {
+				case priorCaptured:
+					_ = session.WriteFileNoFollow(sidecar, prior, 0o644)
+				case !priorExists:
+					_ = os.Remove(sidecar)
+				}
+				// priorExists && !priorCaptured: the sidecar this run wrote stays —
+				// restoring is impossible and removing would erase the one durable
+				// fact still true of the session, that audio.wav is external.
+			}
+			return 0, convErr
+		}
+	} else if persist {
 		if err := writeOffsetSidecar(opts.SessionDir, offset, provenance); err != nil {
 			return 0, fmt.Errorf("persist audio offset: %w", err)
 		}

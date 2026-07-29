@@ -2,6 +2,7 @@ package demo
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,31 @@ import (
 
 	"github.com/REPPL/Testimony/internal/session"
 )
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns
+// everything it wrote there, so a test can assert on the operator-facing
+// signal the capture server emits (its clients post via sendBeacon, so stderr
+// is the only place a refusal ever surfaces).
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	read := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		read <- string(b)
+	}()
+	fn()
+	os.Stderr = old
+	w.Close()
+	got := <-read
+	r.Close()
+	return got
+}
 
 // newTestServer builds a server writing into a fresh temp session directory,
 // mirroring Serve's stream files.
@@ -27,7 +53,20 @@ func newTestServer(t *testing.T) (*server, string) {
 	inter := open(session.InteractionsFile)
 	raw := open(session.RawEventsFile)
 	t.Cleanup(func() { inter.Close(); raw.Close() })
-	return &server{interactions: inter, rawEvents: raw}, dir
+	// t0 anchors the interaction shape check; 1 keeps the toy `"t":1` records
+	// these tests post at a session-relative time of 0.
+	return &server{interactions: inter, rawEvents: raw, t0: 1}, dir
+}
+
+// manifestDir builds a temp session directory holding a manifest with a usable
+// t0 anchor, which Serve now loads for the interaction shape check.
+func manifestDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", App: "a", Participant: "P1", T0EpochMS: 1}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	return dir
 }
 
 // jsonPost builds a POST that passes the loopback/JSON guard by default; hdr
@@ -120,7 +159,7 @@ func TestServeRefusesUnparseableAddr(t *testing.T) {
 // it alive for ever and the shutdown waited on it, leaving 'testimony record'
 // hanging after Ctrl+C instead of finalising the session.
 func TestServeBoundsRequestTimeouts(t *testing.T) {
-	srv, err := Serve(":0", t.TempDir())
+	srv, err := Serve(":0", manifestDir(t))
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
@@ -324,6 +363,104 @@ func TestWriteEndpointGuard(t *testing.T) {
 	}
 }
 
+// TestWiderBindWarnsCaptureStaysLoopback pins the operator signal for the
+// advertised wider bind: an explicit non-loopback host serves the page to
+// other devices, but allowWrite still pins capture posts to loopback clients,
+// so every remote post is refused and both streams stay empty. Pre-fix nothing
+// said so anywhere — the operator learned only when merge counted 0 events.
+func TestWiderBindWarnsCaptureStaysLoopback(t *testing.T) {
+	dir := manifestDir(t)
+	var srv *http.Server
+	var err error
+	stderr := captureStderr(t, func() { srv, err = Serve("0.0.0.0:0", dir) })
+	if err != nil {
+		t.Skipf("cannot bind 0.0.0.0 here: %v", err)
+	}
+	defer Shutdown(srv)
+	if want := "capture posts are accepted from loopback clients only"; !strings.Contains(stderr, want) {
+		t.Errorf("wider bind printed no warning; want %q on stderr, got %q", want, stderr)
+	}
+
+	// A loopback bind stays quiet — the warning must not cry wolf.
+	quiet := captureStderr(t, func() {
+		s2, err := Serve(":0", manifestDir(t))
+		if err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+		Shutdown(s2)
+	})
+	if strings.Contains(quiet, "loopback clients only") {
+		t.Errorf("loopback bind printed the wider-bind warning: %q", quiet)
+	}
+}
+
+// TestRefusedCaptureWriteIsLogged pins the refusal signal: EVERY refused
+// capture post answers an error status the sendBeacon client cannot surface,
+// so each refusal — the forgery guard's, a mis-shaped record's, an over-long
+// body's — must reach the operator's terminal, as a failed persist already
+// does. The 400 shape refusals went silent when they were first added.
+func TestRefusedCaptureWriteIsLogged(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		hdr  map[string]string
+		code int
+	}{
+		{"rebound host", `{"t":1,"kind":"click"}`, map[string]string{"Host": "evil.example:8737"}, http.StatusForbidden},
+		{"shape refusal", `{"t":1}`, nil, http.StatusBadRequest},
+		{"non-object body", `[1,2,3]`, nil, http.StatusBadRequest},
+		{"over-long record", jsonRecordOfSize(t, session.MaxJSONLLine), nil, http.StatusRequestEntityTooLarge},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, _ := newTestServer(t)
+			stderr := captureStderr(t, func() {
+				w := httptest.NewRecorder()
+				s.handleInteraction(w, jsonPost("/api/interactions", c.body, c.hdr))
+				if w.Code != c.code {
+					t.Fatalf("status = %d, want %d", w.Code, c.code)
+				}
+			})
+			if want := "capture write refused"; !strings.Contains(stderr, want) {
+				t.Errorf("refused write logged nothing; want %q on stderr, got %q", want, stderr)
+			}
+		})
+	}
+}
+
+// TestInteractionRefusedWhenMergeWouldRefuseIt is the write/read shape
+// regression: the endpoint accepted any JSON value — an array, a bare string,
+// null, a number, an object missing the required t or kind — with 204, and the
+// record was durably persisted for merge to refuse later, breaking the whole
+// session (docs/reference/cli.md promises one JSON object per request and 400
+// on malformed bodies). The write side must refuse exactly what the reader
+// cannot take back.
+func TestInteractionRefusedWhenMergeWouldRefuseIt(t *testing.T) {
+	cases := map[string]string{
+		"array":          `[1,2,3]`,
+		"string":         `"hello"`,
+		"null":           `null`,
+		"number":         `42`,
+		"missing t":      `{"kind":"click"}`,
+		"missing kind":   `{"t":1}`,
+		"non-positive t": `{"t":0,"kind":"click"}`,
+		"absurd t":       `{"t":9000000000000000000,"kind":"click"}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, dir := newTestServer(t)
+			w := httptest.NewRecorder()
+			s.handleInteraction(w, jsonPost("/api/interactions", body, nil))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", w.Code)
+			}
+			if lines := fileLines(t, filepath.Join(dir, session.InteractionsFile)); len(lines) != 0 {
+				t.Fatalf("refused record still wrote %d lines: %q", len(lines), lines)
+			}
+		})
+	}
+}
+
 // jsonRecordOfSize builds a single valid, whitespace-free interaction JSON
 // object of exactly n bytes, padding its text field. Because it carries no
 // insignificant whitespace, json.Compact leaves it byte-for-byte, so its stored
@@ -415,7 +552,7 @@ func TestOversizedBatchRecordIsRefusedWhole(t *testing.T) {
 // TestServeRefusesSymlinkStream ensures the capture server will not open its
 // stream files through a pre-planted symlink (arbitrary-file append).
 func TestServeRefusesSymlinkStream(t *testing.T) {
-	dir := t.TempDir()
+	dir := manifestDir(t)
 	outside := filepath.Join(t.TempDir(), "victim")
 	if err := os.WriteFile(outside, []byte("keep\n"), 0o644); err != nil {
 		t.Fatal(err)

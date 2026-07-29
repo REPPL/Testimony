@@ -186,6 +186,36 @@ func Run(opts Options) error {
 		atStartup := time.Since(dead.started) < startupWindow
 		stopAll(children)
 		stopDemo(srv)
+		// An early exit is reported the same way as a recorder that produced
+		// nothing (docs/reference/cli.md) — which includes validating what the
+		// OTHER recorders left behind and printing the next-command block. A
+		// session whose recorder died mid-way still holds whatever was captured
+		// up to that point (a partial audio.wav is transcribable), and without
+		// this the operator got the classification but no word on whether the
+		// artefacts are usable or what to run next.
+		//
+		// The dead recorder is excluded from the artefact sweep: its story is
+		// the classification returned below, and classifyMissingOutput's
+		// stayed-blocked-on-the-prompt narrative is disproved by the very exit
+		// that brought us here — running both printed two mutually exclusive
+		// diagnoses (and the stderr tail twice) in one run. Its artefact still
+		// counts towards the Next block.
+		others := make([]*liveChild, 0, len(children))
+		for _, c := range children {
+			if c != dead {
+				others = append(others, c)
+			}
+		}
+		audioReady, problems := finaliseOutputs(dir, others)
+		if dead.stream == streamMicrophone {
+			if fi, err := os.Stat(expectedOutput(dir, dead.stream)); err == nil && fi.Size() > 0 {
+				audioReady = true
+			}
+		}
+		for _, p := range problems {
+			fmt.Fprintf(opts.Log, "\n%s\n", p)
+		}
+		fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioReady))
 		return errors.New(classifyRecorderExit(dead.stream, dead.err, dead.stderr.tail(), atStartup))
 	}
 

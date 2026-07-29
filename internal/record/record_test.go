@@ -450,6 +450,85 @@ func TestRunInstallsSignalHandlerBeforeSpawning(t *testing.T) {
 	}
 }
 
+// TestEarlyRecorderExitStillFinalisesAndPrintsNext pins the promise of
+// docs/reference/cli.md that a recorder exiting on its own is "reported the
+// same way" as one that produced nothing — which includes validating the
+// artefacts actually left behind and printing the next-command block. Pre-fix
+// the recorder-exit branch returned straight after stopping the others, so a
+// session whose recorder died mid-way still held a usable audio.wav and
+// captured interactions, and the operator got no word on whether they could
+// transcribe it or what to run next.
+func TestEarlyRecorderExitStillFinalisesAndPrintsNext(t *testing.T) {
+	origNotify, origStart := notifyContext, startRecordersFn
+	t.Cleanup(func() { notifyContext, startRecordersFn = origNotify, origStart })
+
+	// Never cancelled: Run must reach the recorder-exit branch, not the Ctrl+C one.
+	notifyContext = func() (context.Context, context.CancelFunc) {
+		return context.WithCancel(context.Background())
+	}
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
+		// The recorder leaves a usable audio.wav behind and then dies on its own
+		// (a device disconnect mid-session).
+		if err := os.WriteFile(filepath.Join(dir, session.AudioFile), []byte("RIFF...."), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+		_ = mic.p.Signal(syscall.SIGINT)
+		return []*liveChild{mic}, nil
+	}
+
+	var log bytes.Buffer
+	err := Run(Options{Out: t.TempDir(), GOOS: "darwin", Log: &log})
+	if err == nil {
+		t.Fatal("a recorder exiting on its own must make Run exit non-zero")
+	}
+	out := log.String()
+	if !strings.Contains(out, "Next:") {
+		t.Fatalf("early recorder exit printed no next-command block: %q", out)
+	}
+	if !strings.Contains(out, "testimony transcribe") {
+		t.Fatalf("the usable audio.wav was not offered for transcription: %q", out)
+	}
+}
+
+// TestEarlyRecorderExitDoesNotDoubleDiagnose pins the single-story rule for
+// the early-exit path: the dead recorder's account is the classification the
+// command exits with, so classifyMissingOutput — whose text asserts the
+// recorder "stayed blocked on the permission prompt", the narrative the exit
+// itself disproves — must not also run for it. Printing both gave the
+// operator two mutually exclusive diagnoses (and the stderr tail twice) in
+// one run.
+func TestEarlyRecorderExitDoesNotDoubleDiagnose(t *testing.T) {
+	origNotify, origStart := notifyContext, startRecordersFn
+	t.Cleanup(func() { notifyContext, startRecordersFn = origNotify, origStart })
+
+	notifyContext = func() (context.Context, context.CancelFunc) {
+		return context.WithCancel(context.Background())
+	}
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
+		// The recorder dies on its own having captured nothing at all.
+		mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+		_ = mic.p.Signal(syscall.SIGINT)
+		return []*liveChild{mic}, nil
+	}
+
+	var log bytes.Buffer
+	err := Run(Options{Out: t.TempDir(), GOOS: "darwin", Log: &log})
+	if err == nil {
+		t.Fatal("a recorder exiting on its own must make Run exit non-zero")
+	}
+	out := log.String()
+	if strings.Contains(out, "stayed blocked on the permission prompt") {
+		t.Fatalf("the dead recorder was also reported through classifyMissingOutput, contradicting its own exit: %q", out)
+	}
+	if !strings.Contains(out, "Next:") {
+		t.Fatalf("the next-command block must still print: %q", out)
+	}
+	if strings.Contains(out, "testimony transcribe -session") && !strings.Contains(out, "-audio") {
+		t.Fatalf("with no audio captured, bare transcribe must not be offered: %q", out)
+	}
+}
+
 // TestRunClassifiesStartupExitDespiteSlowStop proves that a recorder which dies
 // inside the start-up window is still diagnosed as a permissions denial even
 // when the stop path that follows outlasts that window. The pre-fix code

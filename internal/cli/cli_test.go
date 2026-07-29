@@ -132,6 +132,89 @@ func TestReportRejectsNonFiniteWindow(t *testing.T) {
 	}
 }
 
+// TestStrayPositionalIsAUsageError pins the other half of the invocation
+// contract: no command takes positional arguments (docs/reference/cli.md), and
+// flag parsing stops at the first non-flag argument, so a stray positional
+// silently discarded every flag after it — `report -session S junk -window X`
+// rendered with the default window at exit 0, and `transcribe ... recording.m4a
+// -offset 99` dropped the operator's offset. A leftover argument must refuse
+// the run as a usage error before any work starts. `demo` is exercised through
+// the same shared guard but not run here: on the pre-fix path it blocks
+// serving until interrupted.
+func TestStrayPositionalIsAUsageError(t *testing.T) {
+	dir := miniSession(t)
+	cases := [][]string{
+		{"merge", "-session", dir, "junk"},
+		{"report", "-session", dir, "junk", "-window", "NaN"},
+		{"transcribe", "-session", dir, "junk", "-offset", "99"},
+		{"analyze", "-session", dir, "junk", "-out", "x", "-ingest", "-"},
+		{"review", "-session", dir, "junk", "-finding", "F-001", "-verdict", "confirmed"},
+		{"record", "-out", t.TempDir(), "junk", "-participant", "P9"},
+		{"version", "junk"},
+		{"help", "junk"},
+	}
+	for _, args := range cases {
+		var code int
+		stderr := captureStderr(t, func() { code = Run(args) })
+		if code != 2 {
+			t.Errorf("%v: exit %d, want 2 (usage error)", args, code)
+		}
+		if want := `unexpected argument "junk"`; !strings.Contains(stderr, want) {
+			t.Errorf("%v: want %q on stderr, got %q", args, want, stderr)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.ReportFile)); !os.IsNotExist(err) {
+		t.Errorf("report with a stray positional rendered a report anyway (err=%v)", err)
+	}
+}
+
+// TestInvalidFlagValuesExitTwo pins exit 2 for the usage errors that were still
+// reported at the runtime status: the -finding/-verdict pairing, an invalid
+// -verdict value, an unknown -engine, and a malformed capture -addr. Reported
+// from inside the packages they took exit 1, so a script could not tell a
+// mistyped flag from a session that genuinely could not be read. Validation
+// must also precede any work: `demo -addr bogus` used to create a session
+// directory before refusing the address.
+func TestInvalidFlagValuesExitTwo(t *testing.T) {
+	dir := miniSession(t)
+	demoOut := t.TempDir()
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"review", "-session", dir, "-finding", "F-001"}, "review: -verdict is required with -finding"},
+		{[]string{"review", "-session", dir, "-verdict", "confirmed"}, "review: -finding is required with -verdict"},
+		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", "bogus"}, `review: invalid verdict "bogus"`},
+		{[]string{"transcribe", "-session", dir, "-engine", "bogus"}, `transcribe: unknown engine "bogus"`},
+		{[]string{"demo", "-addr", "bogus", "-out", demoOut}, `demo: invalid capture address "bogus"`},
+		{[]string{"record", "-demo", "-addr", "bogus", "-out", t.TempDir()}, `record: invalid capture address "bogus"`},
+	}
+	for _, c := range cases {
+		var code int
+		stderr := captureStderr(t, func() { code = Run(c.args) })
+		if code != 2 {
+			t.Errorf("%v: exit %d, want 2 (usage error)", c.args, code)
+		}
+		if !strings.Contains(stderr, c.want) {
+			t.Errorf("%v: want %q on stderr, got %q", c.args, c.want, stderr)
+		}
+	}
+	if entries, err := os.ReadDir(demoOut); err != nil || len(entries) != 0 {
+		t.Errorf("demo -addr bogus created a session directory before refusing (entries=%d, err=%v)", len(entries), err)
+	}
+}
+
+// TestUsageListsEveryFlagAndCommand pins the top-level usage text against the
+// documented invocation surface: record's -commit flag and the help command
+// are part of docs/reference/cli.md but were absent from `testimony help`.
+func TestUsageListsEveryFlagAndCommand(t *testing.T) {
+	for _, want := range []string{"-commit HASH", "testimony help"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage text does not mention %q", want)
+		}
+	}
+}
+
 // TestMissingSessionIsAUsageError pins the exit-status contract of
 // docs/reference/cli.md: a wrong invocation exits 2 and a runtime failure of a
 // well-formed command exits 1. A missing required -session was reported as a
