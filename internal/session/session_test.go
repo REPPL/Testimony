@@ -563,3 +563,26 @@ func TestWriteFileAtomicNoFollowReplaces(t *testing.T) {
 		t.Fatalf("temp file left behind: %v", names)
 	}
 }
+
+// TestWriteFileAtomicNoFollowPreservesExistingMode pins the permission
+// semantics the atomic write shares with a plain truncating open: replacing an
+// existing regular file keeps that file's own mode, so an operator-tightened
+// artefact (a 0600 sidecar) does not silently widen to the caller's default
+// perm on rewrite.
+func TestWriteFileAtomicNoFollowPreservesExistingMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := WriteFileAtomicNoFollow(path, []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("WriteFileAtomicNoFollow: %v", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("existing file's mode not preserved: got %o, want 600", got)
+	}
+}

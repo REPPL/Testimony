@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,22 +265,42 @@ func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 // matches WriteFileNoFollow so a hostile session directory cannot even retarget
 // the name); the temp file is created fresh in the same directory, so the
 // rename never crosses a filesystem.
+//
+// Permission semantics match WriteFileNoFollow's open(2) behaviour: the temp
+// file is created with perm filtered by the process umask, and an existing
+// regular file's own mode is preserved across the replacement (an
+// operator-tightened sidecar stays tightened) — which is why the temp file is
+// opened O_CREATE|O_EXCL with the effective mode rather than via
+// os.CreateTemp, whose fixed 0600 plus an explicit Chmod would bypass the
+// umask. A crash between create and rename can leave a dot-prefixed
+// ".<name>.tmp*" file behind; nothing reads it, and the next successful write
+// does not depend on it.
 func WriteFileAtomicNoFollow(path string, data []byte, perm os.FileMode) error {
-	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing to write %s: it is a symlink", path)
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write %s: it is a symlink", path)
+		}
+		if fi.Mode().IsRegular() {
+			perm = fi.Mode().Perm()
+		}
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
+	dir, base := filepath.Dir(path), filepath.Base(path)
+	var f *os.File
+	var tmp string
+	for i := 0; ; i++ {
+		tmp = filepath.Join(dir, fmt.Sprintf(".%s.tmp%d-%d", base, os.Getpid(), i))
+		var err error
+		f, err = os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) || i >= 100 {
+			return err
+		}
 	}
-	tmp := f.Name()
 	cleanup := func() {
 		f.Close()
 		os.Remove(tmp)
-	}
-	if err := f.Chmod(perm); err != nil {
-		cleanup()
-		return err
 	}
 	if _, err := f.Write(data); err != nil {
 		cleanup()
