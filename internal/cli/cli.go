@@ -185,7 +185,7 @@ func Run(args []string) int {
 		}
 		if *ingest != "" {
 			if *out != "" {
-				return fail(fmt.Errorf("analyze: -out and -ingest cannot be combined"))
+				return usageErr(fmt.Errorf("analyze: -out and -ingest cannot be combined"))
 			}
 			in := os.Stdin
 			if *ingest != "-" {

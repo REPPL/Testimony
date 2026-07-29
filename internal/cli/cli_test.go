@@ -150,6 +150,20 @@ func TestMissingSessionIsAUsageError(t *testing.T) {
 		}
 	}
 
+	// Mutually exclusive flags are a wrong invocation too.
+	{
+		var code int
+		stderr := captureStderr(t, func() {
+			code = Run([]string{"analyze", "-session", t.TempDir(), "-out", "f.md", "-ingest", "-"})
+		})
+		if code != 2 {
+			t.Errorf("analyze -out with -ingest: exit %d, want 2 (usage error)", code)
+		}
+		if want := "testimony: analyze: -out and -ingest cannot be combined"; !strings.Contains(stderr, want) {
+			t.Errorf("analyze -out with -ingest: want %q on stderr, got %q", want, stderr)
+		}
+	}
+
 	// A well-formed command that fails at runtime keeps exit 1.
 	var code int
 	captureStderr(t, func() {
