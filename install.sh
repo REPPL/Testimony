@@ -116,7 +116,11 @@ install_binary() {
     base="https://github.com/$REPO/releases/download/$VERSION"
 
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/testimony-install.XXXXXX")
-    trap 'rm -rf "$tmp"' EXIT INT TERM
+    trap 'rm -rf "$tmp"' EXIT
+    # A caught INT/TERM must also STOP the script: a trap that only cleans up
+    # returns control after the handler, so Ctrl+C at a dependency prompt read
+    # was swallowed into the safe-default answer and the run carried on.
+    trap 'rm -rf "$tmp"; trap - EXIT; exit 130' INT TERM
 
     say "Downloading $tarball ..."
     # A bad --version (or a platform the release never published) surfaces from
@@ -131,7 +135,7 @@ install_binary() {
     # Integrity: verify the tarball against the release's published SHA256SUMS.
     # No hash is pinned in this script — it is fetched from the release itself.
     say "Downloading SHA256SUMS ..."
-    fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS"
+    fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" || die "could not download SHA256SUMS from $base"
     want=$(awk -v f="$tarball" '$2 == f {print $1}' "$tmp/SHA256SUMS")
     [ -n "$want" ] || die "no entry for $tarball in SHA256SUMS"
     got=$(sha256_of "$tmp/$tarball")
@@ -147,13 +151,31 @@ Refusing to install."
     # (which an attacker who replaced BOTH the tarball and SHA256SUMS could forge).
     # --signer-workflow binds acceptance to release.yml specifically, not any
     # workflow in the repo. Without gh, proceed on the checksum with a printed note.
-    if have gh; then
+    #
+    # A gh that CANNOT ATTEMPT the verification is the checksum-only case, not a
+    # provenance failure: `gh attestation verify` refuses to run unauthenticated
+    # (exit 4, before any verification), and a gh predating the attestation
+    # command or --signer-workflow fails the same way — treating those as
+    # "attestation FAILED" made a freshly `brew install`ed gh strictly worse
+    # than no gh at all, refusing a tarball whose checksum had just verified.
+    # Only a verification gh actually performed and rejected refuses the
+    # install, and gh's own output is shown instead of being swallowed.
+    if have gh && ! gh auth status >/dev/null 2>&1; then
+        say "NOTE: 'gh' is installed but not authenticated — installed on the checksum alone."
+        say "      'gh attestation verify' needs an authenticated gh; run 'gh auth login'"
+        say "      (or set GH_TOKEN) and re-run to also verify SLSA build-provenance."
+    elif have gh; then
         say "Verifying SLSA build-provenance attestation with gh ..."
         if gh attestation verify "$tmp/$tarball" \
                --repo "$REPO" \
-               --signer-workflow "$REPO/.github/workflows/release.yml" >/dev/null 2>&1; then
+               --signer-workflow "$REPO/.github/workflows/release.yml" >"$tmp/attest.log" 2>&1; then
             say "Provenance verified: built by $REPO/.github/workflows/release.yml"
+        elif grep -qiE 'unknown (command|flag)' "$tmp/attest.log"; then
+            say "NOTE: this gh cannot verify attestations (it lacks 'attestation verify"
+            say "      --signer-workflow') — installed on the checksum alone. Update gh"
+            say "      (https://cli.github.com) and re-run to also verify build provenance."
         else
+            sed 's/^/  gh: /' "$tmp/attest.log" >&2
             die "attestation verification FAILED for $tarball
   gh could not confirm this tarball was built by $REPO's release workflow.
 Refusing to install."
@@ -195,7 +217,7 @@ dep_ffmpeg() {
         c=$(choose "Install ffmpeg (no Homebrew found)" "local" "local")
     fi
     case "$c" in
-        brew) brew install ffmpeg ;;
+        brew) brew install ffmpeg || err "brew install ffmpeg failed; skipping ffmpeg (later: brew install ffmpeg)" ;;
         local) install_ffmpeg_local ;;
         skip) say "Skipped. Later: brew install ffmpeg  (or re-run this installer)" ;;
     esac
@@ -210,13 +232,22 @@ install_ffmpeg_local() {
             # evermeet.cx publishes a GPG signature (.sig) per build; verify it
             # against the PINNED publisher key ($EVERMEET_FPR) when gpg is
             # available, and refuse on a bad or wrong-key signature.
+            # Every fetch/unpack below is guarded with the err-skip-return
+            # convention the parse failure already uses: ffmpeg is an OPTIONAL
+            # dependency, and under `set -eu` an unguarded failure aborted the
+            # whole installer with the child's raw exit code — skipping the ASR
+            # step and the closing guidance, and leaking $tmp2 (the EXIT trap
+            # covers only install_binary's $tmp).
             say "Fetching static ffmpeg build (evermeet.cx) ..."
-            fetch "https://evermeet.cx/ffmpeg/info/ffmpeg/release" "$tmp2/info.json"
+            fetch "https://evermeet.cx/ffmpeg/info/ffmpeg/release" "$tmp2/info.json" \
+                || { err "could not reach evermeet.cx; skipping ffmpeg"; rm -rf "$tmp2"; return; }
             u=$(sed -n 's/.*"zip":{"url":"\([^"]*\)".*/\1/p' "$tmp2/info.json" | head -1)
             [ -n "$u" ] || { err "could not parse evermeet.cx response; skipping ffmpeg"; rm -rf "$tmp2"; return; }
-            fetch "$u" "$tmp2/ffmpeg.zip"
+            fetch "$u" "$tmp2/ffmpeg.zip" \
+                || { err "ffmpeg download failed; skipping ffmpeg"; rm -rf "$tmp2"; return; }
             if have gpg; then
-                fetch "$u.sig" "$tmp2/ffmpeg.zip.sig"
+                fetch "$u.sig" "$tmp2/ffmpeg.zip.sig" \
+                    || { err "could not fetch the ffmpeg signature; refusing this unverifiable build"; rm -rf "$tmp2"; return; }
                 # Import ONLY the pinned publisher key into a throwaway keyring,
                 # then verify against it. --auto-key-retrieve is never used: it
                 # would fetch whatever key the (attacker-supplied) signature
@@ -240,14 +271,17 @@ install_ffmpeg_local() {
                 say "WARNING: gpg not found — installing this ffmpeg build unverified"
                 say "         (its signature is at $u.sig)."
             fi
-            (cd "$tmp2" && unzip -q ffmpeg.zip)
-            install -m 0755 "$tmp2/ffmpeg" "$INSTALL_DIR/ffmpeg"
+            (cd "$tmp2" && unzip -q ffmpeg.zip) \
+                || { err "could not unpack ffmpeg; skipping ffmpeg"; rm -rf "$tmp2"; return; }
+            install -m 0755 "$tmp2/ffmpeg" "$INSTALL_DIR/ffmpeg" \
+                || { err "could not install ffmpeg into $INSTALL_DIR; skipping ffmpeg"; rm -rf "$tmp2"; return; }
             ;;
         linux)
             arch=$(uname -m)
             case "$arch" in x86_64) ja=amd64 ;; aarch64|arm64) ja=arm64 ;; *) err "no static ffmpeg for $arch"; rm -rf "$tmp2"; return ;; esac
             say "Fetching static ffmpeg build (johnvansickle.com) ..."
-            fetch "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${ja}-static.tar.xz" "$tmp2/ffmpeg.tar.xz"
+            fetch "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${ja}-static.tar.xz" "$tmp2/ffmpeg.tar.xz" \
+                || { err "ffmpeg download failed; skipping ffmpeg"; rm -rf "$tmp2"; return; }
             fetch "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${ja}-static.tar.xz.md5" "$tmp2/ffmpeg.md5" || true
             if [ -s "$tmp2/ffmpeg.md5" ] && have md5sum; then
                 (cd "$tmp2" && sed 's| .*ffmpeg-release.*| ffmpeg.tar.xz|' ffmpeg.md5 | md5sum -c -) \
@@ -256,8 +290,10 @@ install_ffmpeg_local() {
             else
                 say "WARNING: could not verify the static ffmpeg build; installing unverified."
             fi
-            tar -xJf "$tmp2/ffmpeg.tar.xz" -C "$tmp2"
-            install -m 0755 "$tmp2"/ffmpeg-*-static/ffmpeg "$INSTALL_DIR/ffmpeg"
+            tar -xJf "$tmp2/ffmpeg.tar.xz" -C "$tmp2" \
+                || { err "could not unpack ffmpeg; skipping ffmpeg"; rm -rf "$tmp2"; return; }
+            install -m 0755 "$tmp2"/ffmpeg-*-static/ffmpeg "$INSTALL_DIR/ffmpeg" \
+                || { err "could not install ffmpeg into $INSTALL_DIR; skipping ffmpeg"; rm -rf "$tmp2"; return; }
             ;;
     esac
     rm -rf "$tmp2"
@@ -285,8 +321,10 @@ dep_asr() {
                     # a local attacker on a shared host pre-plant a symlink or win
                     # the write→exec race and run their own code as the user.
                     uvd=$(mktemp -d "${TMPDIR:-/tmp}/testimony-uv.XXXXXX")
-                    fetch "https://astral.sh/uv/install.sh" "$uvd/uv-install.sh"
-                    sh "$uvd/uv-install.sh"
+                    fetch "https://astral.sh/uv/install.sh" "$uvd/uv-install.sh" \
+                        || { err "could not download the uv installer; skipping whisperx (later: uv tool install whisperx)"; rm -rf "$uvd"; return; }
+                    sh "$uvd/uv-install.sh" \
+                        || { err "uv installation failed; skipping whisperx (later: uv tool install whisperx)"; rm -rf "$uvd"; return; }
                     rm -rf "$uvd"
                     # uv lands in ~/.local/bin; make it visible to this run.
                     PATH="$HOME/.local/bin:$PATH"; export PATH
@@ -295,11 +333,13 @@ dep_asr() {
                     return
                 fi
             fi
-            uv tool install whisperx
+            uv tool install whisperx \
+                || { err "whisperx installation failed; later: uv tool install whisperx (or: pipx install whisperx)"; return; }
             say "whisperx installed (user-local). First run downloads its models."
             ;;
         whisper.cpp)
-            brew install whisper-cpp
+            brew install whisper-cpp \
+                || { err "brew install whisper-cpp failed; later: brew install whisper-cpp"; return; }
             say ""
             say "whisper.cpp needs a ggml model. Download once (~1.5 GB), user-local,"
             say "into a directory '-model NAME' searches:"
@@ -312,15 +352,36 @@ dep_asr() {
     esac
 }
 
-usage() { sed -n '2,20p' "$0" 2>/dev/null || say "see script header"; }
+# The help text is embedded rather than sed-extracted from "$0": through the
+# documented pipe invocation $0 is the shell's own argv[0] ("sh", or a path
+# like /bin/sh whose bytes sed would happily print), not this script.
+usage() {
+    cat <<'EOF'
+testimony installer — https://github.com/REPPL/Testimony
+
+Usage (one line):
+  curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | sh
+
+Passing flags through a pipe:
+  curl -fsSL .../install.sh | sh -s -- --yes --dir "$HOME/bin"
+
+Flags:
+  -d, --dir DIR     install directory (default: ~/.local/bin — no admin rights needed)
+  -y, --yes         non-interactive: accept dependency installs (brew if present,
+                    otherwise the local, admin-free option)
+      --no-deps     install the binary only; print dependency guidance and exit
+      --version V   install release V instead of the default
+  -h, --help        this text
+EOF
+}
 
 main() {
     while [ $# -gt 0 ]; do
         case "$1" in
-            -d|--dir)  INSTALL_DIR="$2"; shift 2 ;;
+            -d|--dir)  [ $# -ge 2 ] || die "--dir needs a value (try --help)"; INSTALL_DIR="$2"; shift 2 ;;
             -y|--yes)  ASSUME_YES=1; shift ;;
             --no-deps) NO_DEPS=1; shift ;;
-            --version) VERSION="$2"; shift 2 ;;
+            --version) [ $# -ge 2 ] || die "--version needs a value (try --help)"; VERSION="$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             *) die "unknown flag: $1 (try --help)" ;;
         esac
