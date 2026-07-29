@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -389,6 +390,250 @@ func TestResolveOffsetExternalOffsetFlagNoT0(t *testing.T) {
 	}
 	if off != 3.0 || prov != "from -offset flag" {
 		t.Fatalf("explicit -offset must win without consulting t0: got %v (%s)", off, prov)
+	}
+}
+
+// recordOriginAudio stands in for the bytes `testimony record` captured into
+// audio.wav — the irreplaceable original a failed transcribe run must not
+// destroy.
+const recordOriginAudio = "RIFF record-origin capture"
+
+// fakeTools puts a stub whisperx, ffmpeg, and ffprobe on PATH so Run's
+// detectEngine, convertAudio, and deriveOffset all resolve without any of the
+// three installed. The stub whisperx writes a minimal valid engine output into
+// the --output_dir it is handed (always its last argument). The stub ffprobe
+// READS the recording it is pointed at, exactly as the real one does — that is
+// what makes a FIFO at -audio block its open(2) for ever.
+func fakeTools(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	whisperx := "#!/bin/sh\nfor last; do :; done\n" +
+		`printf '%s' '{"segments":[{"start":1,"end":2,"text":"Alice speaks."}]}' > "$last/audio.json"` + "\n"
+	// `: < FILE` opens the recording with a shell builtin — PATH here holds only
+	// these stubs, so an external reader such as cat would not be found and the
+	// open would never happen.
+	ffprobe := "#!/bin/sh\nfor last; do :; done\n: < \"$last\"\nprintf '%s' '{}'\n"
+	for name, script := range map[string]string{
+		"whisperx": whisperx,
+		"ffmpeg":   "#!/bin/sh\nexit 0\n",
+		"ffprobe":  ffprobe,
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+}
+
+// seedSession writes a manifest and a record-origin audio.wav, returning the
+// session directory and the audio path.
+func seedSession(t *testing.T, m session.Manifest) (dir, wav string) {
+	t.Helper()
+	dir = t.TempDir()
+	if err := session.SaveManifest(dir, m); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	wav = filepath.Join(dir, session.AudioFile)
+	if err := os.WriteFile(wav, []byte(recordOriginAudio), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir, wav
+}
+
+// stubConvert stands in for ffmpeg and reports, through the returned pointer,
+// whether the conversion ran at all. It writes different bytes from
+// recordOriginAudio, so a conversion that reached audio.wav is visible in the
+// file's content.
+func stubConvert(t *testing.T) *bool {
+	t.Helper()
+	old := convertRunner
+	t.Cleanup(func() { convertRunner = old })
+	ran := false
+	convertRunner = func(ffmpeg, in, tmpPath string) error {
+		ran = true
+		return os.WriteFile(tmpPath, []byte("RIFF converted external recording"), 0o644)
+	}
+	return &ran
+}
+
+// externalRecording writes a stand-in recording outside the session directory.
+func externalRecording(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "bob-interview.m4a")
+	if err := os.WriteFile(path, []byte("external recording"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestRunResolvesOffsetBeforeConverting is the destroyed-capture regression.
+// Pre-fix Run converted the external recording over the session's audio.wav
+// BEFORE resolving the offset, so every way resolution can fail — an unusable
+// manifest t0, an implausible derived offset — exited 1 with the record-origin
+// capture already overwritten and no audio.offset.json written. The session was
+// then indistinguishable from a record-origin one (no sidecar ⇒ captured at t0,
+// docs/reference/session-directory.md), so a later bare `transcribe` took the
+// in-place branch, reported the false provenance "captured at t0", and wrote a
+// silently time-shifted transcript at exit 0. Resolution now runs first, so a
+// refused run leaves the session exactly as it found it.
+func TestRunResolvesOffsetBeforeConverting(t *testing.T) {
+	t.Run("unusable t0", func(t *testing.T) {
+		fakeTools(t)
+		// No t0_epoch_ms: a received or hand-edited manifest.
+		dir, wav := seedSession(t, session.Manifest{Session: "2026-07-22_bob-received"})
+		converted := stubConvert(t)
+
+		_, err := Run(Options{SessionDir: dir, Audio: externalRecording(t), Engine: EngineWhisperX, Log: io.Discard})
+		if err == nil {
+			t.Fatal("an external recording with no usable t0 must fail the run")
+		}
+		if !errors.Is(err, session.ErrNoT0) {
+			t.Fatalf("want an ErrNoT0-based error, got %v", err)
+		}
+		assertSessionUntouched(t, dir, wav, converted)
+	})
+
+	t.Run("implausible derived offset", func(t *testing.T) {
+		fakeTools(t)
+		dir, wav := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+		converted := stubConvert(t)
+		old := deriveOffsetFn
+		t.Cleanup(func() { deriveOffsetFn = old })
+		deriveOffsetFn = func(audio string, t0EpochMS int64) (float64, bool) { return 5e9, true }
+
+		_, err := Run(Options{SessionDir: dir, Audio: externalRecording(t), Engine: EngineWhisperX, Log: io.Discard})
+		if err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("an implausible derived offset must fail the run, got %v", err)
+		}
+		assertSessionUntouched(t, dir, wav, converted)
+	})
+}
+
+// assertSessionUntouched checks that a refused run left neither a converted
+// audio.wav nor a sidecar behind.
+func assertSessionUntouched(t *testing.T, dir, wav string, converted *bool) {
+	t.Helper()
+	if *converted {
+		t.Error("the conversion ran before the offset was resolved; a refused run must not touch the session's audio")
+	}
+	if b, err := os.ReadFile(wav); err != nil || string(b) != recordOriginAudio {
+		t.Errorf("the record-origin %s was replaced by a refused run: %q (err=%v)", session.AudioFile, b, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.AudioOffsetFile)); !os.IsNotExist(err) {
+		t.Errorf("a refused run wrote %s (err=%v); the session now claims an offset it never resolved", session.AudioOffsetFile, err)
+	}
+}
+
+// TestRunRefusesNonRegularExternalAudio is the hang regression on the offset
+// derivation. The refusals that make -audio safe to open — the accepted-container
+// check and the regular-file check — lived inside convertAudio, so hoisting the
+// offset resolution above the conversion put an ffprobe subprocess on the
+// operator-named path AHEAD of them: ffprobe opens without O_NONBLOCK, so a FIFO
+// at -audio (a session bundle is an exchange unit, and tar preserves FIFOs)
+// blocked its open(2) for ever and `testimony transcribe` hung with no error
+// instead of refusing in milliseconds. The guard now runs before anything opens
+// the recording. The run happens in a goroutine and the test fails on a timeout,
+// so a regression reports a failure rather than hanging the suite for ever.
+func TestRunRefusesNonRegularExternalAudio(t *testing.T) {
+	fakeTools(t)
+	dir, _ := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+	fifo := filepath.Join(t.TempDir(), "bob-interview.m4a")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Skipf("FIFOs unavailable on this platform: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Run(Options{SessionDir: dir, Audio: fifo, Engine: EngineWhisperX, Log: io.Discard})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("want a non-regular-file refusal, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("transcribe blocked on a FIFO -audio instead of refusing it")
+	}
+}
+
+// TestRunRefusesUnsupportedExternalAudioBeforeProbing is the same ordering
+// invariant on the container check: a file whose extension the pipeline does not
+// accept must be refused by name, before ffprobe is asked to parse it — the
+// probe is a media parser, and pointing it at arbitrary operator-named files
+// widens its attack surface for nothing.
+func TestRunRefusesUnsupportedExternalAudioBeforeProbing(t *testing.T) {
+	fakeTools(t)
+	dir, _ := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+	notes := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(notes, []byte("not a recording"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := deriveOffsetFn
+	t.Cleanup(func() { deriveOffsetFn = old })
+	probed := false
+	deriveOffsetFn = func(audio string, t0EpochMS int64) (float64, bool) {
+		probed = true
+		return 0, false
+	}
+
+	_, err := Run(Options{SessionDir: dir, Audio: notes, Engine: EngineWhisperX, Log: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "unsupported audio format") {
+		t.Fatalf("want an unsupported-format refusal, got %v", err)
+	}
+	if probed {
+		t.Error("the recording was probed before its container was accepted")
+	}
+}
+
+// TestRunExplicitOffsetUpdatesExistingSidecar is the discarded-correction
+// regression: an operator who spots a wrong offset re-runs with -offset N, but
+// pre-fix the in-place path never rewrote the sidecar, so the correction applied
+// to that one transcript and the next bare re-run silently resurrected the stale
+// value. An existing sidecar is the session's record of an external audio origin,
+// so an explicit -offset now rewrites it.
+func TestRunExplicitOffsetUpdatesExistingSidecar(t *testing.T) {
+	fakeTools(t)
+	man := session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000}
+	dir, _ := seedSession(t, man)
+	if err := writeOffsetSidecar(dir, 12.5, "derived: audio creation_time − manifest t0"); err != nil {
+		t.Fatalf("writeOffsetSidecar: %v", err)
+	}
+
+	if _, err := Run(Options{SessionDir: dir, Engine: EngineWhisperX, Offset: 30, OffsetSet: true, Log: io.Discard}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	off, _, ok, err := readOffsetSidecar(dir)
+	if err != nil || !ok {
+		t.Fatalf("sidecar after the correction: ok=%v err=%v", ok, err)
+	}
+	if off != 30 {
+		t.Fatalf("sidecar offset: got %v, want 30 (the operator's correction, not the stale 12.5)", off)
+	}
+	// The next bare run must resolve to the corrected value.
+	got, _, err := resolveOffset(Options{SessionDir: dir}, man, false)
+	if err != nil {
+		t.Fatalf("bare re-run: %v", err)
+	}
+	if got != 30 {
+		t.Fatalf("bare re-run offset: got %v, want 30", got)
+	}
+}
+
+// TestRunExplicitOffsetWritesNoSidecarForRecordOrigin guards the other half of
+// the sidecar model: a session with no sidecar is record-origin (audio.wav
+// captured at t0), and an explicit -offset for one transcript must not invent a
+// sidecar that would make every later bare run inherit it.
+func TestRunExplicitOffsetWritesNoSidecarForRecordOrigin(t *testing.T) {
+	fakeTools(t)
+	dir, _ := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+
+	if _, err := Run(Options{SessionDir: dir, Engine: EngineWhisperX, Offset: 30, OffsetSet: true, Log: io.Discard}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.AudioOffsetFile)); !os.IsNotExist(err) {
+		t.Fatalf("a record-origin session must stay sidecar-free, got err=%v", err)
 	}
 }
 
