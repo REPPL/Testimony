@@ -97,12 +97,6 @@ func Run(opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if external {
-		if err := convertAudio(opts.Audio, wav); err != nil {
-			return 0, err
-		}
-	}
-
 	// An external recording's audio.wav is NOT captured at t0, and disk bytes
 	// cannot distinguish it from a record-origin audio.wav. Persist the offset
 	// beside audio.wav so a later bare `transcribe` (a re-run with a different
@@ -122,7 +116,48 @@ func Run(opts Options) (int, error) {
 			return 0, err
 		}
 	}
-	if persist {
+	if external {
+		// The sidecar is persisted BETWEEN the conversion producing its temp
+		// file and the rename that replaces audio.wav, for the same reason the
+		// offset resolution above runs first: the sidecar write is the last
+		// remaining refusal, and refusing after the rename destroyed the
+		// record-origin capture at exit 1 with no offset recorded. Written in
+		// this order, a refused sidecar aborts with the session byte-for-byte
+		// as it was found; and if the rename itself then fails, the sidecar is
+		// rolled back (restored, or removed when none preceded it) so the
+		// session never claims a persisted offset for audio that was never
+		// converted — which would prime every later bare run to shift a
+		// record-origin capture at exit 0. The prior-bytes read is best-effort:
+		// a sidecar the no-follow guard refuses to read is one it will refuse
+		// to overwrite too, so the write below fails first.
+		sidecar := filepath.Join(opts.SessionDir, session.AudioOffsetFile)
+		var prior []byte
+		priorExists := false
+		if f, rerr := session.OpenFileNoFollowRead(sidecar); rerr == nil {
+			if b, rerr := io.ReadAll(f); rerr == nil {
+				prior, priorExists = b, true
+			}
+			f.Close()
+		}
+		wrote := false
+		convErr := convertAudio(opts.Audio, wav, func() error {
+			if werr := writeOffsetSidecar(opts.SessionDir, offset, provenance); werr != nil {
+				return fmt.Errorf("persist audio offset: %w", werr)
+			}
+			wrote = true
+			return nil
+		})
+		if convErr != nil {
+			if wrote {
+				if priorExists {
+					_ = session.WriteFileNoFollow(sidecar, prior, 0o644)
+				} else {
+					_ = os.Remove(sidecar)
+				}
+			}
+			return 0, convErr
+		}
+	} else if persist {
 		if err := writeOffsetSidecar(opts.SessionDir, offset, provenance); err != nil {
 			return 0, fmt.Errorf("persist audio offset: %w", err)
 		}
