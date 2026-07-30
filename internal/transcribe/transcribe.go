@@ -324,13 +324,15 @@ const maxOffsetSeconds = 1e9
 // any work starts — the CheckEngine/CheckAddr pattern. The derived and
 // sidecar paths already refuse an offset beyond maxOffsetSeconds where the
 // bad value enters (resolveOffset, readOffsetSidecar); the explicit flag was
-// the one unbounded entry point. A non-finite flag ran the whole engine and
-// then failed the transcript write with a bare JSON encoding error at the
-// runtime status, and a finite but absurd one wrote a transcript at exit 0
-// that merge refuses one command later — naming transcript.jsonl rather than
-// the flag — while the external path persisted a sidecar readOffsetSidecar
-// itself refuses on the next bare run. No genuine offset is refused: a value
-// past ±1e9 seconds already fails every downstream reader.
+// the one unbounded entry point. A non-finite flag failed only after the
+// conversion (external, at the sidecar persist) or the whole engine run
+// (in place, at the transcript write) was already spent, with a bare JSON
+// encoding error at the runtime status; a finite but absurd one wrote a
+// transcript at exit 0 that merge refuses one command later — naming
+// transcript.jsonl rather than the flag — while the external path persisted
+// a sidecar readOffsetSidecar itself refuses on the next bare run. No
+// genuine offset is refused: a value past ±1e9 seconds already fails every
+// downstream reader.
 func CheckOffset(v float64) error {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return fmt.Errorf("-offset must be a finite number of seconds, got %v", v)

@@ -364,11 +364,6 @@ func TestWriteEndpointGuard(t *testing.T) {
 	}
 }
 
-// TestWiderBindWarnsCaptureStaysLoopback pins the operator signal for the
-// advertised wider bind: an explicit non-loopback host serves the page to
-// other devices, but allowWrite still pins capture posts to loopback clients,
-// so every remote post is refused and both streams stay empty. Pre-fix nothing
-// said so anywhere — the operator learned only when merge counted 0 events.
 // TestRunBindFailureCreatesNoSessionDir pins Run's ordering: the bind comes
 // before the session directory is created. A well-formed -addr can still fail
 // to bind (most plainly, the port is already taken — a second `testimony demo`
@@ -395,6 +390,11 @@ func TestRunBindFailureCreatesNoSessionDir(t *testing.T) {
 	}
 }
 
+// TestWiderBindWarnsCaptureStaysLoopback pins the operator signal for the
+// advertised wider bind: an explicit non-loopback host serves the page to
+// other devices, but allowWrite still pins capture posts to loopback clients,
+// so every remote post is refused and both streams stay empty. Pre-fix nothing
+// said so anywhere — the operator learned only when merge counted 0 events.
 func TestWiderBindWarnsCaptureStaysLoopback(t *testing.T) {
 	dir := manifestDir(t)
 	var srv *http.Server

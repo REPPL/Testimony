@@ -101,11 +101,12 @@ Invocation contract:
   `transcribe -engine`, and a malformed capture `-addr` (which also no longer
   creates a session directory before refusing).
 - An explicit `transcribe -offset` is held to the same bound as a derived or
-  persisted one: a non-finite value used to run the whole engine and then fail
-  the transcript write with a bare JSON encoding error at the runtime status,
-  and a finite but absurd one wrote a transcript at exit 0 that `merge`
-  refuses one command later — naming `transcript.jsonl` rather than the flag —
-  while an external run persisted a sidecar `transcribe`'s own reader refuses.
+  persisted one: a non-finite value used to fail only after the conversion or
+  engine work was already spent, with a bare JSON encoding error at the
+  runtime status, and a finite but absurd one wrote a transcript at exit 0
+  that `merge` refuses one command later — naming `transcript.jsonl` rather
+  than the flag — while an external run persisted a sidecar `transcribe`'s
+  own reader refuses.
 - A `demo` whose well-formed address fails to bind (the port is already taken)
   no longer creates a session directory first, which left a stray session —
   manifest plus two empty stream files — behind at every refused bind.

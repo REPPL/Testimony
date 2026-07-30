@@ -135,9 +135,9 @@ func TestReportRejectsNonFiniteWindow(t *testing.T) {
 // TestTranscribeRejectsUnusableOffset pins -offset to the same invocation
 // contract as -window: a non-finite or over-magnitude value is a wrong
 // invocation (exit 2), refused before any conversion or engine work. Unchecked,
-// `-offset NaN` ran the whole engine and then failed the transcript write with
-// a bare JSON encoding error at exit 1, and `-offset 1e300` wrote a transcript
-// at exit 0 that merge refuses one command later, naming transcript.jsonl
+// `-offset NaN` failed only after that work was already spent, with a bare
+// JSON encoding error at exit 1, and `-offset 1e300` wrote a transcript at
+// exit 0 that merge refuses one command later, naming transcript.jsonl
 // rather than the flag. The refusal must precede engine detection, so this test
 // needs no ASR engine on PATH — on the pre-fix path these invocations instead
 // failed with the engine-missing (or JSON encoding) runtime error at exit 1.
