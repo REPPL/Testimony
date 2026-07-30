@@ -58,7 +58,7 @@ testimony transcribe -session DIR [-audio FILE]
 | `-device` | `auto` | (whisperx) inference device: `auto`, `cpu`, or `cuda`. `auto` picks `cuda` only when an NVIDIA GPU is present, and never on macOS |
 | `-compute_type` | `auto` | (whisperx) compute type: `auto`, `int8`, `float16`, … . `auto` follows the device: `float16` on CUDA, `int8` on CPU |
 | `-vad` | `auto` | (whisperx) VAD method: `auto`, `silero`, or `pyannote`. `auto` picks `silero`; `pyannote` fails under newer torch versions |
-| `-offset` | derived | audio-to-session clock offset in seconds. When not given: with `-audio`, derived from the recording's creation time minus the manifest's `t0_epoch_ms`, or 0 when derivation is impossible; without it, read back from `audio.offset.json` when the session has one, else 0 |
+| `-offset` | derived | audio-to-session clock offset in seconds. When not given: with `-audio`, derived from the recording's creation time minus the manifest's `t0_epoch_ms`, or 0 when derivation is impossible; without it, read back from `audio.offset.json` when the session has one, else 0. A non-finite value, or one beyond ±10⁹ seconds (the bound every derived or persisted offset already meets), is a usage error |
 
 Behaviour: with `-audio`, requires ffmpeg on PATH and converts the recording to 16 kHz mono `audio.wav` in the session directory; without it (or when `-audio` points at the session's own `audio.wav`), it uses the existing `audio.wav` in place and skips the conversion. It then runs the engine, applies the offset, and writes `transcript.jsonl`. Always prints the offset it used and its provenance — one of:
 
