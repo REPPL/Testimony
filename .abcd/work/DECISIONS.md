@@ -283,3 +283,13 @@ Architecture-shaping decisions graduate to an ADR under
   not running in CI (tooling), doubled CI runs on PR branches (trigger
   set is tied to the merge queue), and the /dev/null TTY gate (per
   round 8).
+- 2026-07-30 — Bug-hunt round 11: hunts and refutations ran sequentially in
+  one session (the subagent model was persistently overloaded server-side;
+  the routine's sequential fallback). One substantive fix: an explicit
+  `transcribe -offset` is validated at the CLI (finite, within ±1e9 s) —
+  the flag was the one unbounded offset entry point, running the engine
+  before a bare JSON error, or writing a transcript merge refuses and a
+  sidecar transcribe's own reader refuses. Nitpicks: a demo bind failure
+  (port taken) no longer creates a stray session directory; the CHANGELOG's
+  Alice-persona claim corrected to Bob. Refuted: documenting the capture
+  endpoints' 500 (the enumerated codes are the request-refusal contract).
