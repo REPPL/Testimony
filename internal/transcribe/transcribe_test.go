@@ -3,6 +3,7 @@ package transcribe
 import (
 	"errors"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -199,6 +200,23 @@ func TestMapSegmentsNegativeOffset(t *testing.T) {
 	}
 	if len(u.Words) != 1 || u.Words[0].W != "Carol" || u.Words[0].T != 8.5 {
 		t.Fatalf("word not trimmed/shifted/rounded: %+v", u.Words)
+	}
+}
+
+// TestCheckOffset pins the explicit-flag bound: the derived and sidecar paths
+// refuse a non-finite or over-magnitude offset where the bad value enters, and
+// the flag path must apply the same rule. Every genuine offset (including the
+// exact ±1e9 boundary and negative values) stays accepted.
+func TestCheckOffset(t *testing.T) {
+	for _, v := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), 1e300, -1e300, 1e9 + 1} {
+		if err := CheckOffset(v); err == nil {
+			t.Errorf("CheckOffset(%v): want a refusal, got nil", v)
+		}
+	}
+	for _, v := range []float64{0, 4.25, -12.4, 1e9, -1e9} {
+		if err := CheckOffset(v); err != nil {
+			t.Errorf("CheckOffset(%v): want acceptance, got %v", v, err)
+		}
 	}
 }
 

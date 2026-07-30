@@ -71,16 +71,33 @@ const maxBatchBody = 8 << 20
 // Run starts the demo capture server on addr, creating a new session
 // directory under outRoot. It blocks until the process is interrupted.
 func Run(addr, outRoot string) error {
+	// Bind before the session directory exists. The CLI's CheckAddr already
+	// refuses a malformed -addr up front, but a well-formed address can still
+	// fail to bind (the port is taken, or the host cannot be listened on), and
+	// creating the directory first left a stray session behind — a manifest
+	// plus two empty stream files — for a server that never served. Binding is
+	// the only way to learn the answer, so it goes first; a directory-creation
+	// failure after it just closes the listener, leaving nothing behind either
+	// way.
+	bind, err := listenAddr(addr)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", bind)
+	if err != nil {
+		return err
+	}
 	dir, err := session.Create(outRoot, time.Now(), session.Manifest{
 		App:         DefaultApp,
 		Participant: "P1",
 		Tasks:       []string{DefaultTask},
 	})
 	if err != nil {
+		ln.Close()
 		return err
 	}
 
-	srv, err := Serve(addr, dir)
+	srv, err := serveOn(ln, addr, dir)
 	if err != nil {
 		return err
 	}
@@ -127,24 +144,41 @@ func Shutdown(srv *http.Server) error {
 // streams into the existing session directory dir. It binds synchronously (so
 // a bind failure is returned) and then serves in the background, returning the
 // running *http.Server for the caller to Shutdown. record reuses this to run
-// the demo app into the same directory as the recorders.
+// the demo app into the same directory as the recorders; demo.Run binds first
+// itself (so a refused bind never creates a session directory) and enters at
+// serveOn.
 func Serve(addr, dir string) (*http.Server, error) {
-	// Resolve the bind address before touching the session directory, so an addr
-	// that will be refused never leaves empty stream files behind.
+	// Resolve the bind address and bind it before touching the session
+	// directory, so an addr that will be refused never leaves empty stream
+	// files behind.
 	bind, err := listenAddr(addr)
 	if err != nil {
 		return nil, err
 	}
+	ln, err := net.Listen("tcp", bind)
+	if err != nil {
+		return nil, err
+	}
+	return serveOn(ln, addr, dir)
+}
+
+// serveOn serves the demo capture app on an already-bound listener, taking
+// ownership of it: on any error the listener is closed. addr is the address
+// the operator requested, kept only to surface the requested host alongside
+// the bound port on the returned server.
+func serveOn(ln net.Listener, addr, dir string) (*http.Server, error) {
 	// The interaction shape check needs the manifest's t0 anchor, and every
 	// caller creates the session (and so the manifest) before serving into it.
 	// Loading it here also refuses a session whose anchor merge could never
 	// use, before any capture is accepted against it.
 	man, err := session.LoadManifest(dir)
 	if err != nil {
+		ln.Close()
 		return nil, err
 	}
 	t0, err := man.T0()
 	if err != nil {
+		ln.Close()
 		return nil, err
 	}
 	open := func(name string) (*os.File, error) {
@@ -152,11 +186,13 @@ func Serve(addr, dir string) (*http.Server, error) {
 	}
 	inter, err := open(session.InteractionsFile)
 	if err != nil {
+		ln.Close()
 		return nil, err
 	}
 	raw, err := open(session.RawEventsFile)
 	if err != nil {
 		inter.Close()
+		ln.Close()
 		return nil, err
 	}
 	s := &server{interactions: inter, rawEvents: raw, t0: t0}
@@ -170,12 +206,6 @@ func Serve(addr, dir string) (*http.Server, error) {
 	mux.HandleFunc("/api/interactions", s.handleInteraction)
 	mux.HandleFunc("/api/events", s.handleRawEvents)
 
-	ln, err := net.Listen("tcp", bind)
-	if err != nil {
-		inter.Close()
-		raw.Close()
-		return nil, err
-	}
 	// A deliberately wider bind serves the page to other devices, but allowWrite
 	// still pins capture posts to loopback clients — lifting that pin would
 	// reopen the CSRF/DNS-rebinding surface the guard exists for. The operator
@@ -183,8 +213,8 @@ func Serve(addr, dir string) (*http.Server, error) {
 	// which surfaces no status to the page, so without this line the first
 	// signal that a remote participant's session recorded nothing was merge
 	// counting 0 events.
-	if !loopbackHost(bind) {
-		fmt.Fprintf(os.Stderr, "testimony demo: warning: bound to %s, but capture posts are accepted from loopback clients only — a page opened from another device is served yet records nothing\n", bind)
+	if !loopbackHost(ln.Addr().String()) {
+		fmt.Fprintf(os.Stderr, "testimony demo: warning: bound to %s, but capture posts are accepted from loopback clients only — a page opened from another device is served yet records nothing\n", ln.Addr().String())
 	}
 	// The two stream files use direct O_APPEND writes (no buffering), so their
 	// data is durable without an explicit Close; the OS reclaims them on exit,

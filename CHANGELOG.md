@@ -40,7 +40,8 @@ Capture and diagnostics:
   unopenable `http://localhost:0`; the same applies to `record -demo`.
 - The demo page falls back to `fetch` when `sendBeacon` refuses to queue a
   capture batch, which used to drop the batch silently; its seeded display
-  name now uses the Alice persona.
+  name now uses the Bob persona, so the tutorial's rename to Alice is a real
+  change.
 - Diagnostic stderr tails cut on rune boundaries rather than mid-character;
   a record refused by the JSONL writer is named as a 1-based line of the
   output file; `transcribe` defaults its log sink instead of panicking when
@@ -99,6 +100,16 @@ Invocation contract:
   `-finding`/`-verdict` pairing and verdict syntax, an unknown
   `transcribe -engine`, and a malformed capture `-addr` (which also no longer
   creates a session directory before refusing).
+- An explicit `transcribe -offset` is held to the same bound as a derived or
+  persisted one: a non-finite value used to fail only after the conversion or
+  engine work was already spent, with a bare JSON encoding error at the
+  runtime status, and a finite but absurd one wrote a transcript at exit 0
+  that `merge` refuses one command later — naming `transcript.jsonl` rather
+  than the flag — while an external run persisted a sidecar `transcribe`'s
+  own reader refuses.
+- A `demo` whose well-formed address fails to bind (the port is already taken)
+  no longer creates a session directory first, which left a stray session —
+  manifest plus two empty stream files — behind at every refused bind.
 
 Capture integrity:
 

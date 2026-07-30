@@ -364,6 +364,32 @@ func TestWriteEndpointGuard(t *testing.T) {
 	}
 }
 
+// TestRunBindFailureCreatesNoSessionDir pins Run's ordering: the bind comes
+// before the session directory is created. A well-formed -addr can still fail
+// to bind (most plainly, the port is already taken — a second `testimony demo`
+// beside a first), and creating the directory first left a stray session
+// behind — manifest plus two empty stream files — for a server that never
+// served, the same class the malformed-addr refusal already forecloses. Run
+// only blocks after a successful bind, so with the port held it returns.
+func TestRunBindFailureCreatesNoSessionDir(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("hold a port: %v", err)
+	}
+	defer ln.Close()
+	out := t.TempDir()
+	if err := Run(ln.Addr().String(), out); err == nil {
+		t.Fatal("Run on a taken port: want a bind error, got nil")
+	}
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatalf("read out root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("a refused bind created a session directory anyway: %v", entries)
+	}
+}
+
 // TestWiderBindWarnsCaptureStaysLoopback pins the operator signal for the
 // advertised wider bind: an explicit non-loopback host serves the page to
 // other devices, but allowWrite still pins capture posts to loopback clients,
