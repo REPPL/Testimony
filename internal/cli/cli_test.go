@@ -132,6 +132,31 @@ func TestReportRejectsNonFiniteWindow(t *testing.T) {
 	}
 }
 
+// TestTranscribeRejectsUnusableOffset pins -offset to the same invocation
+// contract as -window: a non-finite or over-magnitude value is a wrong
+// invocation (exit 2), refused before any conversion or engine work. Unchecked,
+// `-offset NaN` ran the whole engine and then failed the transcript write with
+// a bare JSON encoding error at exit 1, and `-offset 1e300` wrote a transcript
+// at exit 0 that merge refuses one command later, naming transcript.jsonl
+// rather than the flag. The refusal must precede engine detection, so this test
+// needs no ASR engine on PATH — on the pre-fix path these invocations instead
+// failed with the engine-missing (or JSON encoding) runtime error at exit 1.
+func TestTranscribeRejectsUnusableOffset(t *testing.T) {
+	dir := miniSession(t)
+	for _, v := range []string{"NaN", "Inf", "-Inf", "1e300"} {
+		var code int
+		stderr := captureStderr(t, func() {
+			code = Run([]string{"transcribe", "-session", dir, "-offset", v})
+		})
+		if code != 2 {
+			t.Errorf("-offset %s: exit %d, want 2 (usage error, like -window)", v, code)
+		}
+		if !strings.Contains(stderr, "testimony: transcribe: -offset") {
+			t.Errorf("-offset %s: want the -offset refusal on stderr, got %q", v, stderr)
+		}
+	}
+}
+
 // TestStrayPositionalIsAUsageError pins the other half of the invocation
 // contract: no command takes positional arguments (docs/reference/cli.md), and
 // flag parsing stops at the first non-flag argument, so a stray positional

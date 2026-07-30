@@ -188,6 +188,17 @@ func Run(args []string) int {
 				offsetSet = true
 			}
 		})
+		// An unusable explicit offset is a wrong invocation (exit 2), refused
+		// before any conversion or engine work starts — the -window precedent
+		// above. Unchecked, a non-finite -offset ran the whole engine and then
+		// failed the transcript write with a bare JSON encoding error at exit 1,
+		// and a finite but absurd one wrote a transcript at exit 0 that merge
+		// refuses one command later, naming transcript.jsonl rather than the flag.
+		if offsetSet {
+			if err := transcribe.CheckOffset(*offset); err != nil {
+				return usageErr(fmt.Errorf("transcribe: %w", err))
+			}
+		}
 		n, err := transcribe.Run(transcribe.Options{
 			SessionDir: *dir,
 			Audio:      *audio,
