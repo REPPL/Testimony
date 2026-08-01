@@ -132,7 +132,7 @@ Any of the following leaves the command exiting with status 1, each diagnosed di
 
 When there is no usable `audio.wav`, the next-command block omits the bare `transcribe` line and instead keeps `merge` and `report` (interactions may still be captured) and explains how to get audio: on a platform with microphone capture, re-run `record` after granting the permission; either way, transcribe an external recording with `-audio FILE`.
 
-On platforms other than macOS, capture is unavailable and the command exits 0: it still writes a valid manifest and session directory and states what was skipped.
+On platforms other than macOS, audio and screen capture are unavailable. Without `-demo`, the command exits 0 immediately: it still writes a valid manifest and session directory and states what was skipped. With `-demo` it still serves the demo app and captures clicks — the demo server is not macOS-specific — so the command blocks until interrupted exactly as it does on macOS; only the next-command block differs, omitting the bare `transcribe` line because there is no audio.
 
 ## `testimony analyze`
 
