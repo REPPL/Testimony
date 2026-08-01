@@ -155,9 +155,9 @@ jobs:
         run: |
           set -euo pipefail
           sh install.sh --help | grep -q "Flags:"
-          (sh install.sh --dir; true) 2>&1 | grep -q "needs a value"
-          (sh install.sh --version; true) 2>&1 | grep -q "needs a value"
-          (sh install.sh --bogus; true) 2>&1 | grep -q "unknown flag"
+          { sh install.sh --dir || true; } 2>&1 | grep -q "needs a value"
+          { sh install.sh --version || true; } 2>&1 | grep -q "needs a value"
+          { sh install.sh --bogus || true; } 2>&1 | grep -q "unknown flag"
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6

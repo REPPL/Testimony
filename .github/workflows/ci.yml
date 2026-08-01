@@ -116,15 +116,18 @@ jobs:
       # "Installer" entries) would ship to `curl | sh` users with no gate having
       # exercised it. These four paths all return before any network access or
       # write, so they run safely offline, unlike a full install. Each failing
-      # case is wrapped in a `(...; true)` subshell so its deliberate non-zero
-      # exit does not trip pipefail before grep gets to check the message.
+      # case is wrapped in `{ ...; || true; }` so its deliberate non-zero exit
+      # does not trip pipefail before grep gets to check the message — a plain
+      # `(cmd; true)` subshell does not do this under `set -e`: -e is inherited
+      # into the subshell, so `cmd` failing aborts it right there and `true`
+      # never runs, leaving the subshell's own exit status non-zero after all.
       - name: Installer flag handling
         run: |
           set -euo pipefail
           sh install.sh --help | grep -q "Flags:"
-          (sh install.sh --dir; true) 2>&1 | grep -q "needs a value"
-          (sh install.sh --version; true) 2>&1 | grep -q "needs a value"
-          (sh install.sh --bogus; true) 2>&1 | grep -q "unknown flag"
+          { sh install.sh --dir || true; } 2>&1 | grep -q "needs a value"
+          { sh install.sh --version || true; } 2>&1 | grep -q "needs a value"
+          { sh install.sh --bogus || true; } 2>&1 | grep -q "unknown flag"
 
   # Secrets never land in history: full-history scan on every push/PR. Run as a
   # pinned, checksum-verified CLI (no PR-comment / SARIF GitHub-API integration
