@@ -90,7 +90,8 @@ testimony review -session sessions/<dir> -finding F-001 -verdict confirmed
 testimony review -session sessions/<dir> -finding F-005 -verdict duplicate-of-F-001
 ```
 
-Interactive review needs a terminal; when stdin is not a terminal (as in CI) it
+Interactive review needs stdin to be a character device (an interactive
+terminal is one); when it is a pipe or a redirected regular file (as in CI) it
 prints a notice and exits without blocking.
 
 ## 5. Re-render the report
