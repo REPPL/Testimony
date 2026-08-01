@@ -184,6 +184,22 @@ func TestIngestValidationFailures(t *testing.T) {
 	}
 }
 
+// TestIngestRejectsEmptyEvidenceID covers a timeline carrying an id-less entry
+// (merge lets one through when its source utterance or interaction record
+// itself has no id) alongside a normal, id-bearing one. Pre-fix, indexTimeline
+// indexed the empty id like any other, so an evidence citation of "" passed
+// the "found in the timeline" check merely because some id-less entry
+// existed — a citation naming no real anchor at all.
+func TestIngestRejectsEmptyEvidenceID(t *testing.T) {
+	tl := timelineFixture + `{"t":30,"src":"event","id":"","payload":{"kind":"click"}}` + "\n"
+	dir := writeSession(t, tl)
+	answer := `{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004",""]}]}`
+	_, err := Ingest(dir, strings.NewReader(answer))
+	if err == nil || !strings.Contains(err.Error(), `evidence id "" not found in the timeline`) {
+		t.Fatalf("expected an empty-evidence-id refusal, got %v", err)
+	}
+}
+
 // TestIngestQuoteValidatesAgainstSanitisedUtterance is the shown-vs-validated
 // regression. EmitRequest runs every timeline line through session.SafeText, so
 // an utterance whose text carries a Bidi_Control character (here U+200F, common
@@ -240,6 +256,27 @@ func TestLoadRejectsDuplicateFindingID(t *testing.T) {
 	_, _, err := Load(dir)
 	if err == nil || !strings.Contains(err.Error(), "duplicate finding id") {
 		t.Fatalf("expected a duplicate-finding-id refusal naming line 2, got %v", err)
+	}
+	if !strings.Contains(err.Error(), ":2:") {
+		t.Fatalf("refusal should name the offending line, got %v", err)
+	}
+}
+
+// TestLoadRejectsNullLine covers a hand-edited or exchanged findings.jsonl
+// carrying a bare JSON null line. Pre-fix, ParseRecords unmarshalled it into a
+// value-typed Finding as a no-op, silently appending a phantom finding (empty
+// id, severity 0) that then rendered in report.md's Unverified group and
+// entered review's interactive queue.
+func TestLoadRejectsNullLine(t *testing.T) {
+	dir := t.TempDir()
+	lines := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"a","evidence":["utt-004"],"status":"unverified"}` + "\n" +
+		"null\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(lines), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	_, _, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "missing t") {
+		t.Fatalf("expected a missing-t refusal for the null line, got %v", err)
 	}
 	if !strings.Contains(err.Error(), ":2:") {
 		t.Fatalf("refusal should name the offending line, got %v", err)

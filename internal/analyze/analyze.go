@@ -127,7 +127,8 @@ func ParseRecords(r io.Reader, name string) ([]Finding, []Verdict, error) {
 			continue
 		}
 		var probe struct {
-			Kind string `json:"kind"`
+			Kind string   `json:"kind"`
+			T    *float64 `json:"t"`
 		}
 		if err := json.Unmarshal(raw, &probe); err != nil {
 			return nil, nil, fmt.Errorf("%s:%d: %w", name, line, err)
@@ -149,6 +150,16 @@ func ParseRecords(r io.Reader, name string) ([]Finding, []Verdict, error) {
 			}
 			verdicts = append(verdicts, v)
 			continue
+		}
+		// A line that is JSON null (or {}) decodes cleanly into a value-typed
+		// Finding as its zero value, so a hand-edited or exchanged findings.jsonl
+		// carrying one silently injects a phantom finding — id "", severity 0 —
+		// into the report and the review queue. probe.T is a pointer for exactly
+		// this reason (mirroring ingest's rawFinding): every finding this tool ever
+		// writes carries a real "t", so its absence means the line was never a
+		// finding at all.
+		if probe.T == nil {
+			return nil, nil, fmt.Errorf("%s:%d: not a finding or verdict record (missing t)", name, line)
 		}
 		var fnd Finding
 		if err := json.Unmarshal(raw, &fnd); err != nil {
