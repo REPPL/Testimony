@@ -36,7 +36,7 @@ Usage:
   testimony report       -session DIR [-window 2.5]     render timeline.jsonl as a Markdown report
   testimony analyze      -session DIR [-out FILE]        emit the analysis request (rubric + timeline) on stdout or to FILE
   testimony analyze      -session DIR -ingest FILE       validate answer JSON (FILE or "-") → findings.jsonl (all findings unverified)
-  testimony review       -session DIR                    interactively record verdicts on unverified findings (TTY-gated)
+  testimony review       -session DIR                    interactively record verdicts on unverified findings (stdin must be a character device)
   testimony review       -session DIR -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
   testimony version
   testimony help
