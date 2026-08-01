@@ -679,7 +679,7 @@ func TestStartRecordersRefusesSymlinkedOutput(t *testing.T) {
 func TestNextCommands(t *testing.T) {
 	dir := "sessions/2026-07-17_153045"
 
-	withAudio := nextCommands(dir, true)
+	withAudio := nextCommands(dir, true, true)
 	if !strings.Contains(withAudio, dir) {
 		t.Fatalf("next commands must carry the real dir: %q", withAudio)
 	}
@@ -698,7 +698,7 @@ func TestNextCommands(t *testing.T) {
 	// a line explaining transcribe needs audio and pointing at the two ways to
 	// get it: re-run record after granting the permission, or bring an external
 	// recording via `transcribe -audio FILE`.
-	noAudio := nextCommands(dir, false)
+	noAudio := nextCommands(dir, false, true)
 	if strings.Contains(noAudio, "  testimony transcribe -session "+dir+"\n") {
 		t.Fatalf("without audio.wav the bare transcribe reuse line must not be offered: %q", noAudio)
 	}
@@ -712,6 +712,53 @@ func TestNextCommands(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(noAudio), "re-run record") {
 		t.Fatalf("without audio the guidance must suggest re-running record: %q", noAudio)
+	}
+}
+
+// TestNextCommandsNoCaptureSupport pins the platform-aware branch of the
+// no-audio guidance. Pre-fix, nextCommands had no capturePossible parameter
+// and always suggested "re-run record after granting the microphone
+// permission" — correct advice when a recorder actually exists and failed to
+// get its permission, but nonsensical on a platform with no microphone
+// capture at all (plan() returns no recorders there), where there is no
+// permission prompt to grant.
+func TestNextCommandsNoCaptureSupport(t *testing.T) {
+	dir := "sessions/2026-07-17_153045"
+	got := nextCommands(dir, false, false)
+	if strings.Contains(strings.ToLower(got), "granting") || strings.Contains(strings.ToLower(got), "permission") {
+		t.Fatalf("a platform with no capture support must not be told to grant a microphone permission: %q", got)
+	}
+	if strings.Contains(got, "  testimony transcribe -session "+dir+"\n") {
+		t.Fatalf("without audio the bare transcribe reuse line must not be offered: %q", got)
+	}
+	if !strings.Contains(got, "-audio") || !strings.Contains(got, "transcribe") {
+		t.Fatalf("without audio the operator still needs guidance mentioning transcribe -audio: %q", got)
+	}
+	for _, verb := range []string{"merge", "report"} {
+		if !strings.Contains(got, "testimony "+verb) || !strings.Contains(got, "-session "+dir) {
+			t.Fatalf("without audio the %s command must still be offered: %q", verb, got)
+		}
+	}
+}
+
+// TestPrintStatusOmitsBannerWhenNothingRuns pins the running-gate on the
+// session banner. Pre-fix, printStatus always printed "Say session start…
+// Press Ctrl+C to stop." even when the caller was about to take the
+// nothing-to-wait-on early return (a degraded platform with no -demo) —
+// telling the operator to address a live session for a command already
+// exited.
+func TestPrintStatusOmitsBannerWhenNothingRuns(t *testing.T) {
+	var buf bytes.Buffer
+	printStatus(&buf, nil, false, "", false)
+	got := buf.String()
+	if strings.Contains(got, "Press Ctrl+C") {
+		t.Fatalf("printStatus(running=false) must not print the live-session banner: %q", got)
+	}
+
+	buf.Reset()
+	printStatus(&buf, []string{streamMicrophone}, false, "", true)
+	if !strings.Contains(buf.String(), "Press Ctrl+C") {
+		t.Fatalf("printStatus(running=true) must print the live-session banner: %q", buf.String())
 	}
 }
 
