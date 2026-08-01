@@ -12,7 +12,8 @@
 #   curl -fsSL .../install.sh | sh -s -- --yes --dir "$HOME/bin"
 #
 # Flags:
-#   -d, --dir DIR     install directory (default: ~/.local/bin — no admin rights needed)
+#   -d, --dir DIR     install directory (default: ~/.local/bin, or $TESTIMONY_INSTALL_DIR
+#                     when set — no admin rights needed)
 #   -y, --yes         non-interactive: accept dependency installs (brew if present,
 #                     otherwise the local, admin-free option)
 #       --no-deps     install the binary only; print dependency guidance and exit
