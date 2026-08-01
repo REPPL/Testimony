@@ -24,12 +24,14 @@ permissions:
   contents: read
 
 jobs:
-  # Build + vet + test + pipeline smoke, race-enabled. Ubuntu-only: the darwin
-  # build is covered by the release cross-compile, and a macos-latest leg aborts
-  # the demo/record race binaries with a runner-specific dyld "missing LC_UUID"
-  # trap (a GitHub image + race-detector issue, not our code — the suite is green
-  # on a real Mac). A single job named "check" is also the context branch
-  # protection requires; a matrix would rename it and never report that context.
+  # Build + vet + test + pipeline smoke, race-enabled, plus a compile-only
+  # cross-check for the other release targets. Ubuntu-only for the test run: a
+  # macos-latest leg aborts the demo/record race binaries with a runner-specific
+  # dyld "missing LC_UUID" trap (a GitHub image + race-detector issue, not our
+  # code — the suite is green on a real Mac). Actually running the suite on
+  # darwin is covered by no gate here; only its compiling is. A single job named
+  # "check" is also the context branch protection requires; a matrix would
+  # rename it and never report that context.
   check:
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -62,6 +64,22 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+
+      # A GOOS-conditional compile break (darwin/linux syscalls the host GOOS
+      # never touches, e.g. internal/record's Setpgid or internal/transcribe's
+      # Umask) would pass every gate above and only surface in release.yml's
+      # cross-compile — after a tag is already pushed. Compile-only (this job
+      # runs no test binaries but its own), CGO_ENABLED=0 to match release.yml's
+      # build flags; linux/amd64 (the host) is already covered by Build above.
+      - name: Cross-compile check (darwin, linux/arm64)
+        run: |
+          set -euo pipefail
+          for target in darwin/arm64 darwin/amd64 linux/arm64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            echo "building for $goos/$goarch"
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -o /dev/null ./cmd/testimony
+          done
 
       # The full pipeline against the bundled sample session: merge must produce
       # a timeline, report must render it, and both outputs must be non-empty.
