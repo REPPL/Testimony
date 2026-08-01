@@ -25,10 +25,13 @@ subprocess. Nothing touches the network.
   guidance. Omitting `-audio` (or pointing it at the session's own `audio.wav`,
   as a `record` session has) reuses that file in place and skips the
   conversion.
-- Resolves the audio→session offset: an explicit `-offset` wins; otherwise
-  it is derived from the recording's `creation_time` (ffprobe) minus the
-  manifest's `t0_epoch_ms`; otherwise 0. The offset and its provenance are
-  always printed.
+- Resolves the audio→session offset: an explicit `-offset` wins; otherwise,
+  with `-audio` given, it is derived from the recording's `creation_time`
+  (ffprobe) minus the manifest's `t0_epoch_ms`, falling back to 0 when that is
+  unavailable; otherwise (no `-audio`, reusing the session's own `audio.wav`
+  in place) it is read back from the `audio.offset.json` sidecar a prior
+  `transcribe` persisted, falling back to 0 when there is none. The offset and
+  its provenance are always printed.
 - Engine subprocesses write machine-readable JSON output files, which are
   parsed — never their human-readable stdout. WhisperX yields word-level
   timestamps; whisper.cpp yields segment-level only.

@@ -20,9 +20,9 @@ page ([`../05-internals/02-schemas.md`](../05-internals/02-schemas.md)).
 | `-ingest` | *(off)* | validate the answer JSON at `FILE` (or `-` for stdin) into `findings.jsonl` (ingest mode) |
 
 `analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`).
-`-out` and `-ingest` together is an error. Both modes read `manifest.json` and
-`timeline.jsonl`, hinting to run `merge` first when the timeline is missing
-(matching [`report`](04-report.md)).
+`-out` and `-ingest` together is an error. Emit reads `manifest.json` and
+`timeline.jsonl`; ingest reads `timeline.jsonl` only. Both hint to run `merge`
+first when the timeline is missing (matching [`report`](04-report.md)).
 
 ## Behaviour — emit (default)
 
