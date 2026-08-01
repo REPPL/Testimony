@@ -219,6 +219,29 @@ jobs:
           sha256sum testimony_*.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
+      - name: Assert the built binary reports the tag before anything is published
+        # The version stamp rides on the -X flag naming internal/cli.Version, and
+        # the Go linker silently ignores -X for a symbol that does not exist —
+        # rename or move the variable and every tarball would ship reporting
+        # "testimony dev" while the build stayed green, the first observer being
+        # an end user. Checked here against the linux/amd64 tarball this runner
+        # can execute natively, straight out of dist/ — the same bytes the
+        # SHA256SUMS step above hashed and the Release step below publishes — so
+        # a broken stamp aborts before anything is public, the same principle
+        # the attestation step below states for itself. The post-publish check
+        # further down re-verifies the same thing against the actually
+        # downloaded artefact, guarding the upload/download path too.
+        run: |
+          set -euo pipefail
+          CHK="$RUNNER_TEMP/version-check-prepublish"
+          mkdir -p "$CHK"
+          tar -xzf "dist/testimony_${TAG}_linux_amd64.tar.gz" -C "$CHK" testimony
+          got="$("$CHK/testimony" version)"
+          if [ "$got" != "testimony $TAG" ]; then
+            echo "built binary reports \"$got\", expected \"testimony $TAG\"" >&2
+            exit 1
+          fi
+
       - name: Attest build provenance for the tarballs and SHA256SUMS
         # Signed SLSA build-provenance over the exact files uploaded below. Runs
         # BEFORE the Release so a failed attestation aborts before anything is
@@ -265,14 +288,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Assert the released binary reports the tag
-        # The version stamp rides on the -X flag naming internal/cli.Version,
-        # and the Go linker silently ignores -X for a symbol that does not
-        # exist — rename or move the variable and every tarball ships
-        # reporting "testimony dev" while the release stays green, the first
-        # observer being an end user. Download one tarball fresh from the
-        # published Release and require the binary's own version output to
-        # name the tag. Unlike the attestation step above this runs on private
-        # repos too, so it is a separate step with its own download.
+        # Re-checks the pre-publish assertion above, but against a tarball
+        # downloaded fresh from the published Release rather than the local
+        # dist/ copy — the same distinction the attestation steps draw between
+        # a local guarantee and a retrievable, publicly verifiable one. This
+        # catches a stamp that was correct at build time but corrupted in the
+        # upload/download path; the pre-publish step is what stops a broken
+        # stamp from ever being published in the first place. Unlike the
+        # attestation steps this runs on private repos too, so it is a
+        # separate step with its own download.
         run: |
           set -euo pipefail
           DL="$RUNNER_TEMP/version-check"
