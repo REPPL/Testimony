@@ -11,7 +11,7 @@ severity: major
 
 > **Testimony maps confirmed findings back to the codebase.** An agentic mapping step resolves each finding's UI anchor — a `data-testid` attribute, a CSS selector, a route, or the command text visible in a terminal cast — to source locations, attaching `code_refs` with a confidence level. Where the evidence supports it, the step drafts an issue: title, reproduction steps reconstructed from the event window, the participant's quote as user evidence, and the suspected file. A tester's spoken "I expected this button to save immediately" arrives in the tracker pointing at the component that owns the button.
 >
-> "The gap was always between 'users struggled here' and 'this file, this handler'," said Bob, application developer. "Now a finding comes to me with the selector, the route, the suspect file, and the person's own words. I start fixing instead of reconstructing."
+> "The gap was always between 'users struggled here' and 'this file, this handler'," said Alice, the maintainer. "Now a finding comes to me with the selector, the route, the suspect file, and the person's own words. I start fixing instead of reconstructing."
 
 ## Why This Matters
 
