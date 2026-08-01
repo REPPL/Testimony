@@ -35,9 +35,10 @@ Evidence integrity:
   unrecoverable from the session.
 - `SaveManifest` refuses a `manifest.json` that would exceed `LoadManifest`'s
   1 MiB read cap instead of writing it: a manifest built from long
-  `-task`/`-app`/`-notes` text used to write successfully at exit 0, after
-  which every later `merge`, `report`, `analyze`, and `transcribe` refused
-  to load the session, with no repair path.
+  `-task`/`-app` text (or a hand-edited `notes` field) used to write
+  successfully at exit 0, after which every later `merge`, `report`,
+  `analyze`, and `transcribe` refused to load the session, with no repair
+  path.
 - `record`/`demo`'s session directory is removed when the manifest write that
   follows creating it is refused, instead of being left behind, empty and
   manifest-less: it used to litter the sessions root permanently and block
@@ -56,6 +57,12 @@ Evidence integrity:
   anchor: an evidence citation of `""` used to pass validation merely
   because some id-less entry existed in the timeline, not because the
   cited id was ever a real anchor.
+- `merge` refuses to overwrite an existing `timeline.jsonl` when
+  `transcript.jsonl` and `interactions.jsonl` are both missing, instead of
+  truncating it to zero entries at exit 0 — either file is individually
+  optional, but losing both left nothing to build a timeline from, and
+  `transcribe`/`analyze -ingest` already refuse the identical "nothing to
+  write" shape rather than destroy an existing artefact.
 
 Capture and diagnostics:
 
@@ -79,6 +86,11 @@ Capture and diagnostics:
   re-granting the microphone permission on a platform that has one to grant
   — a platform with no capture support at all is pointed at an external
   recording instead.
+- `record`'s session directory is removed when a recorder fails to start
+  (ffmpeg missing, no usable device) and nothing was captured yet, instead
+  of being left behind, empty and manifest-only, for every retry; a
+  directory a recorder had already captured real, partial audio to before a
+  later stream failed is kept.
 
 Checks and installer:
 
@@ -144,6 +156,23 @@ Documentation:
   utterances rather than any entry, and `cli.go`'s usage text calling
   `review` "(TTY-gated)" — the exact framing `cli.md`'s own reference
   corrects.
+- The `instrument-your-own-app` how-to's archival-capture snippet (step 4)
+  is placed in the scope it depends on — it calls `post`, defined in step
+  3's own script block, but was shown as a separately pasted one — and
+  gains the same `rrweb`-availability guard the demo carries, so a blocked
+  or absent CDN script cannot break it; the guide now notes that a bare
+  `testimony demo` session is labelled with the built-in demo's own app
+  and task, not the reader's, and names the `record -demo` alternative
+  that honours custom metadata.
+- `.abcd/development/brief/`'s platform and dependencies pages corrected
+  against the shipped CLI (ffmpeg's avfoundation backend captures voice and
+  screen alike, not QuickTime; ffmpeg is also `record`'s live capture
+  engine, not only the offline converter to `audio.wav`); the verification
+  page, `release.yml`'s header comment, and `internal/session`'s package
+  doc comment now name every CI gate and session file they had dropped.
+- A `-notes` flag named in the CHANGELOG and in an `internal/session` code
+  comment never existed; both now name the real `-task`/`-app` flags (or a
+  hand-edited `notes` field).
 
 Invocation contract:
 
@@ -220,6 +249,13 @@ Capture integrity:
   client could forge a loopback `Host` and have its writes accepted, even
   though the server states that capture posts are accepted from loopback
   clients only.
+- The demo app's `display-name`, `notify-toggle`, and `theme-toggle` rows
+  carry `data-testid` on the row rather than the bare control: a click on
+  the theme toggle's visible slider (its checkbox is styled invisible) used
+  to fall back to a fragile `span.slider` class selector instead of a
+  durable `[data-testid=...]` one, and any click or change captured on a
+  bare-control `data-testid` element carried an empty label, since the
+  control itself has no text content to read.
 
 Installer:
 
