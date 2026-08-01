@@ -26,9 +26,13 @@ the birth state and the full decision history both survive.
   (the `ui` selector/route, else the evidence ids), then prompts
   `[c]onfirm [r]eject [d]uplicate-of [s]kip [q]uit`. `d` asks for the canonical
   `F-NNN`. Each decision appends a verdict record stamped with today's date.
-- **Interactive mode is TTY-gated**: when stdin is not a terminal it prints a
-  one-line notice and exits 0 (mirroring [`record`](05-record.md)), so CI never
-  blocks.
+- **Interactive mode is gated on stdin being a character device** — true for
+  an interactive terminal, but also for `/dev/null`, so this is not simply
+  "not a terminal". When stdin is a pipe or a redirected regular file,
+  `review` prints a one-line notice and exits 0 instead of walking, so CI
+  never blocks; redirected from `/dev/null` (`< /dev/null`) it still enters
+  the walk and immediately reaches end of input, since redirection makes
+  stdin the character device itself rather than a pipe reading from it.
 - **Non-interactive** (`review -session DIR -finding F-003 -verdict confirmed`,
   or `-verdict duplicate-of-F-002`): validates that the finding exists, the
   verdict parses to the `confirmed | rejected | duplicate` set, and any duplicate

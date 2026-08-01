@@ -514,6 +514,26 @@ func TestLoadManifestAcceptsOrdinary(t *testing.T) {
 	}
 }
 
+// TestSaveManifestRefusesOversized is the write-side half of
+// TestLoadManifestRefusesOversized: a manifest built from long task/notes text
+// must be refused before it is written, not after — a session whose manifest
+// exceeds LoadManifest's cap can never be read back by merge, report, analyze,
+// or transcribe, and pre-fix SaveManifest wrote it anyway and reported success.
+func TestSaveManifestRefusesOversized(t *testing.T) {
+	dir := t.TempDir()
+	tasks := make([]string, 12)
+	for i := range tasks {
+		tasks[i] = strings.Repeat("x", 100_000)
+	}
+	err := SaveManifest(dir, Manifest{Session: "s", T0EpochMS: 1, Tasks: tasks})
+	if err == nil || !strings.Contains(err.Error(), "refusing to write") {
+		t.Fatalf("expected an oversize refusal, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ManifestFile)); !os.IsNotExist(err) {
+		t.Fatalf("expected no manifest.json to be written, stat error: %v", err)
+	}
+}
+
 // TestWriteFileAtomicNoFollowRefusesSymlink keeps the atomic write under the
 // same planted-symlink refusal as WriteFileNoFollow: rename would replace the
 // link rather than follow it, but a hostile session directory must not be able

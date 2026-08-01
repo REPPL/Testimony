@@ -50,7 +50,14 @@ func indexTimeline(entries []timeline.Entry) timelineIndex {
 		routes:    map[string]bool{},
 	}
 	for i, e := range entries {
-		idx.ids[session.SafeText(e.ID)] = true
+		// An empty id cannot be cited unambiguously — ingest's own duplicate-id
+		// scan (ingest.go) and merge's timeline-id scan both skip it for the same
+		// reason. Indexing it here would let an evidence citation of "" pass the
+		// "found in the timeline" check merely because some id-less entry exists,
+		// rather than because the cited id was ever a real anchor.
+		if id := session.SafeText(e.ID); id != "" {
+			idx.ids[id] = true
+		}
 		end := e.T
 		switch e.Src {
 		case "speech":

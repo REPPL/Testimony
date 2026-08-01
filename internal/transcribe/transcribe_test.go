@@ -220,6 +220,38 @@ func TestCheckOffset(t *testing.T) {
 	}
 }
 
+// TestCheckDevice pins the closed -device enum docs/reference/cli.md
+// documents. Pre-fix, an unrecognised value passed straight to whisperx and
+// only failed after the offset resolution (and, on the -audio path, the
+// audio conversion) had already run, at exit 1 rather than the exit 2 the
+// docs promise for an invalid flag value.
+func TestCheckDevice(t *testing.T) {
+	for _, v := range []string{"", "auto", "cpu", "cuda"} {
+		if err := CheckDevice(v); err != nil {
+			t.Errorf("CheckDevice(%q): want acceptance, got %v", v, err)
+		}
+	}
+	for _, v := range []string{"gpu", "cudda", "CPU"} {
+		if err := CheckDevice(v); err == nil {
+			t.Errorf("CheckDevice(%q): want a refusal, got nil", v)
+		}
+	}
+}
+
+// TestCheckVAD is CheckDevice's sibling for the closed -vad enum.
+func TestCheckVAD(t *testing.T) {
+	for _, v := range []string{"", "auto", "silero", "pyannote"} {
+		if err := CheckVAD(v); err != nil {
+			t.Errorf("CheckVAD(%q): want acceptance, got %v", v, err)
+		}
+	}
+	for _, v := range []string{"webrtc", "silreo"} {
+		if err := CheckVAD(v); err == nil {
+			t.Errorf("CheckVAD(%q): want a refusal, got nil", v)
+		}
+	}
+}
+
 func TestResolveOffsetFlagWins(t *testing.T) {
 	off, prov, err := resolveOffset(Options{Offset: 4.25, OffsetSet: true}, session.Manifest{T0EpochMS: 0}, true)
 	if err != nil {
@@ -1313,6 +1345,49 @@ func TestRunDefaultsNilLog(t *testing.T) {
 
 	if _, err := Run(Options{SessionDir: dir, Engine: EngineWhisperX}); err != nil {
 		t.Fatalf("Run with nil Log: %v", err)
+	}
+}
+
+// TestRunRefusesZeroUtteranceOverwrite is the truncating-write regression: a
+// re-run whose engine returns no usable segments (wrong -language, a model
+// that yields only whitespace, a genuinely silent take) must not destroy a
+// transcript.jsonl a prior run already produced. Pre-fix, WriteJSONL's
+// O_TRUNC open erased the file and Run reported "transcribed 0 utterances" at
+// exit 0.
+func TestRunRefusesZeroUtteranceOverwrite(t *testing.T) {
+	bin := t.TempDir()
+	whisperx := "#!/bin/sh\nfor last; do :; done\n" +
+		`printf '%s' '{"segments":[]}' > "$last/audio.json"` + "\n"
+	for name, script := range map[string]string{
+		"whisperx": whisperx,
+		"ffmpeg":   "#!/bin/sh\nexit 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+
+	dir, _ := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+	transcript := filepath.Join(dir, session.TranscriptFile)
+	const prior = `{"id":"utt-001","t0":0,"t1":1,"speaker":"P1","text":"Alice speaks."}` + "\n"
+	if err := os.WriteFile(transcript, []byte(prior), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := Run(Options{SessionDir: dir, Engine: EngineWhisperX, Log: io.Discard})
+	if err == nil {
+		t.Fatalf("want a refusal for zero utterances, got n=%d, err=nil", n)
+	}
+	if !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("want a refusing-to-overwrite error, got %v", err)
+	}
+	got, readErr := os.ReadFile(transcript)
+	if readErr != nil {
+		t.Fatalf("read transcript: %v", readErr)
+	}
+	if string(got) != prior {
+		t.Fatalf("the prior transcript was overwritten: got %q, want %q", got, prior)
 	}
 }
 

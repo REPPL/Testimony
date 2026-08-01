@@ -116,6 +116,30 @@ func resolveVAD(pref string) string {
 	return pref
 }
 
+// CheckDevice reports whether pref is one of the closed set of -device values
+// docs/reference/cli.md documents (auto, cpu, cuda). Unlike CheckEngine's
+// unknown-engine refusal, this was previously unvalidated: a typo ran the full
+// offset resolution and (on the -audio path) the audio conversion before the
+// engine itself rejected the literal argument at exit 1, not the exit 2
+// docs/reference/cli.md promises for an invalid flag value.
+func CheckDevice(pref string) error {
+	switch pref {
+	case "", "auto", "cpu", "cuda":
+		return nil
+	}
+	return fmt.Errorf("unknown -device %q: want auto, cpu, or cuda", pref)
+}
+
+// CheckVAD reports whether pref is one of the closed set of -vad values
+// docs/reference/cli.md documents (auto, silero, pyannote). See CheckDevice.
+func CheckVAD(pref string) error {
+	switch pref {
+	case "", "auto", "silero", "pyannote":
+		return nil
+	}
+	return fmt.Errorf("unknown -vad %q: want auto, silero, or pyannote", pref)
+}
+
 // cudaVisible reports whether an NVIDIA GPU is plausibly available, using
 // nvidia-smi on PATH as the proxy (no bindings, per the zero-dependency
 // rule; the driver always ships it).

@@ -197,6 +197,14 @@ func Run(opts Options) (int, error) {
 	}
 
 	utts := mapSegments(segs, offset)
+	if len(utts) == 0 {
+		// WriteJSONL opens with O_TRUNC: writing zero utterances would silently
+		// destroy a transcript.jsonl a prior run already produced (a re-run with a
+		// different -model or -language, say) and report success. analyze.Ingest
+		// refuses the identical shape — an answer with no findings — for the same
+		// reason; transcribe is the sibling writer that lacked the guard.
+		return 0, fmt.Errorf("engine returned no utterances; refusing to overwrite %s", session.TranscriptFile)
+	}
 	out := filepath.Join(opts.SessionDir, session.TranscriptFile)
 	if err := session.WriteJSONL(out, utts); err != nil {
 		return 0, fmt.Errorf("write transcript: %w", err)

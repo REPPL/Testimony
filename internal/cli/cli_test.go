@@ -211,6 +211,8 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 		{[]string{"review", "-session", dir, "-verdict", "confirmed"}, "review: -finding is required with -verdict"},
 		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", "bogus"}, `review: invalid verdict "bogus"`},
 		{[]string{"transcribe", "-session", dir, "-engine", "bogus"}, `transcribe: unknown engine "bogus"`},
+		{[]string{"transcribe", "-session", dir, "-device", "cudda"}, `transcribe: unknown -device "cudda"`},
+		{[]string{"transcribe", "-session", dir, "-vad", "silreo"}, `transcribe: unknown -vad "silreo"`},
 		{[]string{"demo", "-addr", "bogus", "-out", demoOut}, `demo: invalid capture address "bogus"`},
 		{[]string{"record", "-demo", "-addr", "bogus", "-out", t.TempDir()}, `record: invalid capture address "bogus"`},
 	}

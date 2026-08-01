@@ -6,7 +6,9 @@ The on-disk contract, as defined in `internal/session` and
 ```
 sessions/<timestamp>/
   manifest.json         # session metadata, including t0_epoch_ms
-  audio.wav             # 16 kHz mono ASR input, written by transcribe (local only)
+  audio.wav             # 16 kHz mono ASR input (captured by record, or converted by transcribe -audio; local only)
+  audio.offset.json     # audio→session offset for an external recording (written by transcribe; local only)
+  screen.mp4            # screen capture (written by record -video; local only)
   events.rrweb.jsonl    # raw rrweb events (archival; web sessions only)
   interactions.jsonl    # normalised interaction events (epoch ms)
   transcript.jsonl      # word-aligned utterances (session-relative seconds)
@@ -89,12 +91,12 @@ validation boundary; every field below is checked, and `status` is forced to
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `id` | string | yes | `^F-\d{3}$` (F-NNN, zero-padded); unique within the file |
-| `t` | float64 | yes | finding time, session-relative seconds; `sessionStart ≤ t ≤ sessionEnd`, where the bounds are the earliest and latest entry times in `timeline.jsonl` and `sessionStart` is `0` unless the timeline holds negative-time utterances (a recording predating `t0`) |
+| `t` | float64 | yes | finding time, session-relative seconds; `sessionStart ≤ t ≤ sessionEnd`, where `sessionStart` is `0` unless the timeline holds a negative-time entry (a recording predating `t0`) and `sessionEnd` is the latest moment on the timeline — the maximum over all entries, taking an utterance's end (`t1`) rather than its start, and an event's time |
 | `type` | string | yes | one of `bug \| friction \| inconsistency \| preference \| idea` |
 | `severity` | int | yes | Nielsen-style `1..4` (cosmetic, minor, major, blocker) |
 | `mode` | string | no | `A \| B`, default `A`; only Mode A is produced in this slice |
 | `quote` | string | yes | non-empty; a **verbatim** substring of the `text` of one *cited* evidence utterance (no normalisation, no joining across utterances) |
-| `evidence` | []string | yes | non-empty; every id exists in `timeline.jsonl`; at least one `utt-*` (a spoken anchor) |
+| `evidence` | []string | yes | non-empty, at most 64 ids; every id exists in `timeline.jsonl`; at least one `utt-*` (a spoken anchor) |
 | `ui` | object | no | `{selector?, route?}`; when present, each must match a real timeline event's `selector`/`route` |
 | `status` | string | yes | always `"unverified"` on ingest (the model is never trusted) |
 

@@ -36,7 +36,7 @@ Usage:
   testimony report       -session DIR [-window 2.5]     render timeline.jsonl as a Markdown report
   testimony analyze      -session DIR [-out FILE]        emit the analysis request (rubric + timeline) on stdout or to FILE
   testimony analyze      -session DIR -ingest FILE       validate answer JSON (FILE or "-") → findings.jsonl (all findings unverified)
-  testimony review       -session DIR                    interactively record verdicts on unverified findings (TTY-gated)
+  testimony review       -session DIR                    interactively record verdicts on unverified findings (stdin must be a character device)
   testimony review       -session DIR -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
   testimony version
   testimony help
@@ -180,6 +180,16 @@ func Run(args []string) int {
 		// detectEngine it took the runtime status a script could not tell from a
 		// genuinely missing engine binary.
 		if err := transcribe.CheckEngine(*engine); err != nil {
+			return usageErr(fmt.Errorf("transcribe: %w", err))
+		}
+		// -device and -vad are the same class of wrong invocation as -engine: both
+		// are closed enums (docs/reference/cli.md), and unchecked, a typo spent the
+		// offset resolution and (on the -audio path) the audio conversion before
+		// whisperx itself rejected the literal argument at exit 1.
+		if err := transcribe.CheckDevice(*device); err != nil {
+			return usageErr(fmt.Errorf("transcribe: %w", err))
+		}
+		if err := transcribe.CheckVAD(*vad); err != nil {
 			return usageErr(fmt.Errorf("transcribe: %w", err))
 		}
 		offsetSet := false

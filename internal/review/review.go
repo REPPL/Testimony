@@ -2,8 +2,9 @@
 // appended to findings.jsonl as a separate, non-destructive record (never an
 // in-place rewrite of the finding), so the finding's birth state and the full
 // verdict history survive as the precision measure the method stands on
-// (architecture note §2; itd-2 press release). Interactive review is TTY-gated
-// so CI never blocks; a single verdict can also be recorded non-interactively.
+// (architecture note §2; itd-2 press release). Interactive review is gated on
+// stdin being a character device so a redirected or piped run (CI) never
+// blocks; a single verdict can also be recorded non-interactively.
 package review
 
 import (

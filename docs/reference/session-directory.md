@@ -120,7 +120,7 @@ Ingest validates every finding against the merged timeline and is the sole valid
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `id` | string | yes | `F-NNN`, zero-padded (`^F-\d{3}$`); unique within the file |
-| `t` | number | yes | finding time, session-relative seconds; within `[sessionStart, sessionEnd]` (`sessionStart` is `0` unless the timeline holds negative-time utterances from a recording predating `t0`; `sessionEnd` is the latest moment on the timeline — the maximum over all entries, taking an utterance's end (`t1`) and an event's time) |
+| `t` | number | yes | finding time, session-relative seconds; within `[sessionStart, sessionEnd]` (`sessionStart` is `0` unless the timeline holds a negative-time entry from a recording predating `t0`; `sessionEnd` is the latest moment on the timeline — the maximum over all entries, taking an utterance's end (`t1`) and an event's time) |
 | `type` | string | yes | one of `bug`, `friction`, `inconsistency`, `preference`, `idea` |
 | `severity` | integer | yes | usability-severity scale `1..4`: cosmetic, minor, major, blocker |
 | `mode` | string | no | `A` or `B`, default `A`; only Mode A is produced today |
