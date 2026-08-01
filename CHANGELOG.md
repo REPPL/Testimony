@@ -33,6 +33,24 @@ Evidence integrity:
   write failure part-way through used to leave a truncated sidecar behind,
   blocking every later bare `transcribe` with the prior offset
   unrecoverable from the session.
+- `SaveManifest` refuses a `manifest.json` that would exceed `LoadManifest`'s
+  1 MiB read cap instead of writing it: a manifest built from long
+  `-task`/`-app`/`-notes` text used to write successfully at exit 0, after
+  which every later `merge`, `report`, `analyze`, and `transcribe` refused
+  to load the session, with no repair path.
+- `transcribe` refuses to write `transcript.jsonl` when the engine returns
+  zero utterances instead of truncating an existing good transcript to
+  empty: a re-run whose engine yielded no usable segments (a wrong
+  `-language`, a model producing only whitespace) used to report
+  "transcribed 0 utterances" at exit 0 and silently destroy the prior file.
+- `analyze` refuses a bare JSON `null` line in `findings.jsonl` instead of
+  reading it as a phantom zero-value finding — empty id, severity 0 — that
+  used to render in `report.md`'s Unverified group and enter `review`'s
+  interactive queue.
+- `analyze` no longer treats an empty timeline entry id as a valid evidence
+  anchor: an evidence citation of `""` used to pass validation merely
+  because some id-less entry existed in the timeline, not because the
+  cited id was ever a real anchor.
 
 Capture and diagnostics:
 
@@ -75,6 +93,17 @@ Checks and installer:
   attestation failures refuse the install (a verification attempted and
   rejected, or failed mid-way) and which fall back to the checksum with a
   note (a gh that cannot attempt it).
+- The pipeline smoke test also asserts a joined, indented event bullet in
+  `report.md`, not only the header counts: the counts are raw entry
+  counts computed before the event↔utterance join, so they stayed
+  "10 · 10" even with every event detached from the speech it accompanied.
+- `release.yml` now runs `gitleaks` and `zizmor` against the pushed tag
+  commit, gating the release job on both: a tag can point at a commit that
+  was never pushed through a branch, so it could previously publish
+  without a fresh secret scan or workflow audit.
+- CI and the release workflow now actually execute `install.sh --help` and
+  its flag-error paths (`--dir`/`--version` without a value, an unknown
+  flag), instead of only parsing the script's syntax.
 
 Documentation:
 
@@ -92,6 +121,24 @@ Documentation:
   order, matching the page's own "stably sorted by `t`" claim. The
   instrument-your-own-app capture snippet ignores untrusted (script-forwarded)
   clicks, matching the demo app it says it follows the conventions of.
+- The bundled `examples/sample-session/interactions.jsonl` fixture's two
+  tab-click `route` values are corrected to what the demo app's
+  capture-phase listener actually records (the hash the click happened
+  from, not its destination) — they had this backwards.
+- The `.abcd/development/brief/` tree is brought back into line with the
+  shipped v0.4.0 CLI: four files still described `record` as a stub and
+  `analyze`/`review` as merely planned, contradicting README.md, AGENTS.md,
+  and the CHANGELOG's own v0.2.0 entry; the demo surface page still
+  described the pre-round-12 write guard (missing the remote-address
+  check) and a uniform 8 MiB body cap where the actual split is 4/8 MiB;
+  the schema page understated a finding's `t` upper bound and the session
+  directory's file inventory.
+- Four small doc/code mismatches corrected: `cli.md`'s unconditional
+  `-audio` sidecar-write sentence, the demo endpoint docs' missing `500`
+  status, `session-directory.md`'s sessionStart floor scoped to
+  utterances rather than any entry, and `cli.go`'s usage text calling
+  `review` "(TTY-gated)" — the exact framing `cli.md`'s own reference
+  corrects.
 
 Invocation contract:
 
@@ -130,6 +177,12 @@ Invocation contract:
 - A `demo` whose well-formed address fails to bind (the port is already taken)
   no longer creates a session directory first, which left a stray session —
   manifest plus two empty stream files — behind at every refused bind.
+- `transcribe -device` and `-vad` are validated against their documented
+  enums, as `-engine` already was: an unrecognised value used to run the
+  full offset resolution (and, on the `-audio` path, the audio conversion)
+  before whisperx itself rejected the literal argument at the runtime
+  status, not the exit 2 the CLI reference promises for an invalid flag
+  value.
 
 Capture integrity:
 

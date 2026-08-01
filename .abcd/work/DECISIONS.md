@@ -344,3 +344,31 @@ Architecture-shaping decisions graduate to an ADR under
   between AGENTS.md's local command menu and the gates CI actually runs
   (the menu lists a single-test `go test -run` invocation no one would
   expect CI to run; `go test -race ./...` already covers the same suite).
+- 2026-08-01 — Bug-hunt round 14: 13 substantive fixes, 9 nitpicks. `SaveManifest`
+  now refuses a manifest that would exceed `LoadManifest`'s read cap instead of
+  writing a session no command could load back; `transcribe` refuses to
+  overwrite `transcript.jsonl` with zero utterances instead of truncating a
+  good transcript to empty; `analyze` rejects a bare JSON `null` line in
+  `findings.jsonl` and stops treating an empty timeline entry id as valid
+  evidence; `transcribe -device`/`-vad` are validated against their documented
+  enums, matching `-engine`. Three CI/release coverage gaps closed: the
+  pipeline smoke test now asserts a joined, indented event bullet, not only
+  header counts that stayed "10 · 10" through a broken join; `release.yml` runs
+  `gitleaks` and `zizmor` against the tag commit, which a never-pushed-to-a-branch
+  tag previously skipped; both workflows execute `install.sh --help` and its
+  flag-error paths instead of only parsing its syntax. The bundled sample
+  session's two tab-click `route` values were backwards relative to what the
+  demo's capture-phase listener actually records, corrected. The
+  `.abcd/development/brief/` tree — committed durable-record documentation,
+  not code-adjacent — is brought back into line with the shipped v0.4.0 CLI
+  across six files: four still described `record` as a stub and
+  `analyze`/`review` as merely planned; the demo surface page still described
+  the pre-round-12 write guard and a uniform 8 MiB body cap; the schema page
+  understated a finding's `t` upper bound, its evidence cap, and the session
+  file inventory. Four smaller doc/code mismatches also corrected (an
+  unconditional `-audio` sidecar-write sentence, a missing `500` status, a
+  sessionStart floor scoped too narrowly, and `cli.go`'s usage text disagreeing
+  with `cli.md`'s own TTY-gate correction). Refuted: a findings.jsonl/ingest
+  schema-drift coverage gap (round-tripped clean, no live drift) and a
+  suspected persona/pronoun collision in the brief's personas page (Alice is a
+  fictional persona describing a different, fictional maintainer).
