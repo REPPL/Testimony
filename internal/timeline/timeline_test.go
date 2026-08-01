@@ -575,3 +575,51 @@ func TestMergeRejectsUtteranceIDInEventNamespace(t *testing.T) {
 		t.Fatalf("timeline.jsonl was written despite the collision")
 	}
 }
+
+// TestSpeechEndClampsInvertedT1OnHandEditedEntry covers the case
+// TestMergeClampsUtteranceInvertedSpan cannot reach: checkedUtterances
+// clamps an inverted t1 at merge time, so Merge itself never writes an
+// inverted timeline entry, but SpeechEnd's callers (EventsNear, report,
+// analyze) read timeline.jsonl directly and a hand-edited or exchanged file
+// can carry the inversion straight to them. Pre-fix, SpeechEnd returned the
+// raw t1 unclamped, so an entry with t=100, t1=10 made EventsNear's window
+// [97.5, 12.5] (hi < lo) silently match no event.
+func TestSpeechEndClampsInvertedT1OnHandEditedEntry(t *testing.T) {
+	e := Entry{T: 100, Src: "speech", ID: "utt-001", Payload: map[string]any{"t1": 10.0}}
+	if got := SpeechEnd(e); got != 100 {
+		t.Fatalf("inverted t1 (10) should clamp to t (100), got %v", got)
+	}
+
+	entries := []Entry{
+		e,
+		{T: 101, Src: "event", ID: "ev-001", Payload: map[string]any{"kind": "click"}},
+	}
+	near := EventsNear(entries, e, 2.5)
+	if len(near) != 1 || near[0] != "ev-001" {
+		t.Fatalf("want the event to attach once the window is clamped, got %v", near)
+	}
+}
+
+// TestReadEntriesRejectsMissingT covers a timeline.jsonl entry with no "t"
+// field at all — distinct from TestSpeechEndClampsInvertedT1OnHandEditedEntry,
+// where t is present but t1 precedes it. Entry.T is a value-typed float64, so
+// decoding straight into it cannot distinguish an absent "t" from a genuine
+// 0; pre-fix, report and analyze both read the untimed entry as t=0 and
+// placed it at the session's very start, sorted above everything that
+// genuinely happened there — the same fabrication risk checkedUtterances
+// already refuses on a transcript.jsonl missing t0. ReadEntries closes it for
+// timeline.jsonl.
+func TestReadEntriesRejectsMissingT(t *testing.T) {
+	dir := t.TempDir()
+	lines := "" +
+		`{"t":2.0,"src":"speech","id":"utt-001","payload":{"t1":3.0,"speaker":"P1","text":"first"}}` + "\n" +
+		`{"src":"speech","id":"utt-002","payload":{"t1":5.0,"speaker":"P1","text":"no t field at all"}}` + "\n"
+	path := filepath.Join(dir, session.TimelineFile)
+	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	_, err := ReadEntries(path)
+	if err == nil || !strings.Contains(err.Error(), "entry 2") || !strings.Contains(err.Error(), "missing t") {
+		t.Fatalf("expected a missing-t error naming entry 2, got %v", err)
+	}
+}

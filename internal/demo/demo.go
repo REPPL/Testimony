@@ -79,11 +79,7 @@ func Run(addr, outRoot string) error {
 	// the only way to learn the answer, so it goes first; a directory-creation
 	// failure after it just closes the listener, leaving nothing behind either
 	// way.
-	bind, err := listenAddr(addr)
-	if err != nil {
-		return err
-	}
-	ln, err := net.Listen("tcp", bind)
+	ln, err := Bind(addr)
 	if err != nil {
 		return err
 	}
@@ -97,7 +93,7 @@ func Run(addr, outRoot string) error {
 		return err
 	}
 
-	srv, err := serveOn(ln, addr, dir)
+	srv, err := serveOrCleanup(ln, addr, dir)
 	if err != nil {
 		return err
 	}
@@ -143,23 +139,58 @@ func Shutdown(srv *http.Server) error {
 // Serve starts the demo capture server on addr, appending its two interaction
 // streams into the existing session directory dir. It binds synchronously (so
 // a bind failure is returned) and then serves in the background, returning the
-// running *http.Server for the caller to Shutdown. record reuses this to run
-// the demo app into the same directory as the recorders; demo.Run binds first
-// itself (so a refused bind never creates a session directory) and enters at
-// serveOn.
+// running *http.Server for the caller to Shutdown. Prefer Bind followed by
+// ServeListener when the bind must happen before dir is created — record does,
+// so a refused bind never leaves a stray session directory behind; demo.Run
+// follows the same ordering itself and enters at serveOrCleanup, so it also
+// removes dir on a failure this leaves to the caller.
 func Serve(addr, dir string) (*http.Server, error) {
-	// Resolve the bind address and bind it before touching the session
-	// directory, so an addr that will be refused never leaves empty stream
-	// files behind.
-	bind, err := listenAddr(addr)
-	if err != nil {
-		return nil, err
-	}
-	ln, err := net.Listen("tcp", bind)
+	ln, err := Bind(addr)
 	if err != nil {
 		return nil, err
 	}
 	return serveOn(ln, addr, dir)
+}
+
+// Bind resolves and binds a capture server address, without touching a
+// session directory. A well-formed address can still fail to bind (the port
+// is taken, or the host cannot be listened on), and binding is the only way
+// to learn that — splitting it out from Serve lets a caller reserve the port
+// before deciding whether to create anything else that a refused bind would
+// otherwise leave stranded.
+func Bind(addr string) (net.Listener, error) {
+	bind, err := listenAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+	return net.Listen("tcp", bind)
+}
+
+// ServeListener serves the demo capture app on an already-bound listener ln
+// (as returned by Bind), appending its two interaction streams into the
+// existing session directory dir. addr is the address the operator
+// requested, kept only to surface the requested host alongside the bound
+// port on the returned server.
+func ServeListener(ln net.Listener, addr, dir string) (*http.Server, error) {
+	return serveOn(ln, addr, dir)
+}
+
+// serveOrCleanup calls serveOn and, on failure, also removes dir. It exists
+// for Run, the one caller that both creates dir itself immediately beforehand
+// and owns its whole lifecycle: a serveOn failure this rare — reloading the
+// manifest session.Create just wrote, or a stream file's own open, failing
+// (e.g. a full disk) — must not leave the directory behind for a server that
+// never served, the same guarantee Run's bind-first ordering already gives
+// the far more common case of a taken port.
+// ServeListener and Serve do not use this: dir there may be a session a
+// caller (e.g. record) is already managing across other recorders, so a
+// serve failure must not delete it out from under them.
+func serveOrCleanup(ln net.Listener, addr, dir string) (*http.Server, error) {
+	srv, err := serveOn(ln, addr, dir)
+	if err != nil {
+		os.RemoveAll(dir)
+	}
+	return srv, err
 }
 
 // serveOn serves the demo capture app on an already-bound listener, taking

@@ -84,6 +84,19 @@ type Entry struct {
 	Payload map[string]any `json:"payload"`
 }
 
+// rawEntry is how a timeline.jsonl record is decoded before it is trusted.
+// Its T is a pointer, unlike Entry's, so that an absent "t" stays
+// distinguishable from a genuine 0 — an entry legitimately opening the
+// session carries t equal to 0, so a value-typed field cannot tell that
+// record apart from one whose "t" the file never named. Everything else
+// mirrors Entry.
+type rawEntry struct {
+	T       *float64       `json:"t"`
+	Src     string         `json:"src"`
+	ID      string         `json:"id"`
+	Payload map[string]any `json:"payload"`
+}
+
 // BuildEntries converts utterances and interactions to a single slice of
 // timeline entries, sorted by time. t0EpochMS anchors interaction times.
 func BuildEntries(t0EpochMS int64, utts []Utterance, ints []Interaction) []Entry {
@@ -157,10 +170,51 @@ func CheckSrc(entries []Entry) error {
 	return nil
 }
 
+// ReadEntries reads timeline.jsonl at path, refusing an entry missing "t"
+// before it reaches a caller that would otherwise read it as t=0 — merge
+// never omits the field, so this bites solely on a hand-edited or exchanged
+// timeline.jsonl. Without the check, a record missing "t" decoded leniently
+// to 0, and both report and analyze placed it at the session's very start,
+// sorted above everything that genuinely happened there: the same
+// plant-words-at-the-opening hazard checkedUtterances already refuses on
+// transcript.jsonl, reopened here because timeline.jsonl is exactly as
+// exchangeable and this reader is the last boundary before the value is
+// trusted. Positions named in the error are 1-based entry ordinals, which
+// match file lines only when the file carries no blank lines (ReadJSONL
+// skips those).
+func ReadEntries(path string) ([]Entry, error) {
+	raw, err := session.ReadJSONL[rawEntry](path)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Entry, 0, len(raw))
+	for i, r := range raw {
+		if r.T == nil {
+			return nil, fmt.Errorf("%s: entry %d is missing t; cannot place it on the session clock", path, i+1)
+		}
+		out = append(out, Entry{
+			T:       *r.T,
+			Src:     r.Src,
+			ID:      r.ID,
+			Payload: r.Payload,
+		})
+	}
+	return out, nil
+}
+
 // SpeechEnd returns the end time of a speech entry (its t1), falling back to
-// its start time.
+// its start time. A t1 that precedes t is clamped to t rather than returned
+// as-is: checkedUtterances already clamps this exact hazard at merge time
+// (an explicit t1 < t0 is dropped in favour of t0, with the reasoning in its
+// comment), but a hand-edited or exchanged timeline.jsonl reaches SpeechEnd's
+// callers — EventsNear, report's end() and clock join, analyze's session
+// bound — without passing through checkedUtterances. Without the clamp here
+// too, an inverted span silently inverts EventsNear's join window (hi < lo,
+// matching no event), understates the report's Duration header below its own
+// rendered body, and can reject an honestly-timed finding as outside the
+// session bound analyze derives from it.
 func SpeechEnd(e Entry) float64 {
-	if t1, ok := e.Payload["t1"].(float64); ok {
+	if t1, ok := e.Payload["t1"].(float64); ok && t1 >= e.T {
 		return t1
 	}
 	return e.T

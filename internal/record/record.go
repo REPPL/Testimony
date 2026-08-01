@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -63,7 +64,8 @@ var startupWindow = 5 * time.Second
 var (
 	notifyContext    = defaultNotifyContext
 	startRecordersFn = startRecorders
-	serveDemoFn      = demo.Serve
+	bindDemoFn       = demo.Bind
+	serveDemoFn      = demo.ServeListener
 	shutdownDemoFn   = demo.Shutdown
 )
 
@@ -117,6 +119,22 @@ func Run(opts Options) error {
 		participant = "P1"
 	}
 
+	// Bind the demo port, if requested, before the session directory exists or
+	// any recorder is spawned. demo.CheckAddr (called by the CLI) only parses
+	// -addr; a well-formed address can still fail to bind (the port is taken,
+	// or the host cannot be listened on), and binding is the only way to learn
+	// that. Binding first, like demo.Run itself does, means a refused bind never
+	// leaves a stray session directory (or, on a platform with capture, a
+	// recorder already spawned and then stopped) behind.
+	var ln net.Listener
+	var err error
+	if opts.Demo {
+		ln, err = bindDemoFn(opts.Addr)
+		if err != nil {
+			return fmt.Errorf("start demo server: %w", err)
+		}
+	}
+
 	dir, err := session.Create(opts.Out, time.Now(), session.Manifest{
 		App:         app,
 		Commit:      opts.Commit,
@@ -124,6 +142,9 @@ func Run(opts Options) error {
 		Tasks:       tasks,
 	})
 	if err != nil {
+		if ln != nil {
+			ln.Close()
+		}
 		return err
 	}
 	fmt.Fprintf(opts.Log, "testimony record — session started\n\n  session dir : %s\n", dir)
@@ -145,6 +166,9 @@ func Run(opts Options) error {
 
 	children, err := startRecordersFn(dir, recorders, opts.Log)
 	if err != nil {
+		if ln != nil {
+			ln.Close()
+		}
 		return err
 	}
 	audioCaptured := contains(recorders, streamMicrophone)
@@ -159,7 +183,7 @@ func Run(opts Options) error {
 
 	var srv *http.Server
 	if opts.Demo {
-		srv, err = serveDemoFn(opts.Addr, dir)
+		srv, err = serveDemoFn(ln, opts.Addr, dir)
 		if err != nil {
 			stopAll(children)
 			return fmt.Errorf("start demo server: %w", err)

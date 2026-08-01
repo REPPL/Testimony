@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -858,16 +859,19 @@ func TestRunStopsDemoServerThroughBoundedShutdown(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			origNotify, origStart := notifyContext, startRecordersFn
-			origServe, origShutdown := serveDemoFn, shutdownDemoFn
+			origBind, origServe, origShutdown := bindDemoFn, serveDemoFn, shutdownDemoFn
 			t.Cleanup(func() {
 				notifyContext, startRecordersFn = origNotify, origStart
-				serveDemoFn, shutdownDemoFn = origServe, origShutdown
+				bindDemoFn, serveDemoFn, shutdownDemoFn = origBind, origServe, origShutdown
 			})
 
+			// No real listener: bindDemoFn returns nil, and stopDemo only has to
+			// reach the seam — binding a real port would make the test racy.
+			bindDemoFn = func(addr string) (net.Listener, error) { return nil, nil }
 			// A server value that was never listened on: stopDemo only has to reach
 			// the seam, and binding a real port would make the test racy.
 			stub := &http.Server{}
-			serveDemoFn = func(addr, dir string) (*http.Server, error) { return stub, nil }
+			serveDemoFn = func(ln net.Listener, addr, dir string) (*http.Server, error) { return stub, nil }
 
 			var mu sync.Mutex
 			var stopped []*http.Server
@@ -922,6 +926,54 @@ func TestRunStopsDemoServerThroughBoundedShutdown(t *testing.T) {
 				t.Fatalf("the demo server must be stopped exactly once through the bounded helper, got %d call(s)", len(got))
 			}
 		})
+	}
+}
+
+// TestRunBindFailureWithDemoCreatesNoSessionDir pins Run to the same
+// bind-before-create ordering demo.Run uses (see the demo package's
+// TestRunBindFailureCreatesNoSessionDir): -demo's port can be taken (most
+// plainly, another testimony demo or record -demo already running there),
+// and demo.CheckAddr — the CLI's own up-front refusal — only parses the
+// address, never binds it. Pre-fix, Run created the session directory and
+// spawned recorders before attempting the bind, so a taken port left a
+// stray session (and, on a platform with capture, a recorder already
+// started and then stopped) behind. Binding first means a taken port is
+// discovered before either exists.
+func TestRunBindFailureWithDemoCreatesNoSessionDir(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("hold a port: %v", err)
+	}
+	defer ln.Close()
+
+	origStart := startRecordersFn
+	t.Cleanup(func() { startRecordersFn = origStart })
+	started := false
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
+		started = true
+		return nil, nil
+	}
+
+	out := t.TempDir()
+	runErr := Run(Options{
+		Out:  out,
+		Demo: true,
+		Addr: ln.Addr().String(),
+		GOOS: "linux",
+		Log:  io.Discard,
+	})
+	if runErr == nil {
+		t.Fatal("Run with the demo port already taken: want a bind error, got nil")
+	}
+	if started {
+		t.Error("a refused demo bind must not spawn any recorder")
+	}
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatalf("read out root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("a refused demo bind created a session directory anyway: %v", entries)
 	}
 }
 

@@ -45,6 +45,21 @@ type Options struct {
 // verdict non-interactively; otherwise it walks the unverified findings
 // interactively (skipping cleanly when stdin is not a terminal).
 func Run(opts Options) error {
+	// analyze.Load reads dir/findings.jsonl, so a session directory that does
+	// not exist at all satisfies fs.ErrNotExist exactly like one that exists
+	// but has simply never been through `analyze -ingest` — and review,
+	// unlike merge/report/analyze, never loads the manifest, so it had
+	// nothing else to distinguish the two. Sending an operator with a bad
+	// -session path to `analyze -ingest` first only relocates the same
+	// failure one command later; checking the directory itself first names
+	// the actual problem and reserves the ingest hint for the case it
+	// actually describes: a real session that has not been analysed yet.
+	if fi, err := os.Stat(opts.Dir); err != nil || !fi.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("%s is not a directory", opts.Dir)
+		}
+		return fmt.Errorf("session directory: %w", err)
+	}
 	findings, verdicts, err := analyze.Load(opts.Dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

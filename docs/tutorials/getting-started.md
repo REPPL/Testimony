@@ -47,7 +47,7 @@ testimony version
 testimony record -demo
 ```
 
-One command creates a fresh session directory (for example `sessions/2026-07-17_174858`), starts recording your microphone into that directory, serves a small instrumented settings app, and prints the URL and the exact commands you need later. The first run asks for **Microphone** permission — grant it in System Settings and run the command again. Keep this terminal open: it records your voice and captures your clicks for the whole session.
+One command creates a fresh session directory (for example `sessions/2026-07-17_174858`), starts recording your microphone into that directory, serves a small instrumented settings app, and prints the URL to open — the exact commands for the next steps print once you stop the session (step 5). The first run asks for **Microphone** permission — grant it in System Settings and run the command again. Keep this terminal open: it records your voice and captures your clicks for the whole session.
 
 > If you would rather not capture the microphone, run `testimony demo` instead, record your voice separately in QuickTime Player, save the file, and pass it to `transcribe` in step 6 with `-audio ~/Desktop/session.m4a`. Everything else is the same.
 

@@ -606,6 +606,31 @@ func TestServeRefusesSymlinkStream(t *testing.T) {
 	}
 }
 
+// TestServeOrCleanupRemovesSessionDirOnFailure covers the failure Run's
+// bind-first ordering does not reach: the port bound fine and
+// session.Create already wrote the manifest, but serveOn itself then fails
+// (here, a directory sits where a stream file needs to be created — the
+// same shape of failure a full disk or a permissions problem produces).
+// Pre-fix, Run returned the error and left the session directory (manifest
+// plus a stray stream-file collision) behind for a server that never
+// served.
+func TestServeOrCleanupRemovesSessionDirOnFailure(t *testing.T) {
+	dir := manifestDir(t)
+	if err := os.Mkdir(filepath.Join(dir, session.InteractionsFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if _, err := serveOrCleanup(ln, ":0", dir); err == nil {
+		t.Fatal("serveOrCleanup with a poisoned stream path: want an error, got nil")
+	}
+	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+		t.Fatalf("session directory must be removed after a serveOn failure, stat err = %v", statErr)
+	}
+}
+
 // TestServeSurfacesBoundAddr pins the ephemeral-port fix: with ":0" the
 // requested address names no real port, so Serve records the bound one on the
 // returned server for callers to print — previously demo -addr :0 printed the

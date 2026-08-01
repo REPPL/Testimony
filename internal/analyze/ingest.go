@@ -48,7 +48,7 @@ const maxAnswerBytes = 16 << 20
 // ordinals, which match file lines only when the file has no blank lines
 // (ReadJSONL skips those).
 func loadTimeline(dir string) ([]timeline.Entry, error) {
-	entries, err := session.ReadJSONL[timeline.Entry](filepath.Join(dir, session.TimelineFile))
+	entries, err := timeline.ReadEntries(filepath.Join(dir, session.TimelineFile))
 	if err != nil {
 		return nil, fmt.Errorf("read timeline (run `testimony merge` first?): %w", err)
 	}

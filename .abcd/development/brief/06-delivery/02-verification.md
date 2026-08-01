@@ -3,7 +3,7 @@
 ## Gates
 
 Run from the repo root; CI (`.github/workflows/ci.yml`) runs the same gates on
-every push and pull request, across Linux and macOS. Two further CI jobs guard
+every push and pull request, on Ubuntu. Two further CI jobs guard
 the supply chain: `gitleaks` scans the full history for committed secrets, and
 `zizmor` audits the workflows themselves. A version tag (`vX.Y.Z`) triggers
 `.github/workflows/release.yml`, which re-runs the full gate against the pushed
@@ -20,11 +20,15 @@ go test -race ./...
 ```
 
 The pipeline smoke test asserts that `timeline.jsonl` and `report.md` are
-non-empty, that the report contains its `## Timeline` heading, and that the
-"save button" moment — the demo app's intentional save-feedback flaw,
-mirrored in the sample session — survives the merge→report join. That last
-grep is the guard on the join logic itself: if windowing or attachment
-breaks, the flaw's utterance/event pairing is what disappears first.
+non-empty and that the report renders the sample session's fixed content: the
+`## Timeline` and `## Findings` headings, the confirmed `F-001` finding, the
+"save button" utterance text, the `save-btn` selector, and the exact
+`**Utterances:** 10 · **Events:** 10` header count. Only that last assertion
+actually guards the merge→report join. The others all pass even with
+`interactions.jsonl` deleted: "save button" comes from the utterance's
+own text, and the `save-btn` selector renders from `findings.jsonl`
+regardless of events, so the counts line is what catches a windowing or
+attachment regression.
 
 ## Live end-to-end procedure (macOS)
 
