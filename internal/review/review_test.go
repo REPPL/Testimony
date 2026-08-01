@@ -122,6 +122,28 @@ func TestNonInteractiveErrors(t *testing.T) {
 	}
 }
 
+// TestRunRefusesNonexistentSessionDir covers the -session path itself being
+// wrong, as distinct from a real session that simply has not been through
+// `analyze -ingest` yet. analyze.Load reads dir/findings.jsonl, so a
+// directory that does not exist at all satisfied fs.ErrNotExist exactly like
+// that latter case, and review — the one pipeline command that never loads
+// the manifest — sent an operator with a typo'd -session path to run
+// `analyze -ingest` first, which fails identically one command later instead
+// of naming the actual problem.
+func TestRunRefusesNonexistentSessionDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "does-not-exist")
+	err := Run(Options{Dir: dir, Finding: "F-001", Verdict: "confirmed", Out: io.Discard, Today: "2026-07-17"})
+	if err == nil {
+		t.Fatal("Run on a nonexistent session directory: want an error, got nil")
+	}
+	if strings.Contains(err.Error(), "analyze -ingest") {
+		t.Fatalf("a missing session directory must not be reported as an un-ingested one, got %v", err)
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Fatalf("error must name the session directory %q, got %v", dir, err)
+	}
+}
+
 func TestInteractiveGatedWhenNotTTY(t *testing.T) {
 	dir := writeSession(t)
 	before := findingLines(t, dir)
