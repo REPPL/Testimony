@@ -182,6 +182,16 @@ func Run(args []string) int {
 		if err := transcribe.CheckEngine(*engine); err != nil {
 			return usageErr(fmt.Errorf("transcribe: %w", err))
 		}
+		// -device and -vad are the same class of wrong invocation as -engine: both
+		// are closed enums (docs/reference/cli.md), and unchecked, a typo spent the
+		// offset resolution and (on the -audio path) the audio conversion before
+		// whisperx itself rejected the literal argument at exit 1.
+		if err := transcribe.CheckDevice(*device); err != nil {
+			return usageErr(fmt.Errorf("transcribe: %w", err))
+		}
+		if err := transcribe.CheckVAD(*vad); err != nil {
+			return usageErr(fmt.Errorf("transcribe: %w", err))
+		}
 		offsetSet := false
 		fs.Visit(func(f *flag.Flag) {
 			if f.Name == "offset" {
