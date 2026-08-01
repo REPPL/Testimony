@@ -201,7 +201,11 @@ func EffectiveStatus(findings []Finding, verdicts []Verdict) map[string]Status {
 		if _, ok := m[v.Finding]; !ok {
 			continue // a verdict referencing an unknown finding is ignored for display
 		}
-		m[v.Finding] = Status{Value: v.Verdict, Of: v.Of, At: v.At}
+		of := ""
+		if v.Verdict == "duplicate" {
+			of = v.Of
+		}
+		m[v.Finding] = Status{Value: v.Verdict, Of: of, At: v.At}
 	}
 	return m
 }
