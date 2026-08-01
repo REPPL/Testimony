@@ -14,8 +14,10 @@
 # Flags:
 #   -d, --dir DIR     install directory (default: ~/.local/bin, or $TESTIMONY_INSTALL_DIR
 #                     when set — no admin rights needed)
-#   -y, --yes         non-interactive: accept dependency installs (brew if present,
-#                     otherwise the local, admin-free option)
+#   -y, --yes         non-interactive: accept each dependency's default install
+#                     choice (ffmpeg: brew if present, otherwise the local,
+#                     admin-free option; ASR: whisperx via uv, always — see
+#                     dep_asr for why)
 #       --no-deps     install the binary only; print dependency guidance and exit
 #       --version V   install release V instead of the default
 #   -h, --help        this text
@@ -400,8 +402,9 @@ Passing flags through a pipe:
 Flags:
   -d, --dir DIR     install directory (default: ~/.local/bin, or $TESTIMONY_INSTALL_DIR
                     when set — no admin rights needed)
-  -y, --yes         non-interactive: accept dependency installs (brew if present,
-                    otherwise the local, admin-free option)
+  -y, --yes         non-interactive: accept each dependency's default install
+                    choice (ffmpeg: brew if present, otherwise the local,
+                    admin-free option; ASR: whisperx via uv, always)
       --no-deps     install the binary only; print dependency guidance and exit
       --version V   install release V instead of the default
   -h, --help        this text

@@ -82,6 +82,7 @@ func Create(outRoot string, now time.Time, m Manifest) (dir string, err error) {
 	m.Session = filepath.Base(dir)
 	m.T0EpochMS = now.UnixMilli()
 	if err := SaveManifest(dir, m); err != nil {
+		os.RemoveAll(dir)
 		return "", err
 	}
 	return dir, nil

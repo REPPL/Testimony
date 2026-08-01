@@ -338,7 +338,7 @@ func eventLine(e timeline.Entry) string {
 	if r := raw("route"); r != "" {
 		parts = append(parts, "("+mdInline(r)+")")
 	}
-	return strings.Join(parts, " ")
+	return orDash(strings.Join(parts, " "))
 }
 
 func orDash(s string) string {

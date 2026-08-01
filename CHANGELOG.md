@@ -38,6 +38,11 @@ Evidence integrity:
   `-task`/`-app`/`-notes` text used to write successfully at exit 0, after
   which every later `merge`, `report`, `analyze`, and `transcribe` refused
   to load the session, with no repair path.
+- `record`/`demo`'s session directory is removed when the manifest write that
+  follows creating it is refused, instead of being left behind, empty and
+  manifest-less: it used to litter the sessions root permanently and block
+  an immediate retry at the same instant with `mkdir ... file exists` against
+  the phantom directory.
 - `transcribe` refuses to write `transcript.jsonl` when the engine returns
   zero utterances instead of truncating an existing good transcript to
   empty: a re-run whose engine yielded no usable segments (a wrong
@@ -155,6 +160,14 @@ Invocation contract:
   `audio.wav`; an explicit `-offset` now rewrites an existing sidecar.
 - `report` renders a hand-ordered (or hand-edited) `timeline.jsonl` in time
   order instead of trusting the file's line order.
+- `report` renders a `—` placeholder for a timeline event whose payload
+  carries none of `kind`/`selector`/`text`/`value`/`route` (reachable from a
+  hand-edited or exchanged `timeline.jsonl`), instead of a bullet with a
+  timestamp and nothing after it.
+- A hand-edited `findings.jsonl` verdict's `of` target is only rendered for a
+  `duplicate` verdict, as documented, instead of for any verdict kind that
+  happens to carry one: a `confirmed`/`rejected` verdict with a stray `of`
+  used to render the nonsensical "confirmed of F-002".
 - `install.sh` installs the current release: its version pin had been left at
   `v0.1.0`, handing new users a three-release-old binary, and the release
   workflow now gates the pin against the tag so it cannot go stale again. The
@@ -167,6 +180,11 @@ Invocation contract:
   `-finding`/`-verdict` pairing and verdict syntax, an unknown
   `transcribe -engine`, and a malformed capture `-addr` (which also no longer
   creates a session directory before refusing).
+- `review -finding`'s value is validated against the `F-NNN` syntax at exit
+  2, the one flag value in this family the previous pass left unchecked: a
+  malformed id used to fail inside `review.Run` with `"finding ... not
+  found"` at exit 1, indistinguishable from a well-formed id genuinely
+  absent from the session.
 - An explicit `transcribe -offset` is held to the same bound as a derived or
   persisted one: a non-finite value used to fail only after the conversion or
   engine work was already spent, with a bare JSON encoding error at the

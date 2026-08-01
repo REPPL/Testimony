@@ -15,7 +15,7 @@ severity: major
 
 > **Testimony captures think-aloud sessions against a command-line tool.** A terminal session recorded with asciinema arrives as a `.cast` stream — a timestamped record of every command typed and every line of output — which `merge` normalises onto the same session clock as the narration, exactly as it does a browser's interaction events. A tester's spoken "I have no idea what that error is telling me" lands next to the command that produced it and the text it printed, and the anchor greps straight back to the source that emitted it.
 >
-> "Half of what we build is command-line, and it was the half I could never study properly," said Bob, application developer. "I'd watch someone stumble over a flag and then have nothing to show for it but a memory. Now the stumble, the command, and their exact words all sit on one line of the timeline."
+> "Half of what we build is command-line, and it was the half I could never study properly," said Alice, the maintainer. "I'd watch someone stumble over a flag and then have nothing to show for it but a memory. Now the stumble, the command, and their exact words all sit on one line of the timeline."
 
 ## Why This Matters
 

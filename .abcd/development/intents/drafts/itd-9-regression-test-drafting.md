@@ -15,7 +15,7 @@ severity: minor
 
 > **Testimony drafts a regression test case from every confirmed finding.** Once a human has flipped a finding to `confirmed`, the drafting step turns it into a proposed test case: the steps reconstructed from the event window, the behaviour the participant expected, the behaviour they got, and their own words as the rationale. The draft goes to a person to accept, edit, or reject — nothing is written into a suite automatically. A session stops being a report that ages and becomes a test that keeps the bug from coming back.
 >
-> "A finding tells me something broke once; a test tells me it stays fixed," said Bob, application developer. "Getting the steps and the expected behaviour handed to me in the participant's own framing is most of the work of writing the test, and it's the part I always got subtly wrong from memory."
+> "A finding tells me something broke once; a test tells me it stays fixed," said Alice, the maintainer. "Getting the steps and the expected behaviour handed to me in the participant's own framing is most of the work of writing the test, and it's the part I always got subtly wrong from memory."
 
 ## Why This Matters
 

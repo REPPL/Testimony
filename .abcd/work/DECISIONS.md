@@ -372,3 +372,24 @@ Architecture-shaping decisions graduate to an ADR under
   schema-drift coverage gap (round-tripped clean, no live drift) and a
   suspected persona/pronoun collision in the brief's personas page (Alice is a
   fictional persona describing a different, fictional maintainer).
+- 2026-08-01 — Bug-hunt round 15: `session.Create` removes the directory it
+  made when the manifest write it just made is refused, closing a stray,
+  unreadable, EEXIST-blocking session directory; `review -finding` is now
+  validated against `F-NNN` syntax at the usage status (exit 2), matching
+  `-verdict`; a report event with no recognised payload field renders a `—`
+  placeholder instead of a blank bullet; `EffectiveStatus` only carries a
+  verdict's `of` target for `duplicate` verdicts, closing a "confirmed of
+  F-002" nonsense render on hand-edited input; CI now compile-checks the
+  three release platforms it does not otherwise build
+  (darwin/arm64, darwin/amd64, linux/arm64), closing the gap where a
+  GOOS-conditional break would first surface during an actual release.
+  Four doc corrections: AGENTS.md now names the CI-only gates its local
+  command menu omitted (installer flag handling, gitleaks, zizmor, the new
+  cross-compile check); release.yml's verify-job comment now names the
+  installer flag-handling step it omitted; install.sh's `--yes` help text no
+  longer claims a uniform "brew if present" policy the ASR dependency (always
+  whisperx) does not follow; two `.abcd/development/brief/` surface pages
+  (analyze, transcribe) corrected against the shipped CLI where they
+  contradicted `docs/reference/cli.md`. Three intent drafts reattributed a
+  developer-consuming-findings quote from Bob (defined as "not a user of the
+  tool at all") to Alice, whose defined role it actually is.
