@@ -85,7 +85,14 @@ A minimal capture script, following the same conventions as the demo app — pre
     if (extra) for (var k in extra) payload[k] = extra[k];
     post("/api/interactions", payload);
   }
-  document.addEventListener("click", function (e) { interaction("click", e.target); }, true);
+  // Only a real user gesture is evidence: a control that forwards its click to
+  // another element with el.click() (e.g. a styled toggle over a hidden
+  // checkbox) re-enters this same listener, so one user click becomes two
+  // recorded interactions. Untrusted (script-made) events are ignored.
+  document.addEventListener("click", function (e) {
+    if (!e.isTrusted) return;
+    interaction("click", e.target);
+  }, true);
   document.addEventListener("change", function (e) {
     var el = e.target;
     var value = el.type === "checkbox" ? String(el.checked) : String(el.value).slice(0, 80);
