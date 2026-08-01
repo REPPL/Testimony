@@ -812,3 +812,30 @@ func TestIngestRefusesUnknownTimelineSrc(t *testing.T) {
 		t.Fatalf("error must name the unknown src and its entry: %v", err)
 	}
 }
+
+// TestEmitRequestOrdersTimelineByTime is the chronological-order regression
+// for loadTimeline. report.Render sorts a timeline by t before rendering,
+// because a hand-edited or exchanged timeline.jsonl reaches it directly and
+// may not be in file order — but EmitRequest read the same untrusted file
+// without the same sort, so a reversed timeline was handed to the analysing
+// agent under a "read the timeline in order" instruction that was true of the
+// file, not the session clock. Pre-fix, this timeline's later moment (utt-002,
+// t=50) is marshalled before its earlier one (utt-001, t=10) in the emitted
+// text.
+func TestEmitRequestOrdersTimelineByTime(t *testing.T) {
+	const reversed = `{"t":50,"src":"speech","id":"utt-002","payload":{"speaker":"P1","t1":52,"text":"second thing"}}
+{"t":10,"src":"speech","id":"utt-001","payload":{"speaker":"P1","t1":12,"text":"first thing"}}
+`
+	dir := writeSession(t, reversed)
+	got, err := EmitRequest(dir)
+	if err != nil {
+		t.Fatalf("EmitRequest: %v", err)
+	}
+	first, second := strings.Index(got, `"id":"utt-001"`), strings.Index(got, `"id":"utt-002"`)
+	if first == -1 || second == -1 {
+		t.Fatalf("emitted request missing an expected timeline entry:\n%s", got)
+	}
+	if first > second {
+		t.Fatalf("emitted request lists utt-002 (t=50) before utt-001 (t=10); timeline not sorted by time:\n%s", got)
+	}
+}
