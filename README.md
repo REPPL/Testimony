@@ -47,7 +47,8 @@ Or build from source (requires Go): `git clone` this repository, then
 
 ## Quickstart
 
-Try the pipeline on the bundled synthetic session:
+Try the pipeline on the bundled synthetic session (needs a `git clone` of this
+repository — the installed binary alone does not carry `examples/`):
 
 ```sh
 testimony merge  -session examples/sample-session
