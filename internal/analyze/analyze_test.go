@@ -443,8 +443,8 @@ func TestEffectiveStatusLastWins(t *testing.T) {
 // "duplicate target, when Value == duplicate" contract its own doc comment
 // states. Pre-fix, EffectiveStatus copied v.Of for every verdict kind, so a
 // hand-edited findings.jsonl verdict like {"verdict":"confirmed","of":"F-002"}
-// rendered as the nonsense "confirmed of F-002" in both report and review
-// (both display sinks branch on Of != "" alone, not on the verdict kind).
+// rendered as the nonsense "confirmed of F-002" in report's findings table,
+// which branches on Of != "" alone, not on the verdict kind.
 func TestEffectiveStatusOnlyCarriesOfForDuplicate(t *testing.T) {
 	findings := []Finding{{ID: "F-001"}}
 	verdicts := []Verdict{

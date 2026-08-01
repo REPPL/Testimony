@@ -182,9 +182,9 @@ Invocation contract:
   creates a session directory before refusing).
 - `review -finding`'s value is validated against the `F-NNN` syntax at exit
   2, the one flag value in this family the previous pass left unchecked: a
-  malformed or well-formed-but-absent id used to fail inside `review.Run`
-  with `"finding ... not found"` at exit 1, indistinguishable from a genuine
-  session with no matching finding.
+  malformed id used to fail inside `review.Run` with `"finding ... not
+  found"` at exit 1, indistinguishable from a well-formed id genuinely
+  absent from the session.
 - An explicit `transcribe -offset` is held to the same bound as a derived or
   persisted one: a non-finite value used to fail only after the conversion or
   engine work was already spent, with a bare JSON encoding error at the
