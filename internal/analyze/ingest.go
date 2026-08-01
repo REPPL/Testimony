@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"syscall"
 
 	"github.com/REPPL/Testimony/internal/session"
@@ -21,8 +22,14 @@ import (
 const maxAnswerBytes = 16 << 20
 
 // loadTimeline reads the merged timeline, hinting to run merge first when it is
-// missing (matching report). It refuses a timeline this package cannot validate
-// findings against: an unknown src (timeline.CheckSrc) or a duplicate entry id.
+// missing (matching report), and orders it by time the same way report does: a
+// hand-edited or exchanged timeline.jsonl reaches this reader directly, and an
+// out-of-order one was presented to EmitRequest's "read the timeline in order"
+// prompt in file order rather than chronological order, letting a hand-edited
+// file mislead the analysis it asks for. Checked before the sort, matching
+// report, so the duplicate-id positions below still reflect the file's record
+// order. It refuses a timeline this package cannot validate findings against:
+// an unknown src (timeline.CheckSrc) or a duplicate entry id.
 // The duplicate check exists because analyze is the one id-keyed consumer left:
 // indexTimeline keys uttText by id, so of two utterances sharing an id only the
 // later survives the index — an honest verbatim quote of the first is rejected,
@@ -59,6 +66,7 @@ func loadTimeline(dir string) ([]timeline.Entry, error) {
 		}
 		seen[id] = i + 1
 	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].T < entries[j].T })
 	return entries, nil
 }
 

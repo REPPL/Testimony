@@ -293,3 +293,22 @@ Architecture-shaping decisions graduate to an ADR under
   (port taken) no longer creates a stray session directory; the CHANGELOG's
   Alice-persona claim corrected to Bob. Refuted: documenting the capture
   endpoints' 500 (the enumerated codes are the request-refusal contract).
+- 2026-08-01 — Bug-hunt round 12: three substantive fixes. The demo capture
+  write guard now checks the request's actual remote address, not only its
+  `Host` header, closing a forged-loopback-Host write path on a deliberately
+  wider bind; `analyze` orders a hand-edited or exchanged timeline by time
+  before emitting it, matching `report`, so a reversed file is no longer
+  coded in the wrong narrative order; `record` no longer banners a live
+  session for a run about to exit immediately on a platform with no capture,
+  and its no-audio guidance only suggests granting a microphone permission
+  where one exists to grant. Nitpicks: `record`'s and `transcribe`'s CLI
+  reference entries corrected against their actual exit-1 branches and
+  manifest requirement; a timeline example reordered to match its own
+  "stably sorted by t" claim; the instrument-your-own-app snippet gained the
+  demo's `isTrusted` guard; a misleading CI comment corrected; the release
+  workflow gained the installer syntax check ci.yml already runs. Refuted:
+  a claimed newline-fusion risk in the demo's append writer (the existing
+  truncate-on-failure rollback already covers it, and cross-run fusion is
+  structurally impossible) and a claimed silent-fallthrough in `review`'s
+  flag parsing (whitespace-only `-finding` behaves identically to omitting
+  the flag, which is already handled).

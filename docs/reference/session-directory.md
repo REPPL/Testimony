@@ -105,8 +105,8 @@ Speech payload (`src: "speech"`; `t` is the utterance's `t0`): `t1`, `speaker`, 
 Event payload (`src: "event"`): `kind`, plus `selector`, `text`, `value`, and `route` — each only when non-empty in the interaction.
 
 ```json
-{"t":19.2,"src":"event","id":"ev-003","payload":{"kind":"click","route":"#general","selector":"[data-testid=save-btn]","text":"Save"}}
 {"t":16,"src":"speech","id":"utt-003","payload":{"speaker":"P1","t1":21,"text":"Now I expect this save button to confirm somehow.","words":[{"w":"Now","t":17.6},{"w":"I","t":17.92}]}}
+{"t":19.2,"src":"event","id":"ev-003","payload":{"kind":"click","route":"#general","selector":"[data-testid=save-btn]","text":"Save"}}
 ```
 
 ## `findings.jsonl`

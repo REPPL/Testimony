@@ -148,6 +148,14 @@ func Run(opts Options) error {
 		return err
 	}
 	audioCaptured := contains(recorders, streamMicrophone)
+	// capturePossible distinguishes "no audio was captured this run" from "this
+	// platform cannot capture audio at all": plan() (platform.go) plans
+	// microphone capture only on darwin, and nextCommands must not send an
+	// operator on any other platform chasing a microphone permission prompt
+	// that does not exist there. Reusing audioCaptured (rather than, say,
+	// len(recorders) > 0) keeps this tied to the microphone specifically, so
+	// it stays correct even if plan() ever grows a screen-only platform.
+	capturePossible := audioCaptured
 
 	var srv *http.Server
 	if opts.Demo {
@@ -165,12 +173,13 @@ func Run(opts Options) error {
 	if srv != nil && srv.Addr != "" {
 		statusAddr = srv.Addr
 	}
-	printStatus(opts.Log, recorders, opts.Demo, statusAddr)
+	running := len(children) > 0 || srv != nil
+	printStatus(opts.Log, recorders, opts.Demo, statusAddr, running)
 
 	// Nothing is running to wait on (degraded platform, no demo): the session
 	// dir and manifest are written; print next steps and exit cleanly.
-	if len(children) == 0 && srv == nil {
-		fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioCaptured))
+	if !running {
+		fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioCaptured, capturePossible))
 		return nil
 	}
 
@@ -222,7 +231,7 @@ func Run(opts Options) error {
 		for _, p := range problems {
 			fmt.Fprintf(opts.Log, "\n%s\n", p)
 		}
-		fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioReady))
+		fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioReady, capturePossible))
 		return errors.New(classifyRecorderExit(dead.stream, dead.err, dead.stderr.tail(), atStartup))
 	}
 
@@ -237,7 +246,7 @@ func Run(opts Options) error {
 	for _, p := range problems {
 		fmt.Fprintf(opts.Log, "\n%s\n", p)
 	}
-	fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioReady))
+	fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioReady, capturePossible))
 	if len(problems) > 0 {
 		return errors.New("capture incomplete — see the messages above")
 	}
@@ -407,29 +416,40 @@ func stopAll(children []*liveChild) {
 	}
 }
 
-// printStatus reports what is recording and how to stop.
-func printStatus(log io.Writer, recorders []string, demoOn bool, addr string) {
+// printStatus reports what is recording and how to stop. The "say session
+// start… Press Ctrl+C" banner only applies while something is actually
+// running (running is the caller's own len(children) == 0 && srv == nil
+// test, inverted): printing it unconditionally told an operator on a
+// platform with no capture support and no -demo to speak into a session that
+// had already finished, immediately above the Next block for a command that
+// had already exited.
+func printStatus(log io.Writer, recorders []string, demoOn bool, addr string, running bool) {
 	if len(recorders) > 0 {
 		fmt.Fprintf(log, "  recording   : %s\n", strings.Join(recorders, ", "))
 	}
 	if demoOn {
 		fmt.Fprintf(log, "  demo url    : %s\n", demo.DisplayURL(addr))
 	}
-	fmt.Fprint(log, "\n  Say “session start” aloud, then think aloud while you work.\n")
-	fmt.Fprint(log, "  Press Ctrl+C to stop.\n")
+	if running {
+		fmt.Fprint(log, "\n  Say “session start” aloud, then think aloud while you work.\n")
+		fmt.Fprint(log, "  Press Ctrl+C to stop.\n")
+	}
 }
 
 // nextCommands is the pure downstream-command block, carrying the real session
 // dir. With audio captured in place it offers `transcribe -session DIR` with no
 // -audio flag, because transcribe reuses the session's audio.wav directly.
 //
-// With no audio.wav — a recorder blocked on its permission, or a platform
-// without capture — the bare transcribe command is withheld (there is nothing
-// for it to reuse) and replaced by guidance: merge and report still stand
-// because interactions may have been captured, and transcribe is reachable
-// either by re-running record once the permission is granted or by supplying an
-// external recording via -audio.
-func nextCommands(dir string, audioCaptured bool) string {
+// With no audio.wav, the bare transcribe command is withheld (there is
+// nothing for it to reuse) and replaced by guidance, which branches on
+// capturePossible: a recorder blocked on its permission (capturePossible
+// true — this platform has microphone capture, this run just did not get it)
+// is told to re-run record after granting the permission; a platform with no
+// capture support at all (capturePossible false — plan returned no
+// recorders) is not, since there is no permission prompt to grant there and
+// the operator would go looking for one that does not exist. Both cases can
+// still transcribe an external recording via -audio.
+func nextCommands(dir string, audioCaptured, capturePossible bool) string {
 	lines := []string{"Next:"}
 	if audioCaptured {
 		lines = append(lines, "  testimony transcribe -session "+dir)
@@ -438,11 +458,18 @@ func nextCommands(dir string, audioCaptured bool) string {
 		"  testimony merge      -session "+dir,
 		"  testimony report     -session "+dir,
 	)
-	if !audioCaptured {
+	if !audioCaptured && capturePossible {
 		lines = append(lines,
 			"",
 			"  transcribe needs audio, and this session has none — re-run record after granting",
 			"  the microphone permission, or transcribe an external recording:",
+			"  testimony transcribe -session "+dir+" -audio <your-recording.m4a>",
+		)
+	} else if !audioCaptured {
+		lines = append(lines,
+			"",
+			"  transcribe needs audio, and this session has none — this platform has no",
+			"  microphone capture; transcribe an external recording instead:",
 			"  testimony transcribe -session "+dir+" -audio <your-recording.m4a>",
 		)
 	}

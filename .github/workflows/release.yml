@@ -39,11 +39,12 @@ permissions:
 
 jobs:
   # Gate the release on the pushed commit, mirroring ci.yml's check job (gofmt,
-  # build, vet, the race leg, and the pipeline smoke) plus one release-only check:
-  # that install.sh's pinned version matches the tag. A red step here aborts
-  # before anything is built or published. Checked out at github.sha — the commit
-  # the pushed tag pointed at, never the default-branch tip or the re-resolvable
-  # tag name — so the gate exercises exactly the commit whose tarballs will ship.
+  # build, vet, the race leg, the pipeline smoke, and the installer syntax check)
+  # plus one release-only check: that install.sh's pinned version matches the tag.
+  # A red step here aborts before anything is built or published. Checked out at
+  # github.sha — the commit the pushed tag pointed at, never the default-branch tip
+  # or the re-resolvable tag name — so the gate exercises exactly the commit whose
+  # tarballs will ship.
   verify:
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -83,6 +84,17 @@ jobs:
             exit 1
           fi
           echo "install.sh pins $pinned, matching the released tag."
+
+      # install.sh is served live from main, so ci.yml already parses it on every
+      # push to a branch — but a tag can point at a commit that was never pushed
+      # to one (e.g. a fast-forwarded or externally-tagged commit), which would
+      # let a release publish from a commit whose installer never got this check.
+      # Parse it with both shells an operator realistically pipes it into.
+      - name: Installer syntax
+        run: |
+          set -euo pipefail
+          sh -n install.sh
+          bash -n install.sh
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6

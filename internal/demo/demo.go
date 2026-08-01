@@ -396,14 +396,21 @@ func tooLongForJSONL(line []byte) bool {
 }
 
 // allowWrite guards the capture write endpoints against cross-origin forgery
-// (CSRF) and DNS-rebinding of the loopback server. It requires a loopback Host
-// (a rebinding page still sends the attacker hostname), a loopback Origin when
-// present (any loopback host, whatever its port), and a JSON Content-Type — a
-// non-CORS-safelisted type that forces a preflight the server never answers
-// permissively, so a cross-origin no-cors "simple request" POST cannot reach
-// the write. It writes the error response and returns false when the request
-// must be refused.
+// (CSRF), DNS-rebinding of the loopback server, and — on a deliberately wide
+// bind — any non-browser client that simply forges the Host header, since
+// nothing else about the request has to originate from a browser. It requires
+// a loopback RemoteAddr (the actual TCP peer, which a client cannot forge), a
+// loopback Host (a rebinding page still sends the attacker hostname), a
+// loopback Origin when present (any loopback host, whatever its port), and a
+// JSON Content-Type — a non-CORS-safelisted type that forces a preflight the
+// server never answers permissively, so a cross-origin no-cors "simple
+// request" POST cannot reach the write. It writes the error response and
+// returns false when the request must be refused.
 func allowWrite(w http.ResponseWriter, r *http.Request) bool {
+	if !loopbackHost(r.RemoteAddr) {
+		refuseWrite(w, r, fmt.Sprintf("non-loopback remote address %q", r.RemoteAddr), "unexpected remote address", http.StatusForbidden)
+		return false
+	}
 	if !loopbackHost(r.Host) {
 		refuseWrite(w, r, fmt.Sprintf("unexpected Host %q", r.Host), "unexpected Host", http.StatusForbidden)
 		return false
@@ -434,7 +441,8 @@ func refuseWrite(w http.ResponseWriter, r *http.Request, reason, status string, 
 }
 
 // loopbackHost reports whether hostport names the local machine: the literal
-// "localhost" or any loopback IP. Used to pin the Host/Origin to loopback.
+// "localhost" or any loopback IP. Used to pin the RemoteAddr/Host/Origin of a
+// capture write to loopback.
 func loopbackHost(hostport string) bool {
 	host := hostport
 	if h, _, err := net.SplitHostPort(hostport); err == nil {

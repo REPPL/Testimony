@@ -25,6 +25,10 @@ Evidence integrity:
   is neither `speech` nor `event` — previously accepted at exit 0 — instead
   of dropping it from the rendered timeline while counting its time into the
   header duration and keeping its id citable as evidence.
+- `analyze` orders a hand-edited or exchanged `timeline.jsonl` by time before
+  emitting it, matching `report`; it used to present entries in file order
+  under a "read the timeline in order" instruction, so a reversed file coded
+  the session in the wrong narrative order.
 - The audio offset sidecar is written atomically (temp file and rename): a
   write failure part-way through used to leave a truncated sidecar behind,
   blocking every later bare `transcribe` with the prior offset
@@ -46,16 +50,24 @@ Capture and diagnostics:
   a record refused by the JSONL writer is named as a 1-based line of the
   output file; `transcribe` defaults its log sink instead of panicking when
   a caller leaves it unset.
+- `record` no longer prints the live-session banner ("Say \"session
+  start\"…") for a run that is about to exit immediately (a platform with no
+  capture and no `-demo`), and its no-audio guidance only suggests
+  re-granting the microphone permission on a platform that has one to grant
+  — a platform with no capture support at all is pointed at an external
+  recording instead.
 
 Checks and installer:
 
 - The pipeline smoke test asserts the event half of the pipeline (the
-  header counts and an event-only selector); every prior assertion was
-  satisfiable from the transcript and findings alone, so a regression that
-  dropped all events kept the gate green.
+  header counts); every prior assertion was satisfiable from the transcript
+  and findings alone, so a regression that dropped all events kept the gate
+  green.
 - The release workflow downloads a published tarball and requires the
   binary's own version output to name the tag; the checks parse `install.sh` with
-  `sh -n` and `bash -n`.
+  `sh -n` and `bash -n`, now in the release workflow's own verify job too — a
+  tag pointing at a commit never pushed to a branch previously skipped that
+  check entirely.
 - `install.sh` verifies the release binary runs and reports the pinned
   release before installing it; an unrunnable binary (a wrong-platform
   asset) used to replace any previously installed one and print a success
@@ -72,6 +84,14 @@ Documentation:
   and the word-timestamp claim scoped to the utterance boundaries the join
   operates on. The README states that voice and screen capture need macOS,
   and its pipeline diagram joins up.
+- `transcribe`'s reference entry states that `manifest.json` is required, as
+  its sibling `merge`/`report`/`analyze` entries already do; `record`'s exit-1
+  paragraph describes all of its actual diagnoses, not only the no-artefact
+  case, and no longer implies the System Settings pane is always named. The
+  `timeline.jsonl` example in the session-directory reference is in time
+  order, matching the page's own "stably sorted by `t`" claim. The
+  instrument-your-own-app capture snippet ignores untrusted (script-forwarded)
+  clicks, matching the demo app it says it follows the conventions of.
 
 Invocation contract:
 
@@ -124,6 +144,11 @@ Capture integrity:
   byte-for-byte as it was found, and a failed rename rolls the sidecar back.
 - A recorder that exits on its own mid-session still validates the artefacts
   the other recorders left and prints the next-command block.
+- The demo capture write guard checks the request's actual remote address,
+  not only its `Host` header: on a deliberately wider bind, a non-browser
+  client could forge a loopback `Host` and have its writes accepted, even
+  though the server states that capture posts are accepted from loopback
+  clients only.
 
 Installer:
 
