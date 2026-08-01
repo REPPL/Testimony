@@ -1,13 +1,16 @@
 name: release
 
 # Pushing a version tag (vX.Y.Z) first re-runs the full verification gate (gofmt,
-# build, vet, the race leg, and the merge → report pipeline smoke) against the
-# PUSHED COMMIT; only if that gate is green does it cross-compile the four
-# per-platform tarballs FROM THAT SAME COMMIT, generate a SHA256SUMS manifest over
-# them, attach SLSA build-provenance attestations (on a public repo), and publish
-# a GitHub Release with the tarballs + SHA256SUMS attached.
+# build, vet, the race leg, the merge → report pipeline smoke, gitleaks, and
+# zizmor) against the PUSHED COMMIT; only if that gate is green does it
+# cross-compile the four per-platform tarballs FROM THAT SAME COMMIT, generate a
+# SHA256SUMS manifest over them, attach SLSA build-provenance attestations (on a
+# public repo), and publish a GitHub Release with the tarballs + SHA256SUMS
+# attached. gitleaks and zizmor are repeated here rather than trusted from an
+# earlier CI run because a tag can point at a commit that was never pushed
+# through a branch, so ci.yml may never have run against it.
 # Nothing is pushed to any branch: install.sh fetches SHA256SUMS from the release
-# at install time, so no checksum is ever committed back. Both jobs check out
+# at install time, so no checksum is ever committed back. Every job checks out
 # `github.sha` — the commit the pushed tag pointed at, fixed for the whole run —
 # never the tag NAME, which could be force-re-pointed between the jobs to swap
 # unverified code into the release build. Net effect: a tag push yields a verified,
@@ -38,6 +41,55 @@ permissions:
   contents: read
 
 jobs:
+  # Full-history secret scan against the pushed commit, not just the branch tip:
+  # ci.yml already runs this on every push, but a tag can point at a commit that
+  # was never pushed to a branch (the same gap the Installer syntax step's
+  # comment names), which would otherwise let a release publish from a commit
+  # whose history was never scanned. See ci.yml's identical job for the pinning
+  # and checksum-verification rationale.
+  gitleaks:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.24.3
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          base="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSLf -o "$base" "$url/$base"
+          curl -sSLf -o checksums.txt "$url/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " $base\$" checksums.txt | sha256sum -c -
+          tar -xzf "$base" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      - name: Scan full history
+        run: gitleaks git --redact --no-banner .
+
+  # Audit the workflows themselves against the pushed commit, for the same
+  # never-ran-ci.yml reason as the gitleaks job above. See ci.yml's identical
+  # job for the advanced-security note.
+  zizmor:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+        with:
+          advanced-security: false
+
   # Gate the release on the pushed commit, mirroring ci.yml's check job (gofmt,
   # build, vet, the race leg, the pipeline smoke, and the installer syntax check)
   # plus one release-only check: that install.sh's pinned version matches the tag.
@@ -139,11 +191,12 @@ jobs:
           grep -q "\*\*Utterances:\*\* 10 · \*\*Events:\*\* 10" examples/sample-session/report.md
           grep -q "data-testid=save-btn" examples/sample-session/report.md
 
-  # Build and publish ONLY after verify is green. Tarballs are cross-compiled from
-  # the same pushed commit (github.sha) that verify just gated, so the shipped
-  # artefacts match the code that passed — even if the tag were re-pointed since.
+  # Build and publish ONLY after verify AND the two supply-chain jobs above are
+  # green. Tarballs are cross-compiled from the same pushed commit (github.sha)
+  # every gate job checked out, so the shipped artefacts match the exact commit
+  # that passed all three — even if the tag were re-pointed since.
   release:
-    needs: verify
+    needs: [verify, gitleaks, zizmor]
     timeout-minutes: 20
     runs-on: ubuntu-latest
     permissions:

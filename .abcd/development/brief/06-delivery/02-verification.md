@@ -6,9 +6,15 @@ Run from the repo root; CI (`.github/workflows/ci.yml`) runs the same gates on
 every push and pull request, on Ubuntu. Two further CI jobs guard
 the supply chain: `gitleaks` scans the full history for committed secrets, and
 `zizmor` audits the workflows themselves. A version tag (`vX.Y.Z`) triggers
-`.github/workflows/release.yml`, which re-runs the full gate against the pushed
-commit and then publishes the per-platform tarballs, a `SHA256SUMS` manifest,
-and their SLSA build-provenance attestations.
+`.github/workflows/release.yml`, which re-runs the format/build/vet/race/smoke
+gates, the installer checks, `gitleaks`, and `zizmor` against the pushed
+commit, then publishes the per-platform tarballs, a `SHA256SUMS` manifest, and
+their SLSA build-provenance attestations. The supply-chain jobs are repeated
+here rather than trusted from an earlier CI run because a tag can point at a
+commit that was never pushed through a branch (the installer-syntax step's own
+comment names the same gap) — release.yml checks out `github.sha` for every
+gate job, so all of them, including these two, run against the exact commit
+whose tarballs will ship.
 
 ```bash
 gofmt -l .                              # format: any output fails
