@@ -28,13 +28,17 @@ go test -race ./...
 The pipeline smoke test asserts that `timeline.jsonl` and `report.md` are
 non-empty and that the report renders the sample session's fixed content: the
 `## Timeline` and `## Findings` headings, the confirmed `F-001` finding, the
-"save button" utterance text, the `save-btn` selector, and the exact
-`**Utterances:** 10 · **Events:** 10` header count. Only that last assertion
-actually guards the merge→report join. The others all pass even with
-`interactions.jsonl` deleted: "save button" comes from the utterance's
-own text, and the `save-btn` selector renders from `findings.jsonl`
-regardless of events, so the counts line is what catches a windowing or
-attachment regression.
+"save button" utterance text, the `save-btn` selector, the exact
+`**Utterances:** 10 · **Events:** 10` header count, and one indented event
+bullet naming that same selector. The header count is what catches events
+going missing from the merge: every other assertion up to it still passes with
+`interactions.jsonl` deleted ("save button" comes from the utterance's own
+text, and the `save-btn` selector renders from `findings.jsonl` regardless of
+events). But the header count is computed from raw entry counts, before the
+join, so it stays `10 · 10` even when every event is detached from the speech
+it accompanies — the indented bullet is what catches that: an unattached event
+renders as a standalone, unindented bullet, so only a genuinely joined event
+can produce one at the expected indent.
 
 ## Live end-to-end procedure (macOS)
 

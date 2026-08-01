@@ -84,12 +84,22 @@ jobs:
           # The event half of the pipeline: every assertion above is satisfiable
           # from the transcript and findings alone (verified: deleting
           # interactions.jsonl left them all green) — the header counts assertion
-          # below is the one that catches it, since the save-btn selector also
-          # renders via findings.jsonl's Findings section regardless of events.
-          # The exact counts pin the bundled fixture; extending the sample
-          # session means updating them here and in release.yml.
+          # below is what catches that, since the save-btn selector also renders
+          # via findings.jsonl's Findings section regardless of events. The exact
+          # counts pin the bundled fixture; extending the sample session means
+          # updating them here and in release.yml.
           grep -q "\*\*Utterances:\*\* 10 · \*\*Events:\*\* 10" examples/sample-session/report.md
           grep -q "data-testid=save-btn" examples/sample-session/report.md
+          # The counts line above catches events going missing from the merge,
+          # but not a windowing/attachment regression: report's header counts are
+          # raw entry counts, computed before the join, so they stay "10 · 10"
+          # even when every event is detached from the speech it accompanies
+          # (verified: -window set absurdly negative still passes every assertion
+          # above). An indented bullet is report's join marker (an unattached
+          # event renders as a standalone "- ", flush with the left margin), so
+          # assert one specifically: the first Save click, joined under its
+          # utterance.
+          grep -q '^  - \[00:19\] click `\[data-testid=save-btn\]`' examples/sample-session/report.md
 
       # install.sh is served live from main as the documented install path, so
       # a merged syntax error breaks `curl | sh` for every new user with no

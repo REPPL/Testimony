@@ -187,9 +187,11 @@ jobs:
           grep -q "## Findings" examples/sample-session/report.md
           grep -q "### Confirmed (1)" examples/sample-session/report.md
           grep -q "\*\*F-001\*\* bug" examples/sample-session/report.md
-          # The event half of the pipeline — see ci.yml's identical assertions.
+          # The event half of the pipeline, plus the join gate — see ci.yml's
+          # identical assertions and comments.
           grep -q "\*\*Utterances:\*\* 10 · \*\*Events:\*\* 10" examples/sample-session/report.md
           grep -q "data-testid=save-btn" examples/sample-session/report.md
+          grep -q '^  - \[00:19\] click `\[data-testid=save-btn\]`' examples/sample-session/report.md
 
   # Build and publish ONLY after verify AND the two supply-chain jobs above are
   # green. Tarballs are cross-compiled from the same pushed commit (github.sha)
