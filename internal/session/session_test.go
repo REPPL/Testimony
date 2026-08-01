@@ -79,6 +79,41 @@ func TestCreateRefusesSameSecondCollision(t *testing.T) {
 	}
 }
 
+// TestCreateRemovesDirOnManifestRefusal is the stray-directory regression: if
+// SaveManifest refuses an oversized manifest, Create must not leave the
+// directory it already made behind (pre-fix it did, both littering the
+// sessions root with a permanently manifest-less, unreadable directory and
+// making an immediate same-second retry fail with EEXIST against the phantom
+// directory from the failed attempt).
+func TestCreateRemovesDirOnManifestRefusal(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 17, 15, 30, 45, 0, time.UTC)
+
+	_, err := Create(root, now, Manifest{Notes: strings.Repeat("a", maxManifestBytes)})
+	if err == nil {
+		t.Fatalf("Create: want refusal for oversized manifest, got nil error")
+	}
+
+	wantDir := filepath.Join(root, now.Format(dirLayout))
+	if _, statErr := os.Stat(wantDir); !os.IsNotExist(statErr) {
+		t.Fatalf("stray directory left behind at %q after refused manifest write", wantDir)
+	}
+
+	// An immediate retry at the same instant must succeed rather than hitting
+	// Create's own EEXIST collision guard against the removed directory.
+	dir, err := Create(root, now, Manifest{App: "retry"})
+	if err != nil {
+		t.Fatalf("retry Create: %v", err)
+	}
+	m, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	if m.App != "retry" {
+		t.Fatalf("retry manifest: got App=%q, want %q", m.App, "retry")
+	}
+}
+
 // TestReadJSONLSkipsWhitespaceOnlyLine is the blank-line regression: ReadJSONL
 // documents that blank lines are skipped, so a whitespace-only line (as may
 // appear in a hand-edited or exchanged session) must be skipped rather than fed
