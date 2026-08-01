@@ -23,11 +23,13 @@ even if 3–5 never happen.
 
 ## Current status
 
-Shipped and working end-to-end: `demo`, `transcribe`, `merge`, `report` —
-capture a browser session with narration, transcribe it locally, merge the
-streams, and read the aligned report. `record` (managed screen/audio capture)
-is the remaining Phase 1 stub and the next surface to build; until then,
-voice is recorded with QuickTime and `demo` captures the interaction stream.
+Phase 1 is shipped and working end-to-end: `record` (managed audio/screen
+capture), `demo` (the instrumented capture testbed), `transcribe` (local
+Whisper engine), `merge`, and `report` — capture a session with narration,
+transcribe it locally, merge the streams, and read the aligned report. Phase 2
+is also shipped: `analyze` emits a host-delegated analysis request and
+validates the answer into `findings.jsonl`; `review` records human verdicts on
+it, appended non-destructively.
 
 `demo` — a small instrumented settings app serving as the capture testbed —
 is an addition beyond the original Phase 1 command list: it exists so the
