@@ -319,3 +319,28 @@ Architecture-shaping decisions graduate to an ADR under
   comment (SARIF upload is off)", `advanced-security: false` in `ci.yml`) —
   both reversed within the same day the original entry describes, and left
   unrecorded until now.
+- 2026-08-01 — Bug-hunt round 13: seven substantive fixes. `timeline.SpeechEnd`
+  now clamps an inverted `t1` to `t` instead of inverting `EventsNear`'s join
+  window, mirroring the clamp `checkedUtterances` already applies at merge
+  time; a new `timeline.ReadEntries` (decoding through a pointer-typed
+  `rawEntry`) refuses a `timeline.jsonl` entry missing `t` instead of reading
+  it as `t=0` and placing it at the session's start; `record -demo` now binds
+  the demo port through the new `demo.Bind` before creating the session
+  directory or starting recorders, closing a stray-session gap `demo.Run`'s
+  own bind-first ordering (round 11) did not extend to; `demo.Run` removes
+  the session directory if `serveOn` fails after `session.Create` succeeds;
+  `review` now distinguishes a nonexistent `-session` directory from a real,
+  un-ingested one instead of pointing both at `analyze -ingest`; two stale CI
+  claims in the verification brief (the dropped macOS matrix leg, and which
+  smoke-test assertion actually guards the merge→report join) corrected
+  against `ci.yml`. Nitpicks: `record`'s non-macOS `-demo` exit behaviour and
+  `review`'s TTY-gate (actually a character-device gate) corrected in
+  `cli.md`; a report.md quote-style mismatch, a per-endpoint JSONL-record
+  overclaim, and a startup-timing overclaim corrected across three docs
+  pages; the Quickstart's `git clone` prerequisite and install.sh's
+  `$TESTIMONY_INSTALL_DIR` flag summary noted; the release workflow's
+  version-stamp check now also runs pre-publish, against the local `dist/`
+  tarball, rather than only after the tag is public. Refuted: a claimed gap
+  between AGENTS.md's local command menu and the gates CI actually runs
+  (the menu lists a single-test `go test -run` invocation no one would
+  expect CI to run; `go test -race ./...` already covers the same suite).
