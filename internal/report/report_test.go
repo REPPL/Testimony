@@ -597,3 +597,33 @@ func TestRenderRefusesUnknownSrc(t *testing.T) {
 		t.Fatalf("error must name the unknown src and its entry: %v", err)
 	}
 }
+
+// TestReportPlaceholdersEventWithNoRecognisedPayload pins eventLine's fallback
+// for an event entry whose payload carries none of kind/selector/text/value/
+// route (reachable only from a hand-edited or exchanged timeline.jsonl; merge
+// itself refuses a kind-less interaction record). Pre-fix, the joined parts
+// were empty and the rendered bullet was a bare timestamp with nothing after
+// it — a silent gap in the human evidence artefact rather than a visible
+// placeholder.
+func TestReportPlaceholdersEventWithNoRecognisedPayload(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	const tl = `{"t":2,"src":"event","id":"ev-001","payload":null}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "[00:02] \n") {
+		t.Fatalf("event with no recognised payload rendered as a blank bullet:\n%s", md)
+	}
+	if !strings.Contains(md, "[00:02] —") {
+		t.Fatalf("report is missing the placeholder for the empty event:\n%s", md)
+	}
+}
