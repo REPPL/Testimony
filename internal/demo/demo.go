@@ -142,7 +142,8 @@ func Shutdown(srv *http.Server) error {
 // running *http.Server for the caller to Shutdown. Prefer Bind followed by
 // ServeListener when the bind must happen before dir is created — record does,
 // so a refused bind never leaves a stray session directory behind; demo.Run
-// follows the same ordering itself and enters at serveOn.
+// follows the same ordering itself and enters at serveOrCleanup, so it also
+// removes dir on a failure this leaves to the caller.
 func Serve(addr, dir string) (*http.Server, error) {
 	ln, err := Bind(addr)
 	if err != nil {
@@ -176,11 +177,11 @@ func ServeListener(ln net.Listener, addr, dir string) (*http.Server, error) {
 
 // serveOrCleanup calls serveOn and, on failure, also removes dir. It exists
 // for Run, the one caller that both creates dir itself immediately beforehand
-// and owns its whole lifecycle: a serveOn failure this rare — the manifest
-// was just written successfully by session.Create; only a stream file's own
-// open can fail here (e.g. a full disk) — must not leave the directory
-// behind for a server that never served, the same guarantee Run's bind-first
-// ordering already gives the far more common case of a taken port.
+// and owns its whole lifecycle: a serveOn failure this rare — reloading the
+// manifest session.Create just wrote, or a stream file's own open, failing
+// (e.g. a full disk) — must not leave the directory behind for a server that
+// never served, the same guarantee Run's bind-first ordering already gives
+// the far more common case of a taken port.
 // ServeListener and Serve do not use this: dir there may be a session a
 // caller (e.g. record) is already managing across other recorders, so a
 // serve failure must not delete it out from under them.
