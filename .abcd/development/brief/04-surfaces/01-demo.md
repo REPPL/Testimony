@@ -31,8 +31,9 @@ app contains at least one intentional usability flaw, found by talking.
   event as captured.
 - The capture surface is loopback-only by default and the write endpoints are
   guarded against cross-origin forgery: a request must carry a loopback
-  remote address, a loopback `Host`, a same-origin (or absent) `Origin`, and
-  `Content-Type: application/json`. The remote-address check matters on a
+  remote address, a loopback `Host`, a loopback `Origin` when present (any
+  loopback host, whatever its port), and `Content-Type: application/json`.
+  The remote-address check matters on a
   deliberately wide `-addr` bind: without it, a non-loopback client on the
   same network could still forge a loopback `Host` and pass. Together these
   close the CSRF, DNS-rebinding, and forged-`Host` paths by which a web page

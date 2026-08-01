@@ -5,7 +5,7 @@ The on-disk contract, as defined in `internal/session` and
 
 ```
 sessions/<timestamp>/
-  manifest.json        # session metadata, including t0_epoch_ms
+  manifest.json         # session metadata, including t0_epoch_ms
   audio.wav             # 16 kHz mono ASR input (captured by record, or converted by transcribe -audio; local only)
   audio.offset.json     # audio→session offset for an external recording (written by transcribe; local only)
   screen.mp4            # screen capture (written by record -video; local only)
