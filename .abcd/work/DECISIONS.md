@@ -393,3 +393,26 @@ Architecture-shaping decisions graduate to an ADR under
   contradicted `docs/reference/cli.md`. Three intent drafts reattributed a
   developer-consuming-findings quote from Bob (defined as "not a user of the
   tool at all") to Alice, whose defined role it actually is.
+- 2026-08-01 — Bug-hunt round 16: 5 substantive fixes, 7 nitpicks, 8 refuted.
+  `record` removes the session directory `session.Create` just wrote when the
+  recorder that follows fails to start (ffmpeg missing, no usable device),
+  unless a real partial capture from an earlier stream in the same run is
+  already on disk; `merge` refuses to overwrite an existing `timeline.jsonl`
+  with zero entries when `transcript.jsonl` and `interactions.jsonl` are both
+  missing, matching the guard `transcribe`/`analyze.Ingest` already give the
+  identical shape; the demo app's `display-name`/`notify-toggle`/
+  `theme-toggle` rows carry `data-testid` on the row rather than the bare
+  control, so a captured click or change always anchors to the same durable
+  selector and label instead of an empty label or, for the theme toggle's
+  invisible checkbox, a fragile `span.slider` class selector — verified
+  against a headless-Chromium run to match the bundled sample session's
+  fixture exactly. Doc fixes: the instrument-your-own-app guide's archival
+  capture snippet is placed in the scope it depends on and gains the same
+  `rrweb`-availability guard the demo carries, and now notes that a bare
+  `testimony demo` session is labelled with the built-in demo's own app/task,
+  not the reader's; `how-alignment-works.md`'s stamping attribution, the
+  verification brief's CI gate list, release.yml's header comment,
+  `internal/session`'s package doc comment, and the platform/dependencies
+  briefs corrected against the shipped CLI; a `-notes` flag named in the
+  CHANGELOG and a code comment, which never existed, corrected to the real
+  `-task`/`-app` flags.
