@@ -170,7 +170,17 @@ func SaveManifest(dir string, m Manifest) error {
 	if err != nil {
 		return err
 	}
-	return WriteFileNoFollow(filepath.Join(dir, ManifestFile), append(b, '\n'), 0o644)
+	b = append(b, '\n')
+	// Refuse before writing rather than after: without this check, a manifest
+	// built from long -task/-app/-notes values could exceed maxManifestBytes and
+	// still be written successfully, only for every later command that loads it
+	// (merge, report, analyze, transcribe) to refuse the session for good — the
+	// same write-before-read invariant WriteJSONL enforces for the other
+	// session artefacts.
+	if len(b) > maxManifestBytes {
+		return fmt.Errorf("save manifest: %s would be %d bytes, over the %d-byte limit LoadManifest enforces; refusing to write a session no command could read back", ManifestFile, len(b), maxManifestBytes)
+	}
+	return WriteFileNoFollow(filepath.Join(dir, ManifestFile), b, 0o644)
 }
 
 // openNoFollow is the single symlink-and-regular-file guard shared by every
