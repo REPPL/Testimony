@@ -29,7 +29,9 @@ jobs:
   # macos-latest leg aborts the demo/record race binaries with a runner-specific
   # dyld "missing LC_UUID" trap (a GitHub image + race-detector issue, not our
   # code — the suite is green on a real Mac). Actually running the suite on
-  # darwin is covered by no gate here; only its compiling is. A single job named
+  # darwin is covered by no gate here; only the binary compiling is (the
+  # Cross-compile check step below builds ./cmd/testimony, not _test.go
+  # files). A single job named
   # "check" is also the context branch protection requires; a matrix would
   # rename it and never report that context.
   check:
@@ -65,9 +67,10 @@ jobs:
       - name: Test
         run: go test -race ./...
 
-      # A GOOS-conditional compile break (darwin/linux syscalls the host GOOS
-      # never touches, e.g. internal/record's Setpgid or internal/transcribe's
-      # Umask) would pass every gate above and only surface in release.yml's
+      # A GOOS-conditional compile break — GOOS-sensitive syscall usage (e.g.
+      # internal/record's Setpgid or internal/transcribe's Umask) built for a
+      # platform other than the one it was written and tested against — would
+      # pass every gate above and only surface in release.yml's
       # cross-compile — after a tag is already pushed. Compile-only (this job
       # runs no test binaries but its own), CGO_ENABLED=0 to match release.yml's
       # build flags; linux/amd64 (the host) is already covered by Build above.

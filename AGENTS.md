@@ -78,8 +78,9 @@ go test -run TestEventsNearWindow ./internal/timeline/   # a single test
 sh -n install.sh && bash -n install.sh  # installer syntax
 ```
 
-CI (`.github/workflows/ci.yml`) runs all of the above on every push and pull
-request, plus checks with no local command above: installer flag-handling
+CI (`.github/workflows/ci.yml`) runs every gate above (the single-test example
+line is illustrative, not a gate) on every push and pull request, plus checks
+with no local command above: installer flag-handling
 tests (`--help`/`--dir`/`--version`/`--bogus`), a compile-only cross-check for
 the other release platforms, a full-history `gitleaks` secret scan, and a
 `zizmor` workflow-security audit.
