@@ -308,6 +308,9 @@ func Run(args []string) int {
 		if v != "" && f == "" {
 			return usageErr(fmt.Errorf("review: -finding is required with -verdict"))
 		}
+		if f != "" && !analyze.IsFindingID(f) {
+			return usageErr(fmt.Errorf("review: invalid -finding %q (want F-NNN)", f))
+		}
 		if v != "" {
 			if _, _, err := review.ParseVerdictFlag(v); err != nil {
 				return usageErr(fmt.Errorf("review: %w", err))
