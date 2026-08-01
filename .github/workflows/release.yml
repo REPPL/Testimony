@@ -1,8 +1,9 @@
 name: release
 
 # Pushing a version tag (vX.Y.Z) first re-runs the full verification gate (gofmt,
-# build, vet, the race leg, the merge → report pipeline smoke, gitleaks, and
-# zizmor) against the PUSHED COMMIT; only if that gate is green does it
+# build, vet, the race leg, the merge → report pipeline smoke, the install.sh
+# VERSION-pin assertion, installer syntax, installer flag handling, gitleaks,
+# and zizmor) against the PUSHED COMMIT; only if that gate is green does it
 # cross-compile the four per-platform tarballs FROM THAT SAME COMMIT, generate a
 # SHA256SUMS manifest over them, attach SLSA build-provenance attestations (on a
 # public repo), and publish a GitHub Release with the tarballs + SHA256SUMS
