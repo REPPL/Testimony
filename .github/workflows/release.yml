@@ -148,6 +148,17 @@ jobs:
           sh -n install.sh
           bash -n install.sh
 
+      # See ci.yml's identical step and comment: a tag can point at a commit that
+      # never ran ci.yml at all, so this behavioural check must also run here,
+      # not only there.
+      - name: Installer flag handling
+        run: |
+          set -euo pipefail
+          sh install.sh --help | grep -q "Flags:"
+          (sh install.sh --dir; true) 2>&1 | grep -q "needs a value"
+          (sh install.sh --version; true) 2>&1 | grep -q "needs a value"
+          (sh install.sh --bogus; true) 2>&1 | grep -q "unknown flag"
+
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:

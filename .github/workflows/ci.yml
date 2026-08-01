@@ -111,6 +111,21 @@ jobs:
           sh -n install.sh
           bash -n install.sh
 
+      # A syntax check alone never runs a single line of install.sh, so a
+      # behavioural regression in --help or the flag-error paths (CHANGELOG's
+      # "Installer" entries) would ship to `curl | sh` users with no gate having
+      # exercised it. These four paths all return before any network access or
+      # write, so they run safely offline, unlike a full install. Each failing
+      # case is wrapped in a `(...; true)` subshell so its deliberate non-zero
+      # exit does not trip pipefail before grep gets to check the message.
+      - name: Installer flag handling
+        run: |
+          set -euo pipefail
+          sh install.sh --help | grep -q "Flags:"
+          (sh install.sh --dir; true) 2>&1 | grep -q "needs a value"
+          (sh install.sh --version; true) 2>&1 | grep -q "needs a value"
+          (sh install.sh --bogus; true) 2>&1 | grep -q "unknown flag"
+
   # Secrets never land in history: full-history scan on every push/PR. Run as a
   # pinned, checksum-verified CLI (no PR-comment / SARIF GitHub-API integration
   # and no marketplace-action licence caveat), so it is self-contained. A
