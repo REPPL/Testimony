@@ -169,6 +169,17 @@ func Run(opts Options) error {
 		if ln != nil {
 			ln.Close()
 		}
+		// A refused start (ffmpeg missing, no usable device, a later stream
+		// failing before the first ever wrote output) must not leave a
+		// stray, empty session directory behind — the same guarantee
+		// session.Create and demo.serveOrCleanup already give on their own
+		// failure paths. Only remove it when nothing but the manifest was
+		// written: startRecordersFn stops (and finalises) any earlier
+		// stream in this run before returning an error, so a real partial
+		// capture can already be on disk and must survive.
+		if onlyManifest(dir) {
+			os.RemoveAll(dir)
+		}
 		return err
 	}
 	audioCaptured := contains(recorders, streamMicrophone)
@@ -431,6 +442,23 @@ func anyExit(children []*liveChild) <-chan *liveChild {
 		}(c)
 	}
 	return ch
+}
+
+// onlyManifest reports whether dir contains nothing but manifest.json — i.e.
+// no recorder ever wrote output to it. It fails safe: any error reading the
+// directory (permissions, a concurrent removal) is treated as "not empty" so
+// the caller never removes a session it cannot fully account for.
+func onlyManifest(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() != session.ManifestFile {
+			return false
+		}
+	}
+	return true
 }
 
 // stopAll finalises every recorder container in turn.
