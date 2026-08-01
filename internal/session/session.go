@@ -5,11 +5,13 @@
 //
 //	manifest.json       session metadata, including t0_epoch_ms
 //	audio.wav           16 kHz mono ASR input (local only)
+//	audio.offset.json   audio→session offset for an external recording (local only)
 //	screen.mp4          screen recording (local only; -video capture)
 //	events.rrweb.jsonl  raw rrweb events (archival; web sessions only)
 //	interactions.jsonl  normalised interaction events (epoch ms)
 //	transcript.jsonl    word-aligned utterances (session-relative seconds)
 //	timeline.jsonl      merged, session-relative timeline
+//	findings.jsonl      analysis findings + appended verdicts
 //	report.md           human-readable session report
 package session
 
@@ -173,8 +175,9 @@ func SaveManifest(dir string, m Manifest) error {
 	}
 	b = append(b, '\n')
 	// Refuse before writing rather than after: without this check, a manifest
-	// built from long -task/-app/-notes values could exceed maxManifestBytes and
-	// still be written successfully, only for every later command that loads it
+	// built from long -task/-app text (or a hand-edited notes field) could
+	// exceed maxManifestBytes and still be written successfully, only for
+	// every later command that loads it
 	// (merge, report, analyze, transcribe) to refuse the session for good — the
 	// same write-before-read invariant WriteJSONL enforces for the other
 	// session artefacts.

@@ -977,6 +977,76 @@ func TestRunBindFailureWithDemoCreatesNoSessionDir(t *testing.T) {
 	}
 }
 
+// TestRunRecorderStartFailureRemovesEmptySessionDir covers the failure gap
+// TestRunBindFailureWithDemoCreatesNoSessionDir does not: startRecordersFn
+// itself refusing (ffmpeg missing, no usable device, -video with no screen
+// device) runs strictly after session.Create, so the bind-first fix above
+// cannot protect it. Pre-fix, that failure path only closed the demo
+// listener and returned, leaving the just-created session directory (with
+// only manifest.json in it) behind for every retry.
+func TestRunRecorderStartFailureRemovesEmptySessionDir(t *testing.T) {
+	origStart := startRecordersFn
+	t.Cleanup(func() { startRecordersFn = origStart })
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
+		return nil, errors.New("ffmpeg not found on PATH")
+	}
+
+	out := t.TempDir()
+	runErr := Run(Options{
+		Out:  out,
+		GOOS: "darwin",
+		Log:  io.Discard,
+	})
+	if runErr == nil {
+		t.Fatal("Run with a refused recorder start: want an error, got nil")
+	}
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatalf("read out root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("a refused recorder start left a stray session directory behind: %v", entries)
+	}
+}
+
+// TestRunRecorderStartFailureKeepsPartialCapture guards the fix's own
+// caveat: startRecordersFn can fail on a later stream after an earlier one
+// in the same run already recorded and was finalised (stopAll runs inside
+// startRecorders before it returns). onlyManifest must see the extra file
+// and refuse to remove the directory, so real captured audio is never
+// deleted alongside the empty-directory case above.
+func TestRunRecorderStartFailureKeepsPartialCapture(t *testing.T) {
+	origStart := startRecordersFn
+	t.Cleanup(func() { startRecordersFn = origStart })
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
+		if err := os.WriteFile(filepath.Join(dir, "audio.wav"), []byte("partial"), 0o644); err != nil {
+			t.Fatalf("seed partial capture: %v", err)
+		}
+		return nil, errors.New("start screen recorder: no capture device")
+	}
+
+	out := t.TempDir()
+	runErr := Run(Options{
+		Out:   out,
+		Video: true,
+		GOOS:  "darwin",
+		Log:   io.Discard,
+	})
+	if runErr == nil {
+		t.Fatal("Run with a refused recorder start: want an error, got nil")
+	}
+	sessions, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatalf("read out root: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("want the session directory kept (partial capture present), got %v", sessions)
+	}
+	if _, err := os.Stat(filepath.Join(out, sessions[0].Name(), "audio.wav")); err != nil {
+		t.Errorf("partial capture was removed alongside the session directory: %v", err)
+	}
+}
+
 // --- honest degradation ---
 
 // TestRunDegradesHonestly proves that on a platform without capture support and

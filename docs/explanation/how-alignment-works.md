@@ -4,7 +4,7 @@ Testimony's central claim — *this* was said while *that* was clicked — rests
 
 ## One wall clock
 
-Everything runs on one machine, so one wall clock can anchor everything. When a session starts, the capture server stamps the moment into the manifest as `t0_epoch_ms` (epoch milliseconds). That number is the origin of session time: every session-relative timestamp is `(epoch_ms − t0_epoch_ms) / 1000` seconds.
+Everything runs on one machine, so one wall clock can anchor everything. When a session starts, `record` or `demo` stamps the moment into the manifest as `t0_epoch_ms` (epoch milliseconds). That number is the origin of session time: every session-relative timestamp is `(epoch_ms − t0_epoch_ms) / 1000` seconds.
 
 The interaction stream needs no further treatment. Each captured click or input carries an epoch-millisecond timestamp taken in the browser (`Date.now()`), on the same clock as `t0_epoch_ms`; the merge step subtracts and divides, and interaction times are on the session clock exactly. Clock drift between streams is negligible over a 20–40 minute session precisely because there is only one clock.
 

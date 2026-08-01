@@ -79,21 +79,21 @@
 
     <section id="general" class="active">
       <h1>General</h1>
-      <div class="row">
-        <div><label for="display-name">Display name</label><div class="hint">Shown on your reports</div></div>
-        <input type="text" id="display-name" data-testid="display-name" value="Bob">
+      <div class="row" data-testid="display-name">
+        <div><label for="display-name">Display name</label> <div class="hint">Shown on your reports</div></div>
+        <input type="text" id="display-name" value="Bob">
       </div>
-      <div class="row">
-        <div><label>Weekly summary email</label><div class="hint">Sent on Mondays</div></div>
-        <span class="switch"><input type="checkbox" id="notify" data-testid="notify-toggle" checked><span class="slider" onclick="document.getElementById('notify').click()"></span></span>
+      <div class="row" data-testid="notify-toggle">
+        <div><label>Weekly summary email</label> <div class="hint">Sent on Mondays</div></div>
+        <span class="switch"><input type="checkbox" id="notify" checked><span class="slider" onclick="document.getElementById('notify').click()"></span></span>
       </div>
     </section>
 
     <section id="appearance">
       <h1>Appearance</h1>
-      <div class="row">
-        <div><label>Dark mode</label><div class="hint">Applies immediately</div></div>
-        <span class="switch"><input type="checkbox" id="theme" data-testid="theme-toggle"><span class="slider" onclick="document.getElementById('theme').click()"></span></span>
+      <div class="row" data-testid="theme-toggle">
+        <div><label>Dark mode</label> <div class="hint">Applies immediately</div></div>
+        <span class="switch"><input type="checkbox" id="theme"><span class="slider" onclick="document.getElementById('theme').click()"></span></span>
       </div>
     </section>
 

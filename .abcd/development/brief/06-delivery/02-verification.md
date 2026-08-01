@@ -3,9 +3,13 @@
 ## Gates
 
 Run from the repo root; CI (`.github/workflows/ci.yml`) runs the same gates on
-every push and pull request, on Ubuntu. Two further CI jobs guard
-the supply chain: `gitleaks` scans the full history for committed secrets, and
-`zizmor` audits the workflows themselves. A version tag (`vX.Y.Z`) triggers
+every push and pull request, on Ubuntu, plus checks with no local command
+below: an installer syntax check (`sh -n install.sh && bash -n install.sh`),
+installer flag-handling tests (`--help`/`--dir`/`--version`/`--bogus`), and a
+compile-only cross-check for the other release platforms. Two further CI jobs
+guard the supply chain: `gitleaks` scans the full history for committed
+secrets, and `zizmor` audits the workflows themselves. A version tag
+(`vX.Y.Z`) triggers
 `.github/workflows/release.yml`, which re-runs the format/build/vet/race/smoke
 gates, the installer checks, `gitleaks`, and `zizmor` against the pushed
 commit, then publishes the per-platform tarballs, a `SHA256SUMS` manifest, and

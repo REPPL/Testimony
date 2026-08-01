@@ -8,7 +8,7 @@ This guide points the session capture at your own web application instead of the
 testimony demo
 ```
 
-This creates a fresh session directory (with `manifest.json` anchoring the session clock) and listens on `:8737` (change with `-addr`). A bare `:port` binds loopback (`127.0.0.1`) only, so the capture surface is not published to the network. Ignore the demo page it serves at `/` — you only need its two capture endpoints:
+This creates a fresh session directory (with `manifest.json` anchoring the session clock) and listens on `:8737` (change with `-addr`). A bare `:port` binds loopback (`127.0.0.1`) only, so the capture surface is not published to the network. Ignore the demo page it serves at `/` — you only need its two capture endpoints. Note that `testimony demo` stamps the manifest with its own built-in app name and task ("testimony demo", "Explore the settings prototype and think aloud"), not your app's — the report and any analysis request will carry those labels. To capture your own app/participant/task metadata instead, use `testimony record -demo -app "…" -participant "…" -task "…"`, which serves the same two capture endpoints below.
 
 | Endpoint | Body | Appends to |
 |---|---|---|
@@ -106,20 +106,27 @@ Unknown extra fields are harmless — the merge step reads only the fields in th
 
 ## 4. Optionally post raw rrweb batches
 
-For a full archival record (DOM snapshots, scrolls, mouse movement), also record with [rrweb](https://github.com/rrweb-io/rrweb) and flush the buffer to `/api/events` as a JSON array — every couple of seconds and on `beforeunload`:
+For a full archival record (DOM snapshots, scrolls, mouse movement), also record with [rrweb](https://github.com/rrweb-io/rrweb) and flush the buffer to `/api/events` as a JSON array — every couple of seconds and on `beforeunload`. Add the `rrweb` script tag before step 3's `<script>`, and add this code inside step 3's `(function () { ... })();` block, before its closing `})();` — it calls `post`, defined there. Guard the `rrweb.record` call: on a machine without network access, or with the CDN blocked, `rrweb` never loads, and an unguarded call would throw. Interaction capture (step 3) is unaffected, since it registers earlier in the same block, but the throw stops the rest of this block — the periodic and `beforeunload` flushes — from ever registering, and surfaces as an uncaught error. The guard keeps the block running to completion; the archival stream is empty either way, since `rrweb` never loaded.
 
-```js
-var buf = [];
-rrweb.record({ emit: function (ev) { buf.push(ev); } });
-setInterval(function () {
-  if (buf.length) post("/api/events", buf.splice(0, buf.length));
-}, 2000);
-window.addEventListener("beforeunload", function () {
-  if (buf.length) post("/api/events", buf.splice(0, buf.length));
-});
+```html
+<script src="https://cdn.jsdelivr.net/npm/rrweb@1.1.3/dist/rrweb.min.js"></script>
 ```
 
-The rrweb stream is archival only; merge and report consume `interactions.jsonl`.
+```js
+  // Continues inside step 3's IIFE, before its closing "})();".
+  var buf = [];
+  if (window.rrweb) {
+    rrweb.record({ emit: function (ev) { buf.push(ev); } });
+  }
+  setInterval(function () {
+    if (buf.length) post("/api/events", buf.splice(0, buf.length));
+  }, 2000);
+  window.addEventListener("beforeunload", function () {
+    if (buf.length) post("/api/events", buf.splice(0, buf.length));
+  });
+```
+
+The rrweb stream is archival only; merge and report consume `interactions.jsonl`. Offline, or with the CDN blocked, the interaction stream above still captures normally; only the archival stream stays empty (see the [privacy notes](../explanation/privacy.md)).
 
 ## 5. Reach the endpoints from your app's origin
 
