@@ -93,7 +93,7 @@ func Run(addr, outRoot string) error {
 		return err
 	}
 
-	srv, err := serveOn(ln, addr, dir)
+	srv, err := serveOrCleanup(ln, addr, dir)
 	if err != nil {
 		return err
 	}
@@ -172,6 +172,24 @@ func Bind(addr string) (net.Listener, error) {
 // port on the returned server.
 func ServeListener(ln net.Listener, addr, dir string) (*http.Server, error) {
 	return serveOn(ln, addr, dir)
+}
+
+// serveOrCleanup calls serveOn and, on failure, also removes dir. It exists
+// for Run, the one caller that both creates dir itself immediately beforehand
+// and owns its whole lifecycle: a serveOn failure this rare — the manifest
+// was just written successfully by session.Create; only a stream file's own
+// open can fail here (e.g. a full disk) — must not leave the directory
+// behind for a server that never served, the same guarantee Run's bind-first
+// ordering already gives the far more common case of a taken port.
+// ServeListener and Serve do not use this: dir there may be a session a
+// caller (e.g. record) is already managing across other recorders, so a
+// serve failure must not delete it out from under them.
+func serveOrCleanup(ln net.Listener, addr, dir string) (*http.Server, error) {
+	srv, err := serveOn(ln, addr, dir)
+	if err != nil {
+		os.RemoveAll(dir)
+	}
+	return srv, err
 }
 
 // serveOn serves the demo capture app on an already-bound listener, taking
