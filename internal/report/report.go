@@ -32,7 +32,7 @@ func Render(dir string, window float64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	entries, err := session.ReadJSONL[timeline.Entry](filepath.Join(dir, session.TimelineFile))
+	entries, err := timeline.ReadEntries(filepath.Join(dir, session.TimelineFile))
 	if err != nil {
 		return "", fmt.Errorf("read timeline (run `testimony merge` first?): %w", err)
 	}
