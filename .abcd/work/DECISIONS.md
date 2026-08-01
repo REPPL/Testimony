@@ -312,3 +312,10 @@ Architecture-shaping decisions graduate to an ADR under
   structurally impossible) and a claimed silent-fallthrough in `review`'s
   flag parsing (whitespace-only `-finding` behaves identically to omitting
   the flag, which is already handled).
+- 2026-07-18 — Correction to the same day's CI entry above: the `check` job
+  stayed Ubuntu-only rather than gaining a macOS leg (`ff9717e`, "CI: keep
+  check ubuntu-only (drop macOS matrix leg)"), and zizmor's SARIF upload to
+  Code Scanning was turned off (`5d19a07`, "CI: fix stale zizmor header
+  comment (SARIF upload is off)", `advanced-security: false` in `ci.yml`) —
+  both reversed within the same day the original entry describes, and left
+  unrecorded until now.
