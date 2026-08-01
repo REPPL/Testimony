@@ -71,14 +71,23 @@ func manifestDir(t *testing.T) string {
 }
 
 // jsonPost builds a POST that passes the loopback/JSON guard by default; hdr
-// overrides individual headers (and, for "Host", the request host).
+// overrides individual headers (and, for "Host", the request host; for
+// "RemoteAddr", the request's remote address). httptest.NewRequest defaults
+// RemoteAddr to the non-loopback "192.0.2.1:1234", so it is pinned to
+// loopback here to keep every other case exercising the Host/Origin/
+// Content-Type guards it actually targets, not the separate RemoteAddr one.
 func jsonPost(path, body string, hdr map[string]string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	r.Host = "localhost:8737"
+	r.RemoteAddr = "127.0.0.1:54321"
 	r.Header.Set("Content-Type", "application/json")
 	for k, v := range hdr {
 		if k == "Host" {
 			r.Host = v
+			continue
+		}
+		if k == "RemoteAddr" {
+			r.RemoteAddr = v
 			continue
 		}
 		r.Header.Set(k, v)
@@ -338,6 +347,7 @@ func TestWriteEndpointGuard(t *testing.T) {
 		{"missing content-type", map[string]string{"Content-Type": ""}, false},
 		{"cross-origin", map[string]string{"Origin": "http://evil.example"}, false},
 		{"rebound foreign host", map[string]string{"Host": "evil.example:8737"}, false},
+		{"forged loopback host from a LAN peer", map[string]string{"RemoteAddr": "192.0.2.7:54321"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
