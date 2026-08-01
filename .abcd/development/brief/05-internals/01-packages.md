@@ -31,10 +31,10 @@ entrypoint that calls `cli.Run` and exits with its return code.
   segments to the `Utterance` schema. Fixture-tested against golden JSONL
   files in `testdata/`.
 - **`internal/report`** — Markdown rendering of a merged timeline: the
-  event↔utterance attachment pass (the same by-position window test as
-  `timeline.EventsNear`, inlined so the join does not depend on id
-  uniqueness), standalone-event interleaving, and the rendered Findings
-  section.
+  event↔utterance attachment pass (the same window test as
+  `timeline.EventsNear`, inlined and keyed by position so the join does not
+  depend on id uniqueness), standalone-event interleaving, and the rendered
+  Findings section.
 - **`internal/analyze`** — the first-pass analysis layer: emits a
   self-contained, host-delegated analysis request (a versioned rubric plus
   the session's timeline) and is the sole validation boundary for the
