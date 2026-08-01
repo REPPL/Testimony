@@ -149,11 +149,13 @@ func Run(opts Options) error {
 	}
 	audioCaptured := contains(recorders, streamMicrophone)
 	// capturePossible distinguishes "no audio was captured this run" from "this
-	// platform cannot capture audio at all": plan() returns no recorders on a
-	// non-darwin platform (or when demo-only capture already reported the same
-	// limitation), and nextCommands must not send that operator chasing a
-	// microphone permission prompt that does not exist on their platform.
-	capturePossible := len(recorders) > 0
+	// platform cannot capture audio at all": plan() (platform.go) plans
+	// microphone capture only on darwin, and nextCommands must not send an
+	// operator on any other platform chasing a microphone permission prompt
+	// that does not exist there. Reusing audioCaptured (rather than, say,
+	// len(recorders) > 0) keeps this tied to the microphone specifically, so
+	// it stays correct even if plan() ever grows a screen-only platform.
+	capturePossible := audioCaptured
 
 	var srv *http.Server
 	if opts.Demo {

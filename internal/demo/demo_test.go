@@ -331,7 +331,8 @@ func TestDisplayURL(t *testing.T) {
 	}
 }
 
-// TestWriteEndpointGuard covers the CSRF / DNS-rebinding surface: a request must
+// TestWriteEndpointGuard covers the CSRF / DNS-rebinding / forged-Host-on-a-
+// wide-bind surface: a request must originate from a loopback remote address,
 // carry a JSON Content-Type, a loopback Host, and (when present) a same-origin
 // Origin. A rejected request must write nothing.
 func TestWriteEndpointGuard(t *testing.T) {

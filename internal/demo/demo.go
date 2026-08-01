@@ -441,7 +441,8 @@ func refuseWrite(w http.ResponseWriter, r *http.Request, reason, status string, 
 }
 
 // loopbackHost reports whether hostport names the local machine: the literal
-// "localhost" or any loopback IP. Used to pin the Host/Origin to loopback.
+// "localhost" or any loopback IP. Used to pin the RemoteAddr/Host/Origin of a
+// capture write to loopback.
 func loopbackHost(hostport string) bool {
 	host := hostport
 	if h, _, err := net.SplitHostPort(hostport); err == nil {

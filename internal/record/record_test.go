@@ -966,6 +966,15 @@ func TestRunDegradesHonestly(t *testing.T) {
 	if !strings.Contains(out, "-audio") {
 		t.Fatalf("must point at the external-audio transcribe step: %q", out)
 	}
+	// A degraded run has nothing to wait on and exits immediately, so it must
+	// not print the live-session banner, and — having no microphone to grant a
+	// permission for — must not tell the operator to go granting one.
+	if strings.Contains(out, "Press Ctrl+C") {
+		t.Fatalf("a degraded run that exits immediately must not print the live-session banner: %q", out)
+	}
+	if strings.Contains(strings.ToLower(out), "permission") {
+		t.Fatalf("a platform with no capture support must not be told to grant a permission: %q", out)
+	}
 }
 
 // --- lifecycle state machine over a fake proc ---

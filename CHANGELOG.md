@@ -60,9 +60,9 @@ Capture and diagnostics:
 Checks and installer:
 
 - The pipeline smoke test asserts the event half of the pipeline (the
-  header counts and an event-only selector); every prior assertion was
-  satisfiable from the transcript and findings alone, so a regression that
-  dropped all events kept the gate green.
+  header counts); every prior assertion was satisfiable from the transcript
+  and findings alone, so a regression that dropped all events kept the gate
+  green.
 - The release workflow downloads a published tarball and requires the
   binary's own version output to name the tag; the checks parse `install.sh` with
   `sh -n` and `bash -n`, now in the release workflow's own verify job too — a
