@@ -77,6 +77,51 @@ func TestMergeAudioOnlySession(t *testing.T) {
 	}
 }
 
+// TestMergeRefusesToOverwriteTimelineWhenSourcesMissing is the both-sources-gone
+// regression: transcript.jsonl and interactions.jsonl are each individually
+// optional (TestMergeAudioOnlySession above), but if both are absent, Merge has
+// nothing to build entries from. Pre-fix, it still wrote timeline.jsonl via
+// WriteJSONL's O_TRUNC open, silently truncating a good timeline an earlier
+// merge had produced, and exited 0. Merge must refuse instead, exactly as
+// transcribe.Run and analyze.Ingest refuse the identical "nothing to write"
+// shape rather than destroy an existing artefact.
+func TestMergeRefusesToOverwriteTimelineWhenSourcesMissing(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", T0EpochMS: t0}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	utts := []Utterance{{ID: "utt-001", T0: 1, T1: 2, Speaker: "P1", Text: "hello"}}
+	if err := session.WriteJSONL(filepath.Join(dir, session.TranscriptFile), utts); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	if _, _, err := Merge(dir); err != nil {
+		t.Fatalf("first Merge: %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, session.TimelineFile))
+	if err != nil {
+		t.Fatalf("read timeline.jsonl after first merge: %v", err)
+	}
+	if len(before) == 0 {
+		t.Fatal("first merge wrote an empty timeline.jsonl; test setup is wrong")
+	}
+
+	if err := os.Remove(filepath.Join(dir, session.TranscriptFile)); err != nil {
+		t.Fatalf("remove transcript: %v", err)
+	}
+
+	if _, _, err := Merge(dir); err == nil {
+		t.Fatal("second Merge with both sources missing: want a refusal, got nil")
+	}
+
+	after, err := os.ReadFile(filepath.Join(dir, session.TimelineFile))
+	if err != nil {
+		t.Fatalf("read timeline.jsonl after refused merge: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("refused merge modified timeline.jsonl:\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
 // TestMergeRejectsMissingT0WithInteractions is the missing-anchor regression: a
 // session with interactions.jsonl but a manifest lacking t0_epoch_ms cannot place
 // those epoch-ms interaction times on the session clock. Pre-fix Merge used the

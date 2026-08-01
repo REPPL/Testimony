@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -498,7 +499,20 @@ func Merge(dir string) (speech, events int, err error) {
 		}
 		seen[id] = true
 	}
-	if err := session.WriteJSONL(filepath.Join(dir, session.TimelineFile), entries); err != nil {
+	timelinePath := filepath.Join(dir, session.TimelineFile)
+	if len(entries) == 0 {
+		// WriteJSONL opens with O_TRUNC: writing zero entries would silently
+		// destroy a timeline.jsonl a prior run already produced (transcript.jsonl
+		// and interactions.jsonl both moved, renamed, or deleted since) and report
+		// success. transcribe.Run and analyze.Ingest refuse the identical shape —
+		// a run that yields nothing — for the same reason; Merge is the sibling
+		// writer that lacked the guard.
+		if fi, statErr := os.Stat(timelinePath); statErr == nil && fi.Size() > 0 {
+			return 0, 0, fmt.Errorf("transcript and interactions together yield no entries; refusing to overwrite the existing %s (are %s and %s both missing?)",
+				session.TimelineFile, session.TranscriptFile, session.InteractionsFile)
+		}
+	}
+	if err := session.WriteJSONL(timelinePath, entries); err != nil {
 		return 0, 0, fmt.Errorf("write timeline: %w", err)
 	}
 	return len(utts), len(ints), nil
