@@ -241,6 +241,8 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 		{[]string{"analyze", "-session", dir, "-ingest", ""}, `analyze: -ingest must not be empty`},
 		{[]string{"analyze", "-session", dir, "-out", ""}, `analyze: -out must not be empty`},
 		{[]string{"transcribe", "-session", dir, "-audio", ""}, `transcribe: -audio must not be empty`},
+		{[]string{"review", "-session", dir, "-finding", "", "-verdict", ""}, `review: -finding must not be empty`},
+		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", ""}, `review: -verdict must not be empty`},
 		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", "duplicate-of-F-001"}, `review: -finding cannot be a duplicate of itself`},
 	}
 	for _, c := range cases {

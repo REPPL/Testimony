@@ -363,6 +363,27 @@ func Run(args []string) int {
 			return usageErr(fmt.Errorf("review: -session is required"))
 		}
 		f, v := strings.TrimSpace(*finding), strings.TrimSpace(*verdict)
+		findingSet, verdictSet := false, false
+		fs.Visit(func(fl *flag.Flag) {
+			switch fl.Name {
+			case "finding":
+				findingSet = true
+			case "verdict":
+				verdictSet = true
+			}
+		})
+		// An explicitly-empty -finding or -verdict is a wrong invocation (an
+		// unset shell variable spliced into the flag, say), not omission —
+		// the analyze -ingest/-out precedent above. Left unchecked here, a
+		// pair that is set-but-empty on both sides is indistinguishable from
+		// both being omitted, and silently falls through to the interactive
+		// walk at exit 0 instead of refusing the caller's mistake.
+		if findingSet && f == "" {
+			return usageErr(fmt.Errorf("review: -finding must not be empty"))
+		}
+		if verdictSet && v == "" {
+			return usageErr(fmt.Errorf("review: -verdict must not be empty"))
+		}
 		// The -finding/-verdict pairing and the verdict's syntax are invocation
 		// facts, so they are refused here at the usage status — reported from
 		// review.Run they exited 1, and only after the findings load, so a wrong
