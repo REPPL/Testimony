@@ -162,6 +162,8 @@ jobs:
           sh install.sh --help | grep -q "Flags:"
           { sh install.sh --dir || true; } 2>&1 | grep -q "needs a value"
           { sh install.sh --version || true; } 2>&1 | grep -q "needs a value"
+          { sh install.sh --dir "" || true; } 2>&1 | grep -q "needs a value"
+          { sh install.sh --version "" || true; } 2>&1 | grep -q "needs a value"
           { sh install.sh --bogus || true; } 2>&1 | grep -q "unknown flag"
 
       - name: Set up Go
