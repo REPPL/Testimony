@@ -604,10 +604,11 @@ Architecture-shaping decisions graduate to an ADR under
   parallel-branch merge artefact, not a discipline lapse, and any fix would
   violate the file's own append-only contract).
 - 2026-08-02 — Bug-hunt round 24: `demo`/`record -demo`'s `-addr` now refuses
-  a numeric port outside 0-65535 (e.g. `:99999`) at exit 2 instead of
-  reaching `net.Listen` and failing there at exit 1, indistinguishable from
-  a port already taken; a named service port (e.g. `:http`) is left to the
-  runtime's own lookup, unaffected. Docs: `02-verification.md`'s CI gate
+  a numeric port outside 0-65535 (e.g. `:99999`) as a usage error at exit 2,
+  instead of letting `net.Listen` reject it during address resolution at
+  exit 1 — indistinguishable from a genuine bind failure such as a taken
+  port; a named service port (e.g. `:http`) is left to the runtime's own
+  lookup, unaffected. Docs: `02-verification.md`'s CI gate
   enumeration now names the version-stamp ldflags check `AGENTS.md` already
   listed (round 23); `01-phases.md`'s Phase 2 status cell no longer
   unqualifiedly claims chunking shipped, matching the flagged-divergence
