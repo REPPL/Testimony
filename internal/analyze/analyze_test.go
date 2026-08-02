@@ -639,6 +639,38 @@ func TestEmitRequestPlaceholdersInvisibleOnlyManifestFields(t *testing.T) {
 	}
 }
 
+// TestEmitRequestFiltersBlankTasks is the Tasks-block sibling of
+// TestEmitRequestPlaceholdersInvisibleOnlyManifestFields: the block decided
+// presence and numbered every task on the raw string, then applied
+// session.SafeText on the way out, so a whitespace-only or invisible-only
+// task survived as a content-less numbered item — a phantom referent for the
+// "attribute each finding to a task" instruction, and a task list that
+// disagreed with report.md's (which already filters on the rendered form).
+func TestEmitRequestFiltersBlankTasks(t *testing.T) {
+	dir := t.TempDir()
+	zeroWidthSpace := string(rune(0x200B))
+	if err := session.SaveManifest(dir, session.Manifest{
+		Session: "fixture",
+		Tasks:   []string{"Change your display name and save it", "   ", zeroWidthSpace, "Try the appearance settings"},
+	}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	got, err := EmitRequest(dir)
+	if err != nil {
+		t.Fatalf("EmitRequest: %v", err)
+	}
+	if !strings.Contains(got, "  1. Change your display name and save it\n") || !strings.Contains(got, "  2. Try the appearance settings\n") {
+		t.Fatalf("emitted request did not renumber tasks past the blank/invisible entries:\n%s", got)
+	}
+	if strings.Contains(got, "  3.") {
+		t.Fatalf("emitted request kept a blank/invisible task as a numbered item:\n%s", got)
+	}
+}
+
 // TestIngestReportsFindingPositionInAnswer is the off-by-one regression: an
 // undecodable finding is dropped before validation, so positional labels must
 // come from each finding's position in the answer the operator wrote. Pre-fix

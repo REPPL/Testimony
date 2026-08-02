@@ -97,10 +97,23 @@ func EmitRequest(dir string) (string, error) {
 	b.WriteString("## Session\n\n")
 	fmt.Fprintf(&b, "- App: %s\n", safeOrNone(man.App))
 	fmt.Fprintf(&b, "- Participant: %s\n", safeOrNone(man.Participant))
-	if len(man.Tasks) > 0 {
+	// Presence and numbering are decided per task on the rendered form, not
+	// raw emptiness (the safeOrNone/report.Render pattern): a manifest's
+	// tasks are operator-supplied and unvalidated by session.SaveManifest,
+	// so a whitespace-only or invisible-only-Unicode entry must not survive
+	// SafeText's Cf stripping and print as a blank numbered item — a
+	// content-less referent for the model's "attribute each finding to a
+	// task" instruction, and a task list that disagrees with report.md's.
+	var tasks []string
+	for _, t := range man.Tasks {
+		if rendered := session.SafeText(t); strings.TrimSpace(rendered) != "" {
+			tasks = append(tasks, rendered)
+		}
+	}
+	if len(tasks) > 0 {
 		b.WriteString("- Tasks:\n")
-		for i, t := range man.Tasks {
-			fmt.Fprintf(&b, "  %d. %s\n", i+1, session.SafeText(t))
+		for i, t := range tasks {
+			fmt.Fprintf(&b, "  %d. %s\n", i+1, t)
 		}
 	} else {
 		b.WriteString("- Tasks: (none recorded)\n")

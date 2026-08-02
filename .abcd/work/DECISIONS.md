@@ -562,3 +562,23 @@ Architecture-shaping decisions graduate to an ADR under
   `spc-1-record-command.md` flag synopsis "missing" `-commit` (the
   synopsis already omits `-addr` too — an illustrative sketch, not a
   promised-complete invocation contract).
+- 2026-08-02 — Bug-hunt round 22: an explicitly-empty `review
+  -finding`/`-verdict` pair is refused at exit 2 instead of being
+  indistinguishable from omitting both flags — on a character-device stdin
+  it could append a verdict for a finding the caller never named; `analyze`
+  now filters a blank/invisible-only manifest task from the emitted
+  request's numbered task list, matching `report`'s already-filtered task
+  rendering; `install.sh --dir`/`--version` refuse an explicitly-empty value
+  (previously only a missing one), closing the same class of gap the CLI's
+  own empty-flag guards cover; `itd-2-analysis-findings.md` moved from
+  `intents/planned/` to `intents/shipped/` (analyze/review shipped in
+  v0.2.0, the same rule round 19 applied to sibling `itd-1`), with its AC3
+  narrowed to the request-level keyframe flag that actually shipped,
+  matching `spc-2`'s own flagged divergence. Recorded, not fixed:
+  `go.mod`'s EOL Go 1.22 pin, re-surfaced and re-verified this round but
+  still out of scope for an autonomous round per rounds 18/19. Refuted:
+  `itd-8-local-analysis.md`'s "local vs cloud" framing, read as
+  contradicting the host-delegated architecture — the same framing is
+  already load-bearing in the committed brief's own constraints/ethics
+  pages and in the shipped `docs/explanation/privacy.md`, dated after the
+  host-delegation decision.

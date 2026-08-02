@@ -425,10 +425,10 @@ EOF
 main() {
     while [ $# -gt 0 ]; do
         case "$1" in
-            -d|--dir)  [ $# -ge 2 ] || die "--dir needs a value (try --help)"; INSTALL_DIR="$2"; shift 2 ;;
+            -d|--dir)  [ $# -ge 2 ] && [ -n "$2" ] || die "--dir needs a value (try --help)"; INSTALL_DIR="$2"; shift 2 ;;
             -y|--yes)  ASSUME_YES=1; shift ;;
             --no-deps) NO_DEPS=1; shift ;;
-            --version) [ $# -ge 2 ] || die "--version needs a value (try --help)"; VERSION="$2"; shift 2 ;;
+            --version) [ $# -ge 2 ] && [ -n "$2" ] || die "--version needs a value (try --help)"; VERSION="$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             *) die "unknown flag: $1 (try --help)" ;;
         esac

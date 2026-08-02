@@ -32,9 +32,10 @@ The literature on LLM analysis of think-aloud data is consistent: machines are e
 - Mode B preference-elicitation rubric and the pattern library (itd-4).
 - Any claim of statistical significance; findings are qualitative signals.
 - Automated re-analysis or self-tuning of the rubric from verdict history.
+- Keyframe *extraction* (`ffmpeg -ss` at an utterance timestamp): needs local video and a multimodal pass, tied to Mode B/mapping, and deferred pending maintainer confirmation (spc-2, flagged divergence). This slice covers the on-demand *request* only.
 
 ## Acceptance Criteria
 
 - **Given** a session with a merged `timeline.jsonl`, **when** the analysis pass runs, **then** `findings.jsonl` exists and every finding carries a type from the five-value set, a timestamp, a participant quote, evidence references, and `status: unverified`.
 - **Given** an unverified finding, **when** Alice records a verdict in the verification pass, **then** the finding's status becomes `confirmed`, `rejected`, or `duplicate` and the verdict persists in the session artefacts.
-- **Given** an ambiguous utterance, **when** the analysis pass requests a keyframe, **then** the frame extracted at the utterance timestamp is attached as evidence rather than raw video being consumed wholesale.
+- **Given** an ambiguous utterance, **when** the analysis pass runs, **then** the emitted request lets the model flag the verbal-only referent, at the request level (frame *extraction* is deferred; see What's Out of Scope).
