@@ -10,8 +10,8 @@ intent: itd-1
 `testimony record` is a managed capture launcher: one command creates the
 session directory, writes `manifest.json` with the shared `t0_epoch_ms`
 anchor, starts the microphone recorder (and, opt-in, the screen recorder) as
-subprocesses, prints clear status, and runs until Ctrl+C. On SIGINT/SIGTERM it
-stops the recorders cleanly so each capture file is a valid container,
+subprocesses, prints clear status, and runs until Ctrl+C. On SIGINT/SIGTERM/
+SIGHUP it stops the recorders cleanly so each capture file is a valid container,
 finalises the session, and prints the exact next commands with the real
 session path. It reuses `demo`'s session-and-manifest code path, and `-demo`
 additionally serves the instrumented demo app into the same directory for a
@@ -36,20 +36,25 @@ Each recorder is an `*exec.Cmd` started in its own process group, argv built by
 a **pure** function so it is unit-testable without a device:
 
 - Microphone → `audio.wav` (always):
-  `ffmpeg -f avfoundation -i ":<micIndex>" -ac 1 -ar 16000 -c:a pcm_s16le -y <dir>/audio.wav`
-  — 16 kHz mono PCM straight into the session dir. These are exactly the
-  parameters `transcribe.convertAudio` produces, so the file *is* canonical ASR
-  input; no re-conversion is needed downstream (see contract below).
+  `ffmpeg -f avfoundation -i ":default" -ac 1 -ar 16000 -c:a pcm_s16le -y <dir>/audio.wav`
+  — 16 kHz mono PCM straight into the session dir. `:default` captures
+  whichever input avfoundation resolves as the system default at capture
+  time, not a fixed index: a virtual audio driver can enumerate at index 0
+  and would then be recorded to silence in the real microphone's place.
+  These are exactly the parameters `transcribe.convertAudio` produces, so
+  the file *is* canonical ASR input; no re-conversion is needed downstream
+  (see contract below).
 - Screen → `screen.mp4` (only with `-video`):
   `ffmpeg -f avfoundation -framerate 30 -capture_cursor 1 -i "<screenIndex>" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -y <dir>/screen.mp4`
   — video only; the mic is captured by its own process so the ASR audio stays
   independent of the screen recording.
 
-Device indices are resolved once at start-up by parsing
+The screen device index is resolved once at start-up by parsing
 `ffmpeg -f avfoundation -list_devices true -i ""`: the screen input is the
-video device whose name matches `Capture screen`, the microphone defaults to
-audio index 0 (system default input). The pure argv builders take the resolved
-indices as arguments; the impure probe is isolated and skips in CI. A new
+video device whose name matches `Capture screen`. The microphone is captured
+via avfoundation's `:default` audio device rather than a resolved index (see
+above). The pure argv builders take the resolved screen index as an argument;
+the impure probe is isolated and skips in CI. A new
 `session.ScreenFile = "screen.mp4"` constant is added (with the layout doc,
 schemas page, and tests, per the schema-move invariant).
 
@@ -85,7 +90,7 @@ symmetric off.
 3. With `-demo`, start the demo HTTP server into the **same** dir (see below).
 4. Print status: session dir, what is recording, the "say 'session start'"
    prompt, "Press Ctrl+C to stop".
-5. `signal.Notify` for SIGINT/SIGTERM; block. On signal: send **SIGINT** to
+5. `signal.Notify` for SIGINT/SIGTERM/SIGHUP; block. On signal: send **SIGINT** to
    each recorder child (ffmpeg finalises the container — writes the trailer/moov
    atom), `Wait` up to ~5 s each, escalate to SIGKILL only on timeout; shut the
    demo server down gracefully; print the next commands with the real dir; exit
