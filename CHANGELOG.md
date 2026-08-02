@@ -109,6 +109,25 @@ Evidence integrity:
   distinct only by invisible-Unicode bytes (a zero-width space, say) used to
   load without error and render under the same visible id in `report` and
   `review`, one in the Confirmed group and the other in Unverified.
+- **Behaviour:** `timeline.ReadEntries` bounds an entry's `t` and a speech
+  entry's payload `t1` to the same ±1e9s magnitude `merge` already enforces
+  on `transcript.jsonl` — a hand-edited or exchanged `timeline.jsonl` reaches
+  this reader without passing through that check at all. An oversized `t1`
+  used to reach `report`'s join window and `analyze`'s session-range bound
+  unclamped for magnitude (only inversion was clamped), silently
+  misattributing every later event to the poisoned utterance in `report.md`
+  and admitting an equally absurd finding time as "inside" the inflated
+  session range, both at exit 0.
+- `report`'s title and Tasks line fall back to a `—` placeholder on their
+  rendered (SafeText) form, matching the App/Participant/`kind` pattern
+  above: a whitespace-only or invisible-only-Unicode Session name, or a
+  Tasks list of only such entries, used to render a bare trailing dash or a
+  lone `; ` with nothing either side.
+- A `findings.jsonl` line with no id is refused with its own message instead
+  of `duplicate finding id ""` on a second one: unlike a timeline entry,
+  where an id-less line is legitimate and skipped, a finding's id is never
+  optional, so the previous message misnamed what was actually wrong with
+  the first line.
 
 Capture and diagnostics:
 
@@ -337,6 +356,12 @@ Invocation contract:
   instead of failing inside `review.checkTargets` at exit 1 — where, on a
   session with no `findings.jsonl` yet, the contradiction was masked
   entirely behind "run analyze -ingest first".
+- An explicitly-empty `transcribe -audio` refuses at exit 2, joining
+  `analyze -ingest`/`-out`: it used to silently switch to the in-place
+  branch, transcribing the session's own `audio.wav` instead of the
+  external recording the caller named (with a session `audio.wav` present),
+  or claiming `-audio` was never given at the wrong exit status (without
+  one).
 
 Capture integrity:
 
@@ -374,6 +399,11 @@ Capture integrity:
   an affirmative "persisted" provenance line, the exact silent-shift-to-0
   outcome the sidecar exists to prevent. It now refuses with the same
   guidance a malformed sidecar already gives.
+- `record -demo` removes the session directory it just created when the demo
+  server fails to start after `session.Create` succeeds (e.g. its stream
+  files cannot be opened), mirroring the cleanup its sibling recorder-start
+  failure path already had; it used to leave a manifest-only directory
+  behind for every retry.
 
 ## [0.4.0] - 2026-07-24
 
