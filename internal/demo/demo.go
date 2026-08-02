@@ -9,6 +9,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -547,10 +549,22 @@ func CheckAddr(addr string) error {
 // on an arbitrary port, silently and with the banner still saying "localhost".
 // Refusing names the expected form instead, and leaves the deliberate host-less
 // ":8737" -> loopback behaviour untouched.
+//
+// A numeric port outside 0-65535 (e.g. ":99999") is refused here too, as a
+// usage error rather than a runtime one: net.Listen already rejects it during
+// address resolution ("listen tcp: address 99999: invalid port"), but only at
+// exit 1, indistinguishable from a genuine bind failure such as a taken port.
+// A non-numeric port (e.g. ":http") is left to net.Listen's own /etc/services
+// lookup, which this function cannot replicate.
 func listenAddr(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return "", fmt.Errorf("invalid capture address %q: want host:port or :port, e.g. \":8737\"", addr)
+	}
+	if n, numErr := strconv.Atoi(port); numErr == nil && (n < 0 || n > 65535) {
+		return "", fmt.Errorf("invalid capture address %q: port %d is out of range (0-65535)", addr, n)
+	} else if errors.Is(numErr, strconv.ErrRange) {
+		return "", fmt.Errorf("invalid capture address %q: port %s is out of range (0-65535)", addr, port)
 	}
 	if host == "" {
 		host = "127.0.0.1"

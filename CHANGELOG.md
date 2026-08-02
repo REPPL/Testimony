@@ -301,6 +301,12 @@ Documentation:
 - `AGENTS.md`'s CI gate enumeration now names the version-stamp ldflags
   check `ci.yml` added in round 21 — the one gate with no local command
   that its "plus checks" list had dropped.
+- `01-phases.md`'s Phase 2 status cell no longer claims the analysis layer
+  shipped unqualified against a deliverable list that names chunking: v1
+  emits the whole timeline as one chunk, the same divergence `itd-2` was
+  corrected against above. Its sibling `02-verification.md`'s CI gate
+  enumeration now also names the version-stamp ldflags check, as
+  `AGENTS.md` already does.
 
 Invocation contract:
 
@@ -342,6 +348,12 @@ Invocation contract:
   `-finding`/`-verdict` pairing and verdict syntax, an unknown
   `transcribe -engine`, and a malformed capture `-addr` (which also no longer
   creates a session directory before refusing).
+- `demo`/`record -demo`'s capture `-addr` refuses a numeric port outside
+  0-65535 (e.g. `:99999`) as a usage error at exit 2, instead of letting
+  `net.Listen` reject it during address resolution at exit 1 —
+  indistinguishable from a genuine bind failure such as a taken port. A
+  named service port (e.g. `:http`) is left to the runtime's own lookup,
+  unaffected.
 - `review -finding`'s value is validated against the `F-NNN` syntax at exit
   2, the one flag value in this family the previous pass left unchecked: a
   malformed id used to fail inside `review.Run` with `"finding ... not
