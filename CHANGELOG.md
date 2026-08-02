@@ -60,9 +60,22 @@ Evidence integrity:
 - `merge` refuses to overwrite an existing, non-empty `timeline.jsonl` when
   `transcript.jsonl` and `interactions.jsonl` together yield zero entries —
   missing, empty, or both — instead of truncating it to zero entries at exit
-  0 — either file is individually optional, but with nothing left to build a
-  timeline from, `transcribe`/`analyze -ingest` already refuse the identical
-  "nothing to write" shape rather than destroy an existing artefact.
+  0: either file is individually optional, but with nothing left to build a
+  timeline from there is no honest timeline to write, and
+  `transcribe`/`analyze -ingest` already refuse the identical "nothing to
+  write" shape rather than destroy an existing artefact.
+- An ASR engine's own reported segment start/end time is bounded to the same
+  magnitude every other externally-sourced time in the pipeline is: an
+  implausibly large value silently overflowed to `+Inf` through the
+  millisecond-rounding step, failing the transcript write with a bare JSON
+  encoding error, or — for a merely absurd rather than astronomical value —
+  wrote a transcript at exit 0 that `merge` only refused one command later,
+  naming `transcript.jsonl` rather than the engine that produced it. A
+  WhisperX word's own time is bounded the same way at the parser's word loop,
+  but dropped rather than refused: an implausible word used to fail the whole
+  transcript write with the same `+Inf` error; it is now silently omitted
+  from that utterance's `words`, the same outcome an unaligned word already
+  had.
 
 Capture and diagnostics:
 
@@ -240,13 +253,6 @@ Invocation contract:
   surface only after engine detection, either masked as "no ASR engine
   found" on a machine with none installed, or as the same error one
   step later, at exit 1 either way.
-- An ASR engine's own reported segment start/end time is bounded to the same
-  magnitude every other externally-sourced time in the pipeline is: an
-  implausibly large value silently overflowed to `+Inf` through the
-  millisecond-rounding step, failing the transcript write with a bare JSON
-  encoding error, or — for a merely absurd rather than astronomical value —
-  wrote a transcript at exit 0 that `merge` only refused one command later,
-  naming `transcript.jsonl` rather than the engine that produced it.
 
 Capture integrity:
 
