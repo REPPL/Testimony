@@ -303,6 +303,28 @@ func TestLoadRejectsDuplicateFindingID(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsDuplicateFindingIDBySafeText covers two ids distinct only by
+// bytes session.SafeText strips (here a zero-width space) — the same class of
+// collision timeline id checks (timeline.Merge, loadTimeline) already compare
+// in SafeText form. Pre-fix, ParseRecords keyed seenID on the raw id, so this
+// pair loaded without error and both findings rendered under the identical
+// visible id "F-001", one in the Confirmed group and one in Unverified.
+func TestLoadRejectsDuplicateFindingIDBySafeText(t *testing.T) {
+	dir := t.TempDir()
+	dup := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"a","evidence":["utt-004"],"status":"unverified"}` + "\n" +
+		"{\"id\":\"F-001​\",\"t\":23,\"type\":\"friction\",\"severity\":2,\"quote\":\"b\",\"evidence\":[\"utt-004\"],\"status\":\"unverified\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(dup), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	_, _, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "duplicate finding id") {
+		t.Fatalf("expected a duplicate-finding-id refusal naming line 2, got %v", err)
+	}
+	if !strings.Contains(err.Error(), ":2:") {
+		t.Fatalf("refusal should name the offending line, got %v", err)
+	}
+}
+
 // TestLoadRejectsNullLine covers a hand-edited or exchanged findings.jsonl
 // carrying a bare JSON null line. Pre-fix, ParseRecords unmarshalled it into a
 // value-typed Finding as a no-op, silently appending a phantom finding (empty

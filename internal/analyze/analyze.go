@@ -115,7 +115,11 @@ func ParseRecords(r io.Reader, name string) ([]Finding, []Verdict, error) {
 	// first. Refusing the file here, naming the offending line, turns that
 	// display-collapse into an honest error the operator can repair, and keeps the
 	// id-uniqueness EffectiveStatus/findByID assume true actually true on every path
-	// that loads findings.
+	// that loads findings. Ids are compared in their session.SafeText form, matching
+	// the timeline id checks, so two ids distinct only by stripped bytes count as the
+	// collision they render as: report and review both render a finding id through
+	// SafeText, so two raw ids differing only in invisible characters are otherwise
+	// indistinguishable on the page.
 	seenID := map[string]bool{}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), session.MaxJSONLLine)
@@ -165,10 +169,11 @@ func ParseRecords(r io.Reader, name string) ([]Finding, []Verdict, error) {
 		if err := json.Unmarshal(raw, &fnd); err != nil {
 			return nil, nil, fmt.Errorf("%s:%d: %w", name, line, err)
 		}
-		if seenID[fnd.ID] {
+		id := session.SafeText(fnd.ID)
+		if seenID[id] {
 			return nil, nil, fmt.Errorf("%s:%d: duplicate finding id %q; each finding must have a unique id", name, line, fnd.ID)
 		}
-		seenID[fnd.ID] = true
+		seenID[id] = true
 		findings = append(findings, fnd)
 	}
 	if err := sc.Err(); err != nil {
