@@ -599,12 +599,14 @@ func TestResolveOffsetExternalOffsetFlagNoT0(t *testing.T) {
 // destroy.
 const recordOriginAudio = "RIFF record-origin capture"
 
-// fakeTools puts a stub whisperx, ffmpeg, and ffprobe on PATH so Run's
-// detectEngine, convertAudio, and deriveOffset all resolve without any of the
-// three installed. The stub whisperx writes a minimal valid engine output into
-// the --output_dir it is handed (always its last argument). The stub ffprobe
-// READS the recording it is pointed at, exactly as the real one does — that is
-// what makes a FIFO at -audio block its open(2) for ever.
+// fakeTools puts a stub whisperx, whisper-cli, ffmpeg, and ffprobe on PATH so
+// Run's detectEngine, convertAudio, and deriveOffset all resolve without any
+// of them installed. The stub whisperx writes a minimal valid engine output
+// into the --output_dir it is handed (always its last argument). The stub
+// ffprobe READS the recording it is pointed at, exactly as the real one does —
+// that is what makes a FIFO at -audio block its open(2) for ever. The stub
+// whisper-cli only needs to exist on PATH for detectEngine to find it; tests
+// exercising it further stub resolveModel's own inputs separately.
 func fakeTools(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
@@ -615,9 +617,10 @@ func fakeTools(t *testing.T) {
 	// open would never happen.
 	ffprobe := "#!/bin/sh\nfor last; do :; done\n: < \"$last\"\nprintf '%s' '{}'\n"
 	for name, script := range map[string]string{
-		"whisperx": whisperx,
-		"ffmpeg":   "#!/bin/sh\nexit 0\n",
-		"ffprobe":  ffprobe,
+		"whisperx":    whisperx,
+		"whisper-cli": "#!/bin/sh\nexit 1\n",
+		"ffmpeg":      "#!/bin/sh\nexit 0\n",
+		"ffprobe":     ffprobe,
 	} {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
@@ -755,6 +758,34 @@ func TestSidecarRefusalDoesNotDestroyAudio(t *testing.T) {
 	if len(entries) != 3 { // manifest.json, audio.wav, the planted directory
 		t.Errorf("a refused run left extra files behind: %v", entries)
 	}
+}
+
+// TestModelResolvedBeforeConverting closes a residual gap in the
+// resolve-before-convert invariant: whisper.cpp's -model was resolved inside
+// runWhisperCpp, after convertAudio had already replaced the session's
+// record-origin audio.wav with the converted external recording. A missing
+// ggml model is knowable from opts.Model alone — whisper.cpp never
+// auto-downloads one, so this is the ordinary first-run failure, not an edge
+// case — with no dependency on the conversion, so refusing it destroyed the
+// irreplaceable capture for a check that could have run first. resolveModel
+// now runs alongside detectEngine, before anything touches audio.wav.
+func TestModelResolvedBeforeConverting(t *testing.T) {
+	fakeTools(t)
+	dir, wav := seedSession(t, session.Manifest{Session: "s", T0EpochMS: 1_700_000_000_000})
+	converted := stubConvert(t)
+	t.Setenv("HOME", t.TempDir()) // no cached model anywhere for resolveModel to find
+
+	_, err := Run(Options{SessionDir: dir, Audio: externalRecording(t), Engine: EngineWhisperCpp, Model: "missing-model", Log: io.Discard})
+	// The exact resolveModel guidance text, not a loose "model" substring: a
+	// broader check passed vacuously even with the whisper-cli stub removed
+	// from fakeTools, since detectEngine's own whisper-cli-not-found message
+	// also mentions "model" ("...a ggml model file is also needed; see
+	// -model"). This pins the refusal to the model-resolution failure this
+	// test exists to exercise, not any other refusal on the same run.
+	if err == nil || !strings.Contains(err.Error(), `model "missing-model" not found`) {
+		t.Fatalf("a missing whisper.cpp model must fail the run, got %v", err)
+	}
+	assertSessionUntouched(t, dir, wav, converted)
 }
 
 // TestRenameFailureRollsBackSidecar pins the other half of the persist-before-

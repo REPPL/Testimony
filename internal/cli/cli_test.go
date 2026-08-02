@@ -219,6 +219,13 @@ func TestStrayPositionalIsAUsageError(t *testing.T) {
 // of refusing the caller's mistake — transcribing the session's own
 // audio.wav at exit 0 when one exists, or failing at exit 1 with a message
 // claiming -audio was never given when one doesn't.
+//
+// An explicitly-empty -engine/-device/-vad closes the last gap in that same
+// class: each is a closed enum (docs/reference/cli.md) whose own package-level
+// Check* function treated "" the same as the documented "auto", so a typo'd or
+// unset shell variable silently discarded the caller's actual choice at
+// exit 0 instead of refusing it like every other closed-enum flag on this
+// command.
 func TestInvalidFlagValuesExitTwo(t *testing.T) {
 	dir := miniSession(t)
 	demoOut := t.TempDir()
@@ -241,6 +248,9 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 		{[]string{"analyze", "-session", dir, "-ingest", ""}, `analyze: -ingest must not be empty`},
 		{[]string{"analyze", "-session", dir, "-out", ""}, `analyze: -out must not be empty`},
 		{[]string{"transcribe", "-session", dir, "-audio", ""}, `transcribe: -audio must not be empty`},
+		{[]string{"transcribe", "-session", dir, "-engine", ""}, `transcribe: -engine must not be empty`},
+		{[]string{"transcribe", "-session", dir, "-device", ""}, `transcribe: -device must not be empty`},
+		{[]string{"transcribe", "-session", dir, "-vad", ""}, `transcribe: -vad must not be empty`},
 		{[]string{"review", "-session", dir, "-finding", "", "-verdict", ""}, `review: -finding must not be empty`},
 		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", ""}, `review: -verdict must not be empty`},
 		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", "duplicate-of-F-001"}, `review: -finding cannot be a duplicate of itself`},

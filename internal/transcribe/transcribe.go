@@ -70,6 +70,18 @@ func Run(opts Options) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if engine == EngineWhisperCpp {
+		// Known-in-advance from opts.Model alone, with no dependency on the
+		// session or the conversion below — whisper.cpp never auto-downloads
+		// a model, so a missing one is the ordinary first-run failure, not an
+		// edge case. Refusing it here, before anything touches audio.wav,
+		// keeps it in the same "resolve first" invariant as the offset and
+		// sidecar refusals below: a refused run leaves the session
+		// byte-for-byte as it found it.
+		if _, err := resolveModel(opts.Model); err != nil {
+			return 0, err
+		}
+	}
 
 	// -audio is optional. When omitted — or when it points at the session's own
 	// audio.wav — the canonical 16 kHz mono capture already in the session is

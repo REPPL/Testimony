@@ -10,7 +10,7 @@ kind: standalone
 
 ## Press Release
 
-> **Testimony turns a merged session timeline into structured findings.** An analysis pass reads `timeline.jsonl` chunked by task boundaries and codes it under a fixed, versioned rubric, producing `findings.jsonl` — each finding typed as `bug | friction | inconsistency | preference | idea`, anchored to a timestamp, quoting the participant's own words, and citing its evidence utterances and events. Every AI-generated finding is born `status: unverified`; a verification pass lets a human flip each one to `confirmed | rejected | duplicate`, and the verdicts are retained so precision can be tracked over time.
+> **Testimony turns a merged session timeline into structured findings.** An analysis pass reads `timeline.jsonl` and codes it under a fixed, versioned rubric, producing `findings.jsonl` — each finding typed as `bug | friction | inconsistency | preference | idea`, anchored to a timestamp, quoting the participant's own words, and citing its evidence utterances and events. Every AI-generated finding is born `status: unverified`; a verification pass lets a human flip each one to `confirmed | rejected | duplicate`, and the verdicts are retained so precision can be tracked over time.
 >
 > "The transcription and first-pass coding used to be the week of work that meant I only ever analysed one session in five," said Alice, usability researcher. "Now the machine does the first pass overnight, and my job is the judgement call — which is the part I actually wanted to keep."
 
@@ -33,6 +33,7 @@ The literature on LLM analysis of think-aloud data is consistent: machines are e
 - Any claim of statistical significance; findings are qualitative signals.
 - Automated re-analysis or self-tuning of the rubric from verdict history.
 - Keyframe *extraction* (`ffmpeg -ss` at an utterance timestamp): needs local video and a multimodal pass, tied to Mode B/mapping, and deferred pending maintainer confirmation (spc-2, flagged divergence). This slice covers the on-demand *request* only.
+- Task-boundary chunking: `timeline.jsonl` carries no task markers and the manifest's task list carries no timestamps, so the analysis pass emits the whole timeline as one chunk, deferring real per-task chunking behind a seam (spc-2, flagged divergence).
 
 ## Acceptance Criteria
 
