@@ -190,6 +190,22 @@ func Run(args []string) int {
 		if *dir == "" {
 			return usageErr(fmt.Errorf("transcribe: -session is required"))
 		}
+		audioSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "audio" {
+				audioSet = true
+			}
+		})
+		// An explicitly-empty -audio is a wrong invocation (an unset shell
+		// variable spliced into the flag, say), not "omit -audio" — the
+		// analyze -ingest/-out precedent above. Left unchecked, it silently
+		// selects the in-place branch: with a session audio.wav present, that
+		// transcribes the session's own recording instead of the external one
+		// the caller named, at exit 0; without one, it fails at exit 1 with a
+		// message claiming -audio was never given.
+		if audioSet && *audio == "" {
+			return usageErr(fmt.Errorf("transcribe: -audio must not be empty"))
+		}
 		// -audio's extension is a closed set (docs/reference/cli.md), the same
 		// class as -engine/-device/-vad below — refuse it at exit 2 before
 		// detectEngine and offset resolution spend any work on a path
