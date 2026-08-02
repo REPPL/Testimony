@@ -200,6 +200,47 @@ func TestIngestRejectsEmptyEvidenceID(t *testing.T) {
 	}
 }
 
+// TestIngestRejectsInvisibleOnlySelectorAndRoute is the selector/route sibling
+// of the id-index fix above. An event whose selector or route is entirely
+// Unicode format characters (here U+200B ZERO WIDTH SPACE and U+2060 WORD
+// JOINER) is non-empty raw but strips to "" under session.SafeText. Pre-fix,
+// indexTimeline gated on the raw string and stored under the SafeText key, so
+// this seeded idx.selectors[""]/idx.routes[""] — and any invisible-only-Unicode
+// ui.selector/ui.route in an answer then validated against that phantom entry,
+// regardless of what characters it actually held.
+func TestIngestRejectsInvisibleOnlySelectorAndRoute(t *testing.T) {
+	zeroWidthSpace := string(rune(0x200B))   // ZERO WIDTH SPACE
+	wordJoiner := string(rune(0x2060))       // WORD JOINER
+	zeroWidthNoBreak := string(rune(0xFEFF)) // ZERO WIDTH NO-BREAK SPACE
+	softHyphen := string(rune(0x00AD))       // SOFT HYPHEN
+
+	// The event's selector and route are entirely Unicode format characters —
+	// non-empty raw, both strip to "" under session.SafeText.
+	tl := timelineFixture + fmt.Sprintf(
+		`{"t":30,"src":"event","id":"ev-009","payload":{"kind":"click","selector":%q,"route":%q}}`+"\n",
+		zeroWidthSpace, wordJoiner)
+	dir := writeSession(t, tl)
+
+	// A different invisible-only selector must still be refused — it must not
+	// match merely because *some* event's selector sanitises to "".
+	answer := fmt.Sprintf(
+		`{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"ui":{"selector":%q}}]}`,
+		zeroWidthNoBreak)
+	_, err := Ingest(dir, strings.NewReader(answer))
+	if err == nil || !strings.Contains(err.Error(), "not present on any timeline event") {
+		t.Fatalf("expected an invisible-only ui.selector refusal, got %v", err)
+	}
+
+	// Likewise for route.
+	routeAnswer := fmt.Sprintf(
+		`{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"ui":{"route":%q}}]}`,
+		softHyphen)
+	_, err = Ingest(dir, strings.NewReader(routeAnswer))
+	if err == nil || !strings.Contains(err.Error(), "not present on any timeline event") {
+		t.Fatalf("expected an invisible-only ui.route refusal, got %v", err)
+	}
+}
+
 // TestIngestQuoteValidatesAgainstSanitisedUtterance is the shown-vs-validated
 // regression. EmitRequest runs every timeline line through session.SafeText, so
 // an utterance whose text carries a Bidi_Control character (here U+200F, common
