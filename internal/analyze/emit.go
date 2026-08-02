@@ -95,8 +95,8 @@ func EmitRequest(dir string) (string, error) {
 	// review paths. Each marshalled line is run through SafeText below; JSON's own
 	// structural bytes are ASCII and pass through it unchanged.
 	b.WriteString("## Session\n\n")
-	fmt.Fprintf(&b, "- App: %s\n", session.SafeText(orNone(man.App)))
-	fmt.Fprintf(&b, "- Participant: %s\n", session.SafeText(orNone(man.Participant)))
+	fmt.Fprintf(&b, "- App: %s\n", safeOrNone(man.App))
+	fmt.Fprintf(&b, "- Participant: %s\n", safeOrNone(man.Participant))
 	if len(man.Tasks) > 0 {
 		b.WriteString("- Tasks:\n")
 		for i, t := range man.Tasks {
@@ -132,9 +132,15 @@ func EmitRequest(dir string) (string, error) {
 	return b.String(), nil
 }
 
-func orNone(s string) string {
-	if s == "" {
+// safeOrNone applies session.SafeText and falls back to "(none)" when the
+// result renders as nothing (empty or whitespace-only): a manifest field is
+// operator-supplied and unvalidated by session.SaveManifest, so a
+// whitespace-only or invisible-only value must not survive SafeText's Cf
+// stripping and print as a blank field with the "(none)" placeholder skipped.
+func safeOrNone(s string) string {
+	t := session.SafeText(s)
+	if strings.TrimSpace(t) == "" {
 		return "(none)"
 	}
-	return s
+	return t
 }

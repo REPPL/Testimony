@@ -456,3 +456,33 @@ Architecture-shaping decisions graduate to an ADR under
   is out of scope for an autonomous round) and `DECISIONS.md`'s few
   out-of-calendar-order entries (reordering an append-only log would itself
   break the append-only property; noted, not corrected).
+- 2026-08-02 — Bug-hunt round 19: an explicitly-empty `analyze -ingest`/`-out`
+  now refuses at exit 2 instead of silently switching mode (empty `-ingest`)
+  or redirecting to stdout (empty `-out`); `review -finding F-NNN -verdict
+  duplicate-of-F-NNN` (self-duplicate) is refused at exit 2 alongside
+  review's other pairing checks instead of failing at exit 1 inside
+  `review.checkTargets`, where it was masked entirely on a session with no
+  `findings.jsonl` yet; `report` and `analyze`'s emitted request now render a
+  placeholder (`—`/`(none)`) for an event `kind` or manifest App/Participant
+  that is whitespace-only or invisible-only Unicode, instead of a blank
+  field — presence was decided on the raw value before `session.SafeText`
+  reduced it to nothing. Docs corrected against the code: the README
+  architecture diagram no longer attributes `interactions.jsonl` to rrweb
+  (it is fed only by the app's own capture hooks; rrweb feeds the archival
+  `events.rrweb.jsonl` stream); `session-directory.md`'s transcript `t0`/`t1`
+  rows now document the same ±1e9s magnitude bound their sibling `words` and
+  interaction `t` rows already state; `cli.md` and the analyse-a-session
+  how-to now mention the finding id `review` prints first. Internal-doc
+  fixes: `itd-1-record-command.md` moved from `intents/planned/` to
+  `intents/shipped/` — the capability shipped in v0.2.0 and directory
+  location is the intents' single source of truth for lifecycle state, per
+  `intents/README.md` (its linked spec, `spc-1`, remains in `specs/open/`:
+  no spec-lifecycle directory convention exists to move it into) — and its
+  stale
+  "consent reference" manifest-field claim removed (no such field exists;
+  participant consent is itself out of scope, deferred to itd-5);
+  `spc-2-analysis-findings.md`'s "TTY-gated" framing for `review`'s
+  interactive gate corrected to "gated on stdin being a character device",
+  matching the correction round 18 made to `cli.go`'s usage text. Recorded,
+  not fixed: `go.mod`'s EOL Go 1.22 pin (per round 18; still out of scope for
+  an autonomous round).

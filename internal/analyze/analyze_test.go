@@ -562,6 +562,35 @@ func TestEmitRequestSanitisesManifestText(t *testing.T) {
 	}
 }
 
+// TestEmitRequestPlaceholdersInvisibleOnlyManifestFields is the emit-side
+// sibling of the report header's rendered-form fix: orNone(man.App) decided
+// presence on the raw string, then session.SafeText was applied on the way
+// out, so an App/Participant that is invisible-only Unicode or
+// whitespace-only was non-empty raw, skipped the "(none)" placeholder, and
+// rendered to nothing. Neither field is validated by session.SaveManifest, so
+// an operator-supplied value reaches this unmodified.
+func TestEmitRequestPlaceholdersInvisibleOnlyManifestFields(t *testing.T) {
+	dir := t.TempDir()
+	zeroWidthSpace := string(rune(0x200B))
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: zeroWidthSpace, Participant: "  "}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	got, err := EmitRequest(dir)
+	if err != nil {
+		t.Fatalf("EmitRequest: %v", err)
+	}
+	if strings.Contains(got, "- App: \n") || strings.Contains(got, "- Participant: \n") {
+		t.Fatalf("emitted request rendered a blank App/Participant instead of a placeholder:\n%s", got)
+	}
+	if !strings.Contains(got, "- App: (none)\n") || !strings.Contains(got, "- Participant: (none)\n") {
+		t.Fatalf("emitted request is missing the (none) placeholder for an invisible/whitespace-only App/Participant:\n%s", got)
+	}
+}
+
 // TestIngestReportsFindingPositionInAnswer is the off-by-one regression: an
 // undecodable finding is dropped before validation, so positional labels must
 // come from each finding's position in the answer the operator wrote. Pre-fix

@@ -718,3 +718,64 @@ func TestReportFindingAnchorFallsBackOnWhitespaceOnlyUI(t *testing.T) {
 		t.Fatalf("report is missing the evidence-id fallback for a ui that renders as whitespace only:\n%s", md)
 	}
 }
+
+// TestReportEventLinePlaceholdersInvisibleOnlyKind is the kind sibling of
+// TestReportEventLineOmitsSelectorThatRendersEmpty: timeline.checkInteraction
+// only requires kind's raw bytes be non-empty, so an event whose kind is
+// invisible-only Unicode (here U+200B ZERO WIDTH SPACE) passes validation.
+// Pre-fix, eventLine appended mdInline(raw("kind")) unconditionally — the one
+// field on the line with no rendered-form check — leaving a blank double
+// space where the event name belongs instead of the "—" placeholder every
+// other empty-rendering field falls back to.
+func TestReportEventLinePlaceholdersInvisibleOnlyKind(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	zeroWidthSpace := string(rune(0x200B))
+	tl := `{"t":2,"src":"event","id":"ev-001","payload":{"kind":"` + zeroWidthSpace + `","selector":"#buy"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "[00:02]  `#buy`") {
+		t.Fatalf("event line rendered a blank kind instead of a placeholder:\n%s", md)
+	}
+	if !strings.Contains(md, "[00:02] — `#buy`") {
+		t.Fatalf("report is missing the placeholder for an invisible-only kind:\n%s", md)
+	}
+}
+
+// TestReportHeaderPlaceholdersInvisibleOnlyManifestFields is the manifest
+// header sibling of the finding-anchor and event-line rendered-form fixes:
+// the App/Participant header used orDash(man.App) — deciding presence on the
+// raw string, then rendering with mdInline — so an App/Participant that is
+// invisible-only Unicode or whitespace-only was non-empty raw and skipped the
+// "—" placeholder, then rendered to nothing under mdInline. Neither field is
+// validated by session.SaveManifest, so an operator-supplied value reaches
+// this unmodified.
+func TestReportHeaderPlaceholdersInvisibleOnlyManifestFields(t *testing.T) {
+	dir := t.TempDir()
+	zeroWidthSpace := string(rune(0x200B))
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture", App: zeroWidthSpace, Participant: "  "}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), nil, 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "**App:**  ·") || strings.Contains(md, "**Participant:**  \n") {
+		t.Fatalf("header rendered a blank App/Participant instead of a placeholder:\n%s", md)
+	}
+	if !strings.Contains(md, "**App:** — · **Participant:** —") {
+		t.Fatalf("report is missing the placeholder for an invisible/whitespace-only App/Participant:\n%s", md)
+	}
+}

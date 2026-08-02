@@ -9,9 +9,11 @@ timestamped interaction stream, rendered as a report that shows what was said ne
 to what was done.
 
 ```
- voice ──► local Whisper ──► transcript.jsonl ─────┐
-                                                   ├─► timeline.jsonl ─► report.md
- clicks ──► rrweb / hooks ──► interactions.jsonl ──┘
+ voice  ──► local Whisper ──► transcript.jsonl ─────┐
+                                                    ├─► timeline.jsonl ─► report.md
+ clicks ──► capture hooks ──► interactions.jsonl ───┘
+
+ screen ──► rrweb ──► events.rrweb.jsonl  (archival only; nothing downstream reads it)
 ```
 
 Raw audio and video never leave your machine; only derived text is analysed. See

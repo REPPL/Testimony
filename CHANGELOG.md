@@ -354,6 +354,27 @@ Installer:
   without a value are refused cleanly; the whisper.cpp model recipe
   downloads into a directory `-model NAME` actually searches.
 
+CLI invocation:
+
+- An explicitly-empty `analyze -ingest`/`-out` refuses at exit 2 instead of
+  silently falling through: an empty `-ingest` used to switch `analyze` from
+  ingest mode to emit mode at exit 0 without validating any answer, and an
+  empty `-out` used to redirect the emitted request to stdout at exit 0
+  instead of writing a file.
+- `review -finding F-NNN -verdict duplicate-of-F-NNN` (the same id on both
+  sides) is refused at exit 2 alongside review's other flag-pairing checks,
+  instead of failing inside `review.checkTargets` at exit 1 — where, on a
+  session with no `findings.jsonl` yet, the contradiction was masked
+  entirely behind "run analyze -ingest first".
+
+Evidence integrity:
+
+- `report` renders a `—` placeholder for an App, Participant, or event
+  `kind` that is whitespace-only or invisible-only Unicode, instead of a
+  blank field, and `analyze`'s emitted request does the same with `(none)`
+  for App/Participant: presence used to be decided on the raw manifest or
+  event value, before `session.SafeText` reduced it to nothing on render.
+
 ## [0.4.0] - 2026-07-24
 
 A second robustness pass over the same capture → analysis pipeline, closing the
