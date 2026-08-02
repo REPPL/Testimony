@@ -474,8 +474,11 @@ Architecture-shaping decisions graduate to an ADR under
   interaction `t` rows already state; `cli.md` and the analyse-a-session
   how-to now mention the finding id `review` prints first. Internal-doc
   fixes: `itd-1-record-command.md` moved from `intents/planned/` to
-  `intents/shipped/` (its spec closed and the capability shipped in v0.2.0,
-  per `intents/README.md`'s own directory-is-truth rule) and its stale
+  `intents/shipped/` — the capability shipped in v0.2.0 and directory
+  location is the intents' single source of truth for lifecycle state, per
+  `intents/README.md` (its linked spec, `spc-1`, remains in `specs/open/`:
+  no spec-lifecycle directory convention exists to move it into) — and its
+  stale
   "consent reference" manifest-field claim removed (no such field exists;
   participant consent is itself out of scope, deferred to itd-5);
   `spc-2-analysis-findings.md`'s "TTY-gated" framing for `review`'s
