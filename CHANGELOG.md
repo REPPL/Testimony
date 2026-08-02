@@ -94,8 +94,9 @@ Evidence integrity:
   validate against that phantom entry rather than a real one.
 - `report` and `review` fall back to a finding's evidence ids when its `ui`
   selector/route renders to nothing or to whitespace only (invisible-Unicode
-  formatting characters, a selector of backticks alone, or literal
-  whitespace) instead of rendering a blank or whitespace-only anchor with no
+  formatting characters or literal whitespace; `report`, which renders
+  selectors as code, additionally treats a selector of backticks alone as
+  empty) instead of rendering a blank or whitespace-only anchor with no
   fallback; `report`'s event lines apply the same rendered-form check
   uniformly across `selector`, `text`, `value`, and `route`.
 

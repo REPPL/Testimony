@@ -436,8 +436,9 @@ Architecture-shaping decisions graduate to an ADR under
   invisible-only-Unicode `ui.selector`/`ui.route` validated against nothing
   real, mirroring an id-index bug already fixed for ids; `report` and
   `review` decided a finding's on-screen anchor on the same raw-vs-rendered
-  gap, rendering a blank anchor (backticks-only or invisible-only) instead of
-  falling back to the evidence ids; `audio.offset.json`'s `offset_seconds`
+  gap, rendering a blank anchor (invisible-only, or for `report`'s
+  code-rendered selectors, backticks-only) instead of falling back to the
+  evidence ids; `audio.offset.json`'s `offset_seconds`
   was value-typed, so a sidecar missing the key decoded to a silent `0`
   instead of refusing, contradicting the documented "refuses rather than
   guess"; `mapSegments` now bounds the offset+segment-time sum, closing the
