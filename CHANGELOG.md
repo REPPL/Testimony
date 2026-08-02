@@ -72,10 +72,12 @@ Evidence integrity:
   wrote a transcript at exit 0 that `merge` only refused one command later,
   naming `transcript.jsonl` rather than the engine that produced it. A
   WhisperX word's own time is bounded the same way at the parser's word loop,
-  but dropped rather than refused: an implausible word used to fail the whole
-  transcript write with the same `+Inf` error; it is now silently omitted
-  from that utterance's `words`, the same outcome an unaligned word already
-  had.
+  but dropped rather than refused: an astronomical word time used to fail the
+  whole transcript write with the same `+Inf` error, while a merely absurd one
+  was written at exit 0 and carried unchallenged into `timeline.jsonl` —
+  nothing downstream bounds a word's time as `merge` bounds an utterance's
+  `t0`/`t1`. Such a word is now silently omitted from that utterance's
+  `words`, the same outcome an unaligned word already had.
 
 Capture and diagnostics:
 
