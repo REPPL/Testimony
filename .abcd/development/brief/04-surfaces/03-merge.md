@@ -20,10 +20,11 @@ alongside the manifest.
   speech-only timeline, and a session merged before transcription still merges
   to an event-only one. A malformed line in either file is still an error.
 - If the two sources together yield zero entries — missing, empty, or both —
-  and a `timeline.jsonl` from an earlier merge already exists, merge refuses
-  rather than truncate it to zero entries; a session that has no timeline yet
-  still merges to an empty one, since that is the legitimate first outcome for
-  a session with no transcript or interactions.
+  and a `timeline.jsonl` from an earlier merge already exists and is
+  non-empty, merge refuses rather than truncate it to zero entries; a session
+  with no timeline yet, or one already empty, still merges to an empty one,
+  since that is the legitimate first outcome for a session with no transcript
+  or interactions.
 - Utterances enter as `src: "speech"` entries at their `t0` (already
   session-relative); interactions enter as `src: "event"` entries with epoch
   milliseconds converted via `t0_epoch_ms`, and are assigned sequential

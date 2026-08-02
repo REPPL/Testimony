@@ -57,12 +57,12 @@ Evidence integrity:
   anchor: an evidence citation of `""` used to pass validation merely
   because some id-less entry existed in the timeline, not because the
   cited id was ever a real anchor.
-- `merge` refuses to overwrite an existing `timeline.jsonl` when
-  `transcript.jsonl` and `interactions.jsonl` are both missing, instead of
-  truncating it to zero entries at exit 0 — either file is individually
-  optional, but losing both left nothing to build a timeline from, and
-  `transcribe`/`analyze -ingest` already refuse the identical "nothing to
-  write" shape rather than destroy an existing artefact.
+- `merge` refuses to overwrite an existing, non-empty `timeline.jsonl` when
+  `transcript.jsonl` and `interactions.jsonl` together yield zero entries —
+  missing, empty, or both — instead of truncating it to zero entries at exit
+  0 — either file is individually optional, but with nothing left to build a
+  timeline from, `transcribe`/`analyze -ingest` already refuse the identical
+  "nothing to write" shape rather than destroy an existing artefact.
 
 Capture and diagnostics:
 
@@ -202,6 +202,11 @@ Invocation contract:
   workflow now gates the pin against the tag so it cannot go stale again. The
   installer also renders single-option prompts correctly and names the actual
   cause when a release download fails.
+- `install.sh`'s PATH-fix advice routes on `$SHELL` instead of unconditionally
+  suggesting `~/.zshrc` and `exec zsh`: on a bash-default Linux install (the
+  installer supports Linux as well as macOS) the old advice appended to a
+  file bash never reads and then tried to exec a shell that may not be
+  installed.
 - A stray positional argument is refused as a usage error; it used to be
   silently swallowed together with every flag after it, so the command ran
   with defaults at exit 0.
@@ -230,6 +235,18 @@ Invocation contract:
   before whisperx itself rejected the literal argument at the runtime
   status, not the exit 2 the CLI reference promises for an invalid flag
   value.
+- `transcribe -audio`'s extension is validated at exit 2 before `detectEngine`
+  runs, joining `-engine`/`-device`/`-vad`: an unsupported extension used to
+  surface only after engine detection, either masked as "no ASR engine
+  found" on a machine with none installed, or as the same error one
+  step later, at exit 1 either way.
+- An ASR engine's own reported segment start/end time is bounded to the same
+  magnitude every other externally-sourced time in the pipeline is: an
+  implausibly large value silently overflowed to `+Inf` through the
+  millisecond-rounding step, failing the transcript write with a bare JSON
+  encoding error, or — for a merely absurd rather than astronomical value —
+  wrote a transcript at exit 0 that `merge` only refused one command later,
+  naming `transcript.jsonl` rather than the engine that produced it.
 
 Capture integrity:
 

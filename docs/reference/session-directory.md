@@ -48,7 +48,7 @@ One normalised interaction event per line, as posted by the instrumented app. Ti
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `t` | integer | yes | event time, epoch milliseconds |
+| `t` | integer | yes | event time, epoch milliseconds; must be positive and within 1e9 seconds of `t0_epoch_ms` (`merge` and the demo write endpoint both refuse otherwise) |
 | `kind` | string | yes | event kind, e.g. `"click"`, `"input"` |
 | `selector` | string | no | element anchor, ideally `[data-testid=...]` |
 | `text` | string | no | short element label (demo capture truncates to 40 characters) |
