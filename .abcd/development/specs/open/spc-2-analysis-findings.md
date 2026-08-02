@@ -16,7 +16,8 @@ saves the model's JSON answer. `analyze -session DIR -ingest FILE` is the
 **validation boundary**: it checks that answer field-by-field against the
 findings schema, rejecting fabricated evidence and quotes with precise errors,
 and writes `findings.jsonl` with every finding forced to `status: unverified`.
-`review -session DIR` walks the unverified findings (TTY-gated) — or takes one
+`review -session DIR` walks the unverified findings (gated on stdin being a
+character device) — or takes one
 verdict non-interactively — and records `confirmed | rejected | duplicate`
 verdicts as **appended, non-destructive records**, so the original finding and
 the full verdict history survive as the precision measure the method stands on.
@@ -114,7 +115,7 @@ helper `analyze.EffectiveStatus(findings, verdicts)` used by both `review`
 ```
 testimony analyze -session DIR [-out FILE]        emit the analysis request (stdout default)
 testimony analyze -session DIR -ingest FILE       validate answer JSON → findings.jsonl (FILE may be "-" for stdin)
-testimony review  -session DIR                     interactive verdict walk (TTY-gated)
+testimony review  -session DIR                     interactive verdict walk (gated on stdin being a character device)
 testimony review  -session DIR -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
 ```
 
@@ -207,9 +208,11 @@ and nothing lands `confirmed`.
   print the clock, `type`/`severity`, the quote, the anchor (`ui` selector/route
   or the evidence ids), and prompt: `[c]onfirm [r]eject [d]uplicate-of [s]kip
   [q]uit`. `d` asks for the canonical `F-NNN`. Each decision **appends** a
-  verdict record with today's date. Interactive mode is **TTY-gated**: when
-  stdin is not a terminal it prints a one-line notice and exits 0 (mirroring
-  `record`), so CI never blocks.
+  verdict record with today's date. Interactive mode is gated on stdin being a
+  **character device**, not simply "a terminal": a pipe or a redirected
+  regular file prints a one-line notice and exits 0, so CI never blocks, but
+  stdin redirected from `/dev/null` is a character device itself and still
+  enters the walk.
 - **Non-interactive** `review -session DIR -finding F-003 -verdict confirmed`
   (or `-verdict duplicate-of-F-002`): validate that `F-003` exists, the verdict
   parses to the `confirmed|rejected|duplicate` set, and any duplicate target
