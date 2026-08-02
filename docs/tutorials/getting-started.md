@@ -18,9 +18,12 @@ curl -fsSL https://raw.githubusercontent.com/REPPL/Testimony/main/install.sh | s
 Each prompt lists the exact replies it accepts. Answer **brew** when it offers
 ffmpeg — or **local** if you have no Homebrew, which is the only install option
 the prompt then lists — and **whisperx** when it offers the engine. At those
-two prompts any other reply, including `y`, skips that dependency — and step 2
-needs ffmpeg. The one yes/no confirmation inside the whisperx setup (installing
-its `uv` tool) is the exception: there `y` accepts.
+two prompts, only the words the prompt lists install anything — the ffmpeg
+prompt also accepts **local** (a static build, no Homebrew), and the engine
+prompt also accepts **whisper.cpp** — and any other reply, including `y`,
+skips that dependency, which matters because step 2 needs ffmpeg. The one
+yes/no confirmation inside the whisperx setup (installing its `uv` tool) is
+the exception: there `y` accepts.
 
 The installer verifies the `testimony` binary against the release's published
 `SHA256SUMS` and, when an authenticated GitHub CLI (`gh`) is available, against

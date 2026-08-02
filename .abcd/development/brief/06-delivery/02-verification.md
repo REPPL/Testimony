@@ -13,7 +13,10 @@ secrets, and `zizmor` audits the workflows themselves. A version tag
 `.github/workflows/release.yml`, which re-runs the format/build/vet/race/smoke
 gates, the installer checks, `gitleaks`, and `zizmor` against the pushed
 commit, then publishes the per-platform tarballs, a `SHA256SUMS` manifest, and
-their SLSA build-provenance attestations. The supply-chain jobs are repeated
+their SLSA build-provenance attestations. release.yml also runs one gate CI
+never does: it asserts `install.sh`'s `VERSION=` pin names the tag being
+released, so a stale pin fails the release rather than shipping the `curl |
+sh` install path a version behind. The supply-chain jobs are repeated
 here rather than trusted from an earlier CI run because a tag can point at a
 commit that was never pushed through a branch (the installer-syntax step's own
 comment names the same gap) — release.yml checks out `github.sha` for every
