@@ -316,7 +316,7 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	var lines [][]byte
 	if batch {
 		var msgs []json.RawMessage
-		if err := json.Unmarshal(body, &msgs); err != nil {
+		if err := json.Unmarshal(body, &msgs); err != nil || bytes.Equal(bytes.TrimSpace(body), []byte("null")) {
 			refuseWrite(w, r, "body is not a JSON array", "expected JSON array", http.StatusBadRequest)
 			return
 		}

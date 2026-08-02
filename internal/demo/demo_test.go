@@ -241,6 +241,35 @@ func TestBatchCompactsEmbeddedNewline(t *testing.T) {
 	}
 }
 
+// TestBatchRejectsNonArray is the batch-path sibling of
+// TestInteractionRefusedWhenMergeWouldRefuseIt's null case: json.Unmarshal
+// into a []json.RawMessage succeeds for a JSON null, decoding it as a nil
+// slice, so a batch body of `null` slipped past the "body is not a JSON
+// array" refusal and wrote zero records with 204 instead of the 400
+// docs/how-to/instrument-your-own-app.md promises for anything that is not a
+// JSON array.
+func TestBatchRejectsNonArray(t *testing.T) {
+	cases := map[string]string{
+		"null":   `null`,
+		"object": `{"a":1}`,
+		"number": `5`,
+		"string": `"hello"`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, dir := newTestServer(t)
+			w := httptest.NewRecorder()
+			s.handleRawEvents(w, jsonPost("/api/events", body, nil))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", w.Code)
+			}
+			if lines := fileLines(t, filepath.Join(dir, session.RawEventsFile)); len(lines) != 0 {
+				t.Fatalf("refused batch still wrote %d lines: %q", len(lines), lines)
+			}
+		})
+	}
+}
+
 // TestAppendLinesReportsWriteError is the dropped-write regression: when the
 // append to a stream file fails, the handler must not answer 204 (which tells the
 // browser the capture was persisted and stops it re-sending). Here the stream
