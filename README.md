@@ -13,7 +13,7 @@ to what was done.
                                                     ├─► timeline.jsonl ─► report.md
  clicks ──► capture hooks ──► interactions.jsonl ───┘
 
- screen ──► rrweb ──► events.rrweb.jsonl  (archival only; nothing downstream reads it)
+ page   ──► rrweb ──► events.rrweb.jsonl  (archival only; nothing downstream reads it)
 ```
 
 Raw audio and video never leave your machine; only derived text is analysed. See

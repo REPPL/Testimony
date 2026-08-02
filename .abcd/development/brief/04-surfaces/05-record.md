@@ -35,9 +35,11 @@ screen video is opt-in retained evidence, not yet consumed downstream.
   downstream. With `-video`, it also captures the screen to `screen.mp4` (H.264).
   Each stream is an independent subprocess, so the ASR audio stays clean of the
   screen recording.
-- Device indices are resolved once at start-up by probing the platform's
-  audio/video device listing: the microphone is the system default input and the
-  screen is the "Capture screen" device.
+- The screen device index is resolved once at start-up by probing the
+  platform's audio/video device listing for the "Capture screen" device. The
+  microphone is captured via avfoundation's `:default` audio device rather
+  than a resolved index, so a virtual audio driver enumerating ahead of the
+  real microphone cannot silently capture it instead.
 - `-demo` serves the instrumented demo app into the *same* session directory, so
   the captured interactions land beside the audio — one command runs the full
   self-test rig. It defaults `-app` to the demo app and seeds a demo task when

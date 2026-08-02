@@ -99,6 +99,16 @@ Evidence integrity:
   empty) instead of rendering a blank or whitespace-only anchor with no
   fallback; `report`'s event lines apply the same rendered-form check
   uniformly across `selector`, `text`, `value`, and `route`.
+- `report` renders a `—` placeholder for an App, Participant, or event
+  `kind` that is whitespace-only or invisible-only Unicode, instead of a
+  blank field, and `analyze`'s emitted request does the same with `(none)`
+  for App/Participant: presence used to be decided on the raw manifest or
+  event value, before `session.SafeText` reduced it to nothing on render.
+- `analyze.ParseRecords`'s duplicate-finding-id check compares ids in their
+  `session.SafeText` form, matching the timeline id checks: two finding ids
+  distinct only by invisible-Unicode bytes (a zero-width space, say) used to
+  load without error and render under the same visible id in `report` and
+  `review`, one in the Confirmed group and the other in Unverified.
 
 Capture and diagnostics:
 
@@ -163,6 +173,18 @@ Checks and installer:
   or its early-return flag paths, never the real fetch/verify/extract path
   (the SHA256SUMS lookup, the hash compare, the `gh attestation` branch, and
   the staged probe).
+- An unauthenticated (or attestation-incapable) `gh` no longer refuses the
+  install as a false provenance failure: it falls back to the verified
+  checksum, exactly like no `gh`; a verification `gh` actually performed and
+  rejected still refuses, and gh's own message is shown instead of being
+  swallowed.
+- An optional-dependency failure (an unreachable ffmpeg or uv host, a failed
+  unpack or brew install) skips its step with guidance instead of aborting
+  the whole installer with the child's raw exit code and a leaked temp
+  directory; Ctrl+C stops the installer instead of being read as "skip";
+  `--help` works through the documented pipe invocation; `--dir`/`--version`
+  without a value are refused cleanly; the whisper.cpp model recipe
+  downloads into a directory `-model NAME` actually searches.
 
 Documentation:
 
@@ -305,12 +327,26 @@ Invocation contract:
   it used to reach `os.MkdirAll` unvalidated and surface as a bare
   `mkdir : no such file or directory` at exit 1, unlike every other
   validated flag on either command.
+- An explicitly-empty `analyze -ingest`/`-out` refuses at exit 2 instead of
+  silently falling through: an empty `-ingest` used to switch `analyze` from
+  ingest mode to emit mode at exit 0 without validating any answer, and an
+  empty `-out` used to redirect the emitted request to stdout at exit 0
+  instead of writing a file.
+- `review -finding F-NNN -verdict duplicate-of-F-NNN` (the same id on both
+  sides) is refused at exit 2 alongside review's other flag-pairing checks,
+  instead of failing inside `review.checkTargets` at exit 1 — where, on a
+  session with no `findings.jsonl` yet, the contradiction was masked
+  entirely behind "run analyze -ingest first".
 
 Capture integrity:
 
 - `POST /api/interactions` refuses with 400 any record `merge` would refuse —
   a non-object body, or a missing/implausible `t` or missing `kind` — instead
   of persisting with 204 a line that later fails the whole session's merge.
+- `POST /api/events` refuses a literal JSON `null` body with 400 instead of
+  decoding it to a nil slice and answering 204: a JSON `null` unmarshals
+  cleanly into an empty `[]json.RawMessage`, so it slipped past the "body is
+  not a JSON array" check the endpoint otherwise applies uniformly.
 - A refused capture write and a deliberately wider (non-loopback) bind are
   reported on stderr; the page posts via `sendBeacon`, so the terminal is the
   only place a refusal can surface.
@@ -338,42 +374,6 @@ Capture integrity:
   an affirmative "persisted" provenance line, the exact silent-shift-to-0
   outcome the sidecar exists to prevent. It now refuses with the same
   guidance a malformed sidecar already gives.
-
-Installer:
-
-- An unauthenticated (or attestation-incapable) `gh` no longer refuses the
-  install as a false provenance failure: it falls back to the verified
-  checksum, exactly like no `gh`; a verification `gh` actually performed and
-  rejected still refuses, and gh's own message is shown instead of being
-  swallowed.
-- An optional-dependency failure (an unreachable ffmpeg or uv host, a failed
-  unpack or brew install) skips its step with guidance instead of aborting
-  the whole installer with the child's raw exit code and a leaked temp
-  directory; Ctrl+C stops the installer instead of being read as "skip";
-  `--help` works through the documented pipe invocation; `--dir`/`--version`
-  without a value are refused cleanly; the whisper.cpp model recipe
-  downloads into a directory `-model NAME` actually searches.
-
-CLI invocation:
-
-- An explicitly-empty `analyze -ingest`/`-out` refuses at exit 2 instead of
-  silently falling through: an empty `-ingest` used to switch `analyze` from
-  ingest mode to emit mode at exit 0 without validating any answer, and an
-  empty `-out` used to redirect the emitted request to stdout at exit 0
-  instead of writing a file.
-- `review -finding F-NNN -verdict duplicate-of-F-NNN` (the same id on both
-  sides) is refused at exit 2 alongside review's other flag-pairing checks,
-  instead of failing inside `review.checkTargets` at exit 1 — where, on a
-  session with no `findings.jsonl` yet, the contradiction was masked
-  entirely behind "run analyze -ingest first".
-
-Evidence integrity:
-
-- `report` renders a `—` placeholder for an App, Participant, or event
-  `kind` that is whitespace-only or invisible-only Unicode, instead of a
-  blank field, and `analyze`'s emitted request does the same with `(none)`
-  for App/Participant: presence used to be decided on the raw manifest or
-  event value, before `session.SafeText` reduced it to nothing on render.
 
 ## [0.4.0] - 2026-07-24
 
