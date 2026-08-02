@@ -99,7 +99,7 @@ func Render(dir string, window float64) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Session report — %s\n\n", mdInline(man.Session))
 	fmt.Fprintf(&b, "**App:** %s · **Participant:** %s · **Duration:** %s · **Utterances:** %d · **Events:** %d\n\n",
-		mdInline(orDash(man.App)), mdInline(orDash(man.Participant)), clock(end(entries)), len(speech), len(events))
+		mdOrDash(man.App), mdOrDash(man.Participant), clock(end(entries)), len(speech), len(events))
 	if len(man.Tasks) > 0 {
 		fmt.Fprintf(&b, "**Tasks:** %s\n\n", mdInline(strings.Join(man.Tasks, "; ")))
 	}
@@ -352,7 +352,12 @@ func eventLine(e timeline.Entry) string {
 		}
 		return ""
 	}
-	parts := []string{mdInline(raw("kind"))}
+	// kind is decided on its rendered form too, like every field below it
+	// (inlineRendersEmpty): timeline.checkInteraction only requires the raw
+	// bytes be non-empty, so an interaction whose kind is invisible-only
+	// Unicode passes validation and must not render as a silent gap where
+	// the event name belongs.
+	parts := []string{mdOrDash(raw("kind"))}
 	// Every field below is decided on its rendered form, not its raw one
 	// (codeRendersEmpty/inlineRendersEmpty): a field that is non-empty raw but
 	// renders to nothing or to whitespace only (invisible-only Unicode,
@@ -378,4 +383,16 @@ func orDash(s string) string {
 		return "—"
 	}
 	return s
+}
+
+// mdOrDash renders s inline, falling back to "—" when it is empty or renders
+// to nothing (inlineRendersEmpty): manifest fields like App/Participant are
+// operator-supplied and unvalidated by session.SaveManifest, so a
+// whitespace-only or invisible-only value must not reach mdInline and reduce
+// to a blank field with the dash placeholder skipped.
+func mdOrDash(s string) string {
+	if inlineRendersEmpty(s) {
+		return "—"
+	}
+	return mdInline(s)
 }
