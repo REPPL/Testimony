@@ -486,3 +486,42 @@ Architecture-shaping decisions graduate to an ADR under
   matching the correction round 18 made to `cli.go`'s usage text. Recorded,
   not fixed: `go.mod`'s EOL Go 1.22 pin (per round 18; still out of scope for
   an autonomous round).
+- 2026-08-02 — Bug-hunt round 20: `analyze.ParseRecords`'s duplicate-finding-id
+  check now compares ids in their `session.SafeText` form, matching the
+  timeline id checks, closing the last id-uniqueness check in the codebase
+  still keyed on the raw string — two finding ids differing only by
+  invisible-Unicode bytes (e.g. a zero-width space) both rendered under the
+  same visible id in `report`/`review`, one confirmed and one unverified,
+  without a duplicate refusal; `POST /api/events` now refuses a literal JSON
+  `null` body with 400 instead of decoding it to a nil slice and answering
+  204, matching the array-required contract `instrument-your-own-app.md`
+  documents. Docs/internal-doc nitpicks: `CHANGELOG.md`'s `[Unreleased]`
+  section had accumulated duplicate and near-duplicate group headings
+  ("Evidence integrity:" twice; "Invocation contract:"/"CLI invocation:" and
+  "Checks and installer:"/"Installer:" as separate groups) from rounds
+  appending new headings instead of extending existing ones — consolidated
+  without dropping any bullet; the review surface brief
+  (`04-surfaces/07-review.md`) now names the finding id `review` prints
+  first, the correction round 19 made to `cli.md` and the analyse-a-session
+  how-to but missed on this sibling page; `spc-1-record-command.md`
+  corrected against the shipped code (the microphone capture argv uses
+  avfoundation's `:default` device, not a resolved index — a fixed index
+  can capture a virtual audio driver instead of the real microphone; signal
+  handling includes SIGHUP alongside SIGINT/SIGTERM, per round 15's fix to
+  `record.go`); the README architecture diagram's `screen ──► rrweb` line
+  relabelled `page ──► rrweb` — rrweb records DOM/pointer activity from the
+  instrumented page, not the screen capture, which is a separate stream
+  (`screen.mp4`) the diagram does not depict. Refuted: a `release.yml`
+  private-repo attestation-guard asymmetry (the claimed failure mechanism
+  does not occur — an unauthenticated `curl`/`wget` tarball fetch against a
+  private repo 404s before the `gh attestation verify` branch is ever
+  reached); `AGENTS.md` claiming CI runs plain `go test ./...` (the `-race`
+  leg is a strict superset, already refuted in round 13); the CHANGELOG
+  having no per-round documentation entry (no such convention exists —
+  rounds 8 and 13 also landed doc-only commits with no CHANGELOG bullet);
+  the `.gitignore` rule for `examples/*/report.md` (the file is not
+  tracked, so the rule is correct and exactly parallel to the
+  `timeline.jsonl` sibling); persona role-label wording drift across intent
+  drafts (the repo's naming rule constrains persona names, not role
+  labels, and the varying labels are compatible facets of each persona's
+  definition).
