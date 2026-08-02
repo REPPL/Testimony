@@ -48,7 +48,7 @@ One normalised interaction event per line, as posted by the instrumented app. Ti
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `t` | integer | yes | event time, epoch milliseconds |
+| `t` | integer | yes | event time, epoch milliseconds; must be positive and within 1e9 seconds of `t0_epoch_ms` (`merge` and the demo write endpoint both refuse otherwise) |
 | `kind` | string | yes | event kind, e.g. `"click"`, `"input"` |
 | `selector` | string | no | element anchor, ideally `[data-testid=...]` |
 | `text` | string | no | short element label (demo capture truncates to 40 characters) |
@@ -70,7 +70,7 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 | `t1` | number | yes | utterance end, session-relative seconds |
 | `speaker` | string | no | speaker label; `"P1"` when the engine supplies no diarisation |
 | `text` | string | yes | utterance text, whitespace-trimmed (empty segments are dropped) |
-| `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — words the aligner could not time are omitted |
+| `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — words the aligner could not time, or whose engine-reported time (before the session offset is added) is implausible (non-finite, or beyond ±1e9 seconds), are omitted |
 
 ```json
 {"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Now I expect this save button to confirm somehow.","words":[{"w":"Now","t":17.6},{"w":"I","t":17.92}]}

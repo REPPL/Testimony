@@ -184,6 +184,50 @@ func TestWhisperCppRejectsUntimedSegment(t *testing.T) {
 	}
 }
 
+// TestParseSegmentRejectsImplausibleTime is the +Inf regression: mapSegments'
+// round2 (x*100) silently overflowed to +Inf for a segment start near 1e307,
+// aborting the run with a bare "json: unsupported value: +Inf" at WriteJSONL,
+// and a segment between maxOffsetSeconds and ~1.8e306 wrote a transcript at
+// exit 0 that merge only refused one command later — naming transcript.jsonl
+// rather than the engine that produced the bad time. Both engines' parsers
+// must refuse an implausible start/end where it enters, matching their
+// existing missing-start/missing-end refusals.
+func TestParseSegmentRejectsImplausibleTime(t *testing.T) {
+	for _, c := range []struct{ name, raw, want string }{
+		{"whisperx huge start", `{"segments":[{"start":1e307,"end":1e307,"text":"Bob."}]}`, "implausible start"},
+		{"whisperx huge end", `{"segments":[{"start":0,"end":2e9,"text":"Bob."}]}`, "implausible end"},
+	} {
+		if _, err := parseWhisperX([]byte(c.raw)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want an error containing %q, got %v", c.name, c.want, err)
+		}
+	}
+	for _, c := range []struct{ name, raw, want string }{
+		{"whispercpp huge from", `{"transcription":[{"offsets":{"from":1000000000000000,"to":1000000000000001},"text":"Carol."}]}`, "implausible offsets.from"},
+		{"whispercpp huge to", `{"transcription":[{"offsets":{"from":0,"to":2000000000000},"text":"Carol."}]}`, "implausible offsets.to"},
+	} {
+		if _, err := parseWhisperCpp([]byte(c.raw)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want an error containing %q, got %v", c.name, c.want, err)
+		}
+	}
+
+	// A large but plausible time (well under maxOffsetSeconds) still parses.
+	segs, err := parseWhisperX([]byte(`{"segments":[{"start":86400,"end":86405,"text":"Alice logs in."}]}`))
+	if err != nil || len(segs) != 1 {
+		t.Fatalf("a plausible segment must be accepted, got segs=%+v err=%v", segs, err)
+	}
+
+	// An implausible WORD timestamp — reachable even when the segment's own
+	// start/end are fine — must be dropped rather than left to overflow
+	// mapSegments' round2 to +Inf, matching the missing-timestamp case.
+	segs, err = parseWhisperX([]byte(`{"segments":[{"start":0,"end":1,"text":"Bob.","words":[{"word":"Bob","start":1e307}]}]}`))
+	if err != nil {
+		t.Fatalf("an implausible word must not refuse the segment, got %v", err)
+	}
+	if len(segs) != 1 || len(segs[0].words) != 0 {
+		t.Fatalf("implausible word must be dropped, got %+v", segs)
+	}
+}
+
 func TestMapSegmentsNegativeOffset(t *testing.T) {
 	utts := mapSegments([]segment{
 		{start: 10.0, end: 12.345, text: " Carol pauses. ", words: []timeline.Word{{W: " Carol ", T: 10.004}}},
@@ -248,6 +292,25 @@ func TestCheckVAD(t *testing.T) {
 	for _, v := range []string{"webrtc", "silreo"} {
 		if err := CheckVAD(v); err == nil {
 			t.Errorf("CheckVAD(%q): want a refusal, got nil", v)
+		}
+	}
+}
+
+// TestCheckAudioExt pins the closed -audio extension set docs/reference/cli.md
+// documents (.m4a, .mov, .wav). Pre-fix, an unsupported extension was reported
+// only from checkExternalAudio inside transcribe.Run, after detectEngine had
+// already run — on a machine with no ASR engine installed this surfaced as
+// "no ASR engine found" at exit 1, masking the actual mistake, rather than the
+// exit 2 the docs promise for an invalid flag value.
+func TestCheckAudioExt(t *testing.T) {
+	for _, v := range []string{"rec.m4a", "rec.MOV", "audio.wav", "/a/b/c.M4A"} {
+		if err := CheckAudioExt(v); err != nil {
+			t.Errorf("CheckAudioExt(%q): want acceptance, got %v", v, err)
+		}
+	}
+	for _, v := range []string{"rec.txt", "rec.mp3", "rec", "rec.wav.bak"} {
+		if err := CheckAudioExt(v); err == nil {
+			t.Errorf("CheckAudioExt(%q): want a refusal, got nil", v)
 		}
 	}
 }

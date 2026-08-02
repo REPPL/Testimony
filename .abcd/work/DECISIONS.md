@@ -418,3 +418,16 @@ Architecture-shaping decisions graduate to an ADR under
   briefs corrected against the shipped CLI; a `-notes` flag named in the
   CHANGELOG and a code comment, which never existed, corrected to the real
   `-task`/`-app` flags.
+- 2026-08-02 — Bug-hunt round 17: `-audio`'s unsupported-extension check now
+  runs CLI-side (exit 2) before `detectEngine`, matching `-engine`/`-device`/
+  `-vad`; an ASR engine's segment start/end is now bounded to the same
+  ±1e9s magnitude every other externally-sourced time in the pipeline uses,
+  closing a `+Inf` transcript-write failure and a finite-but-absurd time that
+  wrote a transcript `merge` only refused one command later; `install.sh`'s
+  PATH-fix advice now routes on `$SHELL` instead of assuming zsh, which was
+  wrong guidance on a bash-default Linux install; `merge`'s zero-entries
+  refusal condition corrected in `cli.md` and the merge brief page (the guard
+  is "zero entries", not "both files missing"); `ci.yml`'s header comment,
+  the verification brief's release-only gate list, the instrument-your-own-app
+  how-to's `t` validation list, and the tutorial's installer-prompt claims
+  corrected against the code.

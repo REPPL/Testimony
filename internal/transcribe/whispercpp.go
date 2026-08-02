@@ -90,9 +90,17 @@ func parseWhisperCpp(raw []byte) ([]segment, error) {
 		if t.Offsets.To == nil {
 			return nil, fmt.Errorf("%s segment %d is missing offsets.to; cannot say when the speech stopped", whisperCppBinary, i+1)
 		}
+		start := float64(*t.Offsets.From) / 1000.0
+		end := float64(*t.Offsets.To) / 1000.0
+		if !checkSegmentTime(start) {
+			return nil, fmt.Errorf("%s segment %d has an implausible offsets.from %dms; an audio-clock time cannot exceed %g seconds in magnitude", whisperCppBinary, i+1, *t.Offsets.From, maxOffsetSeconds)
+		}
+		if !checkSegmentTime(end) {
+			return nil, fmt.Errorf("%s segment %d has an implausible offsets.to %dms; an audio-clock time cannot exceed %g seconds in magnitude", whisperCppBinary, i+1, *t.Offsets.To, maxOffsetSeconds)
+		}
 		segs = append(segs, segment{
-			start: float64(*t.Offsets.From) / 1000.0,
-			end:   float64(*t.Offsets.To) / 1000.0,
+			start: start,
+			end:   end,
 			text:  t.Text,
 		})
 	}

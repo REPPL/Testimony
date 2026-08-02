@@ -20,11 +20,11 @@ subprocess. Nothing touches the network.
 
 ## Behaviour
 
-- With `-audio`, converts the recording to canonical 16 kHz mono PCM
-  `audio.wav` via ffmpeg; unsupported extensions and missing tools fail with
-  guidance. Omitting `-audio` (or pointing it at the session's own `audio.wav`,
-  as a `record` session has) reuses that file in place and skips the
-  conversion.
+- `-audio`'s extension is validated at the CLI boundary (exit 2) before any
+  work starts. With a valid `-audio`, converts the recording to canonical
+  16 kHz mono PCM `audio.wav` via ffmpeg; missing tools fail with guidance.
+  Omitting `-audio` (or pointing it at the session's own `audio.wav`, as a
+  `record` session has) reuses that file in place and skips the conversion.
 - Resolves the audio→session offset: an explicit `-offset` wins; otherwise,
   for an external recording (`-audio` naming a file other than the session's
   own `audio.wav`), it is derived from the recording's `creation_time`

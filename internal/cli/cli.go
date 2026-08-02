@@ -176,6 +176,18 @@ func Run(args []string) int {
 		if *dir == "" {
 			return usageErr(fmt.Errorf("transcribe: -session is required"))
 		}
+		// -audio's extension is a closed set (docs/reference/cli.md), the same
+		// class as -engine/-device/-vad below — refuse it at exit 2 before
+		// detectEngine and offset resolution spend any work on a path
+		// whisperx/whisper.cpp were never going to accept. Unchecked, a bad
+		// extension surfaced only after detectEngine ran, either as "no ASR
+		// engine found" on a machine with none installed (masking the real
+		// mistake) or as the same unsupported-format error at exit 1.
+		if *audio != "" {
+			if err := transcribe.CheckAudioExt(*audio); err != nil {
+				return usageErr(fmt.Errorf("transcribe: %w", err))
+			}
+		}
 		// An unknown engine name is a wrong invocation (exit 2) — reported from
 		// detectEngine it took the runtime status a script could not tell from a
 		// genuinely missing engine binary.

@@ -57,12 +57,27 @@ Evidence integrity:
   anchor: an evidence citation of `""` used to pass validation merely
   because some id-less entry existed in the timeline, not because the
   cited id was ever a real anchor.
-- `merge` refuses to overwrite an existing `timeline.jsonl` when
-  `transcript.jsonl` and `interactions.jsonl` are both missing, instead of
-  truncating it to zero entries at exit 0 — either file is individually
-  optional, but losing both left nothing to build a timeline from, and
+- `merge` refuses to overwrite an existing, non-empty `timeline.jsonl` when
+  `transcript.jsonl` and `interactions.jsonl` together yield zero entries —
+  missing, empty, or both — instead of truncating it to zero entries at exit
+  0: either file is individually optional, but with nothing left to build a
+  timeline from there is no honest timeline to write, and
   `transcribe`/`analyze -ingest` already refuse the identical "nothing to
   write" shape rather than destroy an existing artefact.
+- An ASR engine's own reported segment start/end time is bounded to the same
+  magnitude every other externally-sourced time in the pipeline is: an
+  implausibly large value silently overflowed to `+Inf` through the
+  two-decimal rounding step, failing the transcript write with a bare JSON
+  encoding error, or — for a merely absurd rather than astronomical value —
+  wrote a transcript at exit 0 that `merge` only refused one command later,
+  naming `transcript.jsonl` rather than the engine that produced it. A
+  WhisperX word's own time is bounded the same way at the parser's word loop,
+  but dropped rather than refused: an astronomical word time used to fail the
+  whole transcript write with the same `+Inf` error, while a merely absurd one
+  was written at exit 0 and carried unchallenged into `timeline.jsonl` —
+  nothing downstream bounds a word's time as `merge` bounds an utterance's
+  `t0`/`t1`. Such a word is now silently omitted from that utterance's
+  `words`, the same outcome an unaligned word already had.
 
 Capture and diagnostics:
 
@@ -173,6 +188,15 @@ Documentation:
 - A `-notes` flag named in the CHANGELOG and in an `internal/session` code
   comment never existed; both now name the real `-task`/`-app` flags (or a
   hand-edited `notes` field).
+- `cli.md` and the merge surface brief page corrected against the code:
+  `merge`'s zero-entries refusal fires when the two source files together
+  yield nothing, not only when both are missing. The instrument-your-own-app
+  how-to's 400-response list now names the `t` plausibility rules `cli.md`
+  already documented; `ci.yml`'s header comment names the checks it actually
+  runs; the verification brief names every release-only gate; and the
+  getting-started tutorial states that both dependency prompts accept a
+  second install word rather than skipping on anything but the recommended
+  reply.
 
 Invocation contract:
 
@@ -202,6 +226,11 @@ Invocation contract:
   workflow now gates the pin against the tag so it cannot go stale again. The
   installer also renders single-option prompts correctly and names the actual
   cause when a release download fails.
+- `install.sh`'s PATH-fix advice routes on `$SHELL` instead of unconditionally
+  suggesting `~/.zshrc` and `exec zsh`: on a bash-default Linux install (the
+  installer supports Linux as well as macOS) the old advice appended to a
+  file bash never reads and then tried to exec a shell that may not be
+  installed.
 - A stray positional argument is refused as a usage error; it used to be
   silently swallowed together with every flag after it, so the command ran
   with defaults at exit 0.
@@ -230,6 +259,11 @@ Invocation contract:
   before whisperx itself rejected the literal argument at the runtime
   status, not the exit 2 the CLI reference promises for an invalid flag
   value.
+- `transcribe -audio`'s extension is validated at exit 2 before `detectEngine`
+  runs, joining `-engine`/`-device`/`-vad`: an unsupported extension used to
+  surface only after engine detection, either masked as "no ASR engine
+  found" on a machine with none installed, or as the same error one
+  step later, at exit 1 either way.
 
 Capture integrity:
 
