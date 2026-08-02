@@ -22,7 +22,7 @@ Derivation can be wrong — a recorder may stamp the wrong moment, or omit the t
 
 ## The join window
 
-With both streams on the session clock, the report joins them: each interface event is attached to an utterance when it falls within the utterance's span widened by ±2.5 seconds on each side (the `-window` flag).
+With both streams on the session clock, the report joins them: each interface event is attached to the first utterance (in time) whose span, widened by ±2.5 seconds on each side (the `-window` flag), contains it. When two utterances' widened spans overlap, an event in the overlap goes to the earlier utterance, not both — each event appears exactly once.
 
 A window — rather than exact matching — is deliberate. Transcription timestamps are alignment *estimates*, not measurements. And people do not narrate in lockstep with their hands: "I'll press save… there" often brackets the click rather than coinciding with it. The window absorbs both kinds of slack. Its width is a trade-off: too narrow and genuine pairs are missed; too wide and unrelated events pile onto an utterance. Around two to three seconds sits well for think-aloud narration, and the flag exists because sessions differ.
 
