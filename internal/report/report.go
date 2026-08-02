@@ -194,16 +194,24 @@ func renderFindings(b *strings.Builder, dir string) {
 
 // findingAnchor renders a finding's on-screen anchor: the ui selector (in
 // backticks) and route when present, else the evidence ids.
+//
+// Presence is decided on the rendered form, not the raw one: mdCode strips
+// backticks and both mdCode and mdInline run session.SafeText, so a selector
+// or route that is non-empty raw but renders to nothing (invisible-only
+// Unicode, or a selector of backticks alone) must fall through to the
+// evidence ids rather than render a blank anchor with no fallback.
 func findingAnchor(f analyze.Finding) string {
-	if f.UI != nil && (f.UI.Selector != "" || f.UI.Route != "") {
+	if f.UI != nil {
 		var parts []string
-		if f.UI.Selector != "" {
-			parts = append(parts, mdCode(f.UI.Selector))
+		if sel := mdCode(f.UI.Selector); sel != "``" {
+			parts = append(parts, sel)
 		}
-		if f.UI.Route != "" {
-			parts = append(parts, mdInline(f.UI.Route))
+		if route := mdInline(f.UI.Route); route != "" {
+			parts = append(parts, route)
 		}
-		return strings.Join(parts, " ")
+		if len(parts) > 0 {
+			return strings.Join(parts, " ")
+		}
 	}
 	return "evidence " + mdInline(strings.Join(f.Evidence, ", "))
 }
@@ -326,8 +334,12 @@ func eventLine(e timeline.Entry) string {
 		return ""
 	}
 	parts := []string{mdInline(raw("kind"))}
-	if sel := raw("selector"); sel != "" {
-		parts = append(parts, mdCode(sel))
+	// Decide on the rendered form, not the raw one: mdCode strips backticks and
+	// applies session.SafeText, so a selector that is non-empty raw but renders
+	// to nothing (invisible-only Unicode, or backticks alone) must be omitted
+	// rather than appended as a bare, empty code span.
+	if sel := mdCode(raw("selector")); sel != "``" {
+		parts = append(parts, sel)
 	}
 	if t := raw("text"); t != "" {
 		parts = append(parts, `"`+mdInline(t)+`"`)

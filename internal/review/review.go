@@ -436,16 +436,24 @@ func printFinding(w io.Writer, f analyze.Finding) {
 	fmt.Fprintf(w, "  anchor: %s\n", session.SafeText(anchor(f)))
 }
 
+// anchor renders a finding's on-screen anchor for printFinding. Presence is
+// decided on the SafeText-rendered form, not the raw one: printFinding wraps
+// the whole return value in session.SafeText before printing, so a selector
+// or route that is non-empty raw but strips to nothing under SafeText
+// (invisible-only Unicode) must fall through to the evidence ids rather than
+// render a blank (or merely whitespace) anchor with no fallback.
 func anchor(f analyze.Finding) string {
-	if f.UI != nil && (f.UI.Selector != "" || f.UI.Route != "") {
-		parts := []string{}
-		if f.UI.Selector != "" {
-			parts = append(parts, f.UI.Selector)
+	if f.UI != nil {
+		var parts []string
+		if sel := session.SafeText(f.UI.Selector); sel != "" {
+			parts = append(parts, sel)
 		}
-		if f.UI.Route != "" {
-			parts = append(parts, f.UI.Route)
+		if route := session.SafeText(f.UI.Route); route != "" {
+			parts = append(parts, route)
 		}
-		return strings.Join(parts, " ")
+		if len(parts) > 0 {
+			return strings.Join(parts, " ")
+		}
 	}
 	return "evidence " + strings.Join(f.Evidence, ", ")
 }

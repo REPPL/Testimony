@@ -627,3 +627,62 @@ func TestReportPlaceholdersEventWithNoRecognisedPayload(t *testing.T) {
 		t.Fatalf("report is missing the placeholder for the empty event:\n%s", md)
 	}
 }
+
+// TestReportFindingAnchorFallsBackOnBlankUI is the render-side half of the
+// blank-anchor class: findingAnchor used to decide the ui-vs-evidence branch
+// on the raw selector/route, then render through mdCode, which strips
+// backticks. A selector made entirely of backticks is non-empty raw but
+// renders to nothing, so pre-fix the anchor was a bare, empty code span and
+// the evidence-id fallback never printed.
+func TestReportFindingAnchorFallsBackOnBlankUI(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	findings := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"ui":{"selector":"` + "```" + `"},"status":"unverified"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "— ``\n") {
+		t.Fatalf("finding anchor rendered as a blank code span with no evidence fallback:\n%s", md)
+	}
+	if !strings.Contains(md, "— evidence utt-004") {
+		t.Fatalf("report is missing the evidence-id fallback for a ui that renders empty:\n%s", md)
+	}
+}
+
+// TestReportEventLineOmitsSelectorThatRendersEmpty is the eventLine sibling:
+// an event selector made entirely of Unicode format characters (here U+200B
+// ZERO WIDTH SPACE) is non-empty raw but strips to "" under session.SafeText.
+// Pre-fix, eventLine appended mdCode(sel) unconditionally, rendering a bare
+// "“" in the middle of the line instead of omitting the field.
+func TestReportEventLineOmitsSelectorThatRendersEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	zeroWidthSpace := string(rune(0x200B))
+	tl := `{"t":2,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"` + zeroWidthSpace + `"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "``") {
+		t.Fatalf("event line rendered an empty code span for an invisible-only selector:\n%s", md)
+	}
+	if !strings.Contains(md, "[00:02] click") {
+		t.Fatalf("event line lost its kind:\n%s", md)
+	}
+}
