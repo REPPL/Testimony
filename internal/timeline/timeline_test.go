@@ -668,3 +668,39 @@ func TestReadEntriesRejectsMissingT(t *testing.T) {
 		t.Fatalf("expected a missing-t error naming entry 2, got %v", err)
 	}
 }
+
+// TestReadEntriesRejectsOversizedT pins the same ±maxUtteranceSeconds bound
+// checkedUtterances already applies to transcript.jsonl, reopened here
+// because a hand-edited or exchanged timeline.jsonl reaches this reader
+// without passing through checkedUtterances at all.
+func TestReadEntriesRejectsOversizedT(t *testing.T) {
+	dir := t.TempDir()
+	lines := `{"t":1e300,"src":"speech","id":"utt-001","payload":{"t1":1e300,"speaker":"P1","text":"huge"}}` + "\n"
+	path := filepath.Join(dir, session.TimelineFile)
+	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	_, err := ReadEntries(path)
+	if err == nil || !strings.Contains(err.Error(), "entry 1") || !strings.Contains(err.Error(), "exceed") {
+		t.Fatalf("expected an oversized-t error naming entry 1, got %v", err)
+	}
+}
+
+// TestReadEntriesRejectsOversizedT1 pins the same bound on a speech entry's
+// payload t1: unlike t, SpeechEnd only clamps t1 for inversion, not
+// magnitude, so an extreme t1 previously reached report's join window and
+// analyze's session-range bound unbounded — pulling every later event into
+// the poisoned entry's window and admitting an equally absurd finding time
+// as "inside" the inflated session range.
+func TestReadEntriesRejectsOversizedT1(t *testing.T) {
+	dir := t.TempDir()
+	lines := `{"t":1.0,"src":"speech","id":"utt-001","payload":{"t1":1e300,"speaker":"P1","text":"huge span"}}` + "\n"
+	path := filepath.Join(dir, session.TimelineFile)
+	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	_, err := ReadEntries(path)
+	if err == nil || !strings.Contains(err.Error(), "entry 1") || !strings.Contains(err.Error(), "t1") || !strings.Contains(err.Error(), "exceed") {
+		t.Fatalf("expected an oversized-t1 error naming entry 1, got %v", err)
+	}
+}

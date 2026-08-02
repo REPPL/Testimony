@@ -483,10 +483,15 @@ func TestClockRefusesOutOfRangeTime(t *testing.T) {
 	}
 }
 
-// TestReportRendersHugeTimeAsPlaceholder is the end-to-end guard: a hand-authored
-// timeline.jsonl whose speech carries t=1e300 must render a placeholder Duration,
-// not a saturated-integer garbage stamp, and Render must still exit cleanly.
-func TestReportRendersHugeTimeAsPlaceholder(t *testing.T) {
+// TestReportRefusesHugeTime is the end-to-end guard for the class
+// TestClockRefusesOutOfRangeTime pins at the sink: a hand-authored
+// timeline.jsonl whose speech carries t=1e300 must now be refused by
+// timeline.ReadEntries's own ±maxUtteranceSeconds bound before it ever
+// reaches Render's join or clock — superseding the placeholder this test
+// used to observe from Render's return value, back when ReadEntries let the
+// value through unbounded and only clock's saturated-integer defense caught
+// it at render time.
+func TestReportRefusesHugeTime(t *testing.T) {
 	dir := t.TempDir()
 	if err := session.SaveManifest(dir, session.Manifest{Session: "x", Participant: "P1"}); err != nil {
 		t.Fatalf("SaveManifest: %v", err)
@@ -496,31 +501,27 @@ func TestReportRendersHugeTimeAsPlaceholder(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
 		t.Fatalf("write timeline: %v", err)
 	}
-	md, err := Render(dir, 2.5)
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	if strings.Contains(md, "153722867280912930") {
-		t.Fatalf("report rendered a saturated-integer garbage stamp:\n%s", md)
-	}
-	if !strings.Contains(md, "--:--") {
-		t.Fatalf("expected a placeholder stamp for the out-of-range time:\n%s", md)
+	_, err := Render(dir, 2.5)
+	if err == nil || !strings.Contains(err.Error(), "exceed") {
+		t.Fatalf("expected Render to refuse the oversized time, got %v", err)
 	}
 }
 
 // TestReportFlushesEventPastLegacySentinel covers the sentinel bug: the trailing
 // standalone-event flush used a finite 1e18 bound, so any event with t at or past
 // it was silently omitted from the report while merge and report both exited 0.
-// The flush is now +Inf-bounded, so every finite-t event appears. Pre-fix the
-// event below (t=1e18) was dropped.
+// The flush is now +Inf-bounded, so every finite-t event appears. The event below
+// sits at 9e8 seconds (~28.5 years) — the largest magnitude timeline.ReadEntries'
+// own ±1e9 bound still admits — to prove the flush isn't limited by some smaller
+// sentinel of its own within that range.
 func TestReportFlushesEventPastLegacySentinel(t *testing.T) {
 	dir := t.TempDir()
 	if err := session.SaveManifest(dir, session.Manifest{Session: "x", Participant: "P1"}); err != nil {
 		t.Fatalf("SaveManifest: %v", err)
 	}
-	// One ordinary utterance and a standalone event at exactly the old sentinel.
+	// One ordinary utterance and a standalone event near the read boundary.
 	const tl = `{"t":5,"src":"speech","id":"u1","payload":{"speaker":"P1","t1":6,"text":"hello"}}
-{"t":1e18,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"#late","route":"#r"}}
+{"t":9e8,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"#late","route":"#r"}}
 `
 	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
 		t.Fatalf("write timeline: %v", err)
@@ -530,7 +531,7 @@ func TestReportFlushesEventPastLegacySentinel(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	if !strings.Contains(md, "#late") {
-		t.Fatalf("standalone event at the legacy 1e18 sentinel was dropped from the report:\n%s", md)
+		t.Fatalf("standalone event near the read boundary was dropped from the report:\n%s", md)
 	}
 }
 
@@ -777,5 +778,31 @@ func TestReportHeaderPlaceholdersInvisibleOnlyManifestFields(t *testing.T) {
 	}
 	if !strings.Contains(md, "**App:** — · **Participant:** —") {
 		t.Fatalf("report is missing the placeholder for an invisible/whitespace-only App/Participant:\n%s", md)
+	}
+}
+
+// TestReportTitlePlaceholdersInvisibleOnlySession is the Session-field sibling
+// of TestReportHeaderPlaceholdersInvisibleOnlyManifestFields: the title and
+// Tasks line bypassed the same rendered-form placeholder pattern App and
+// Participant already use, so a whitespace-only Session and all-empty Tasks
+// rendered a bare trailing dash and a lone "; " with nothing either side.
+func TestReportTitlePlaceholdersInvisibleOnlySession(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "   ", Participant: "P1", Tasks: []string{"", "  "}}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), nil, 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(md, "# Session report — —\n") {
+		t.Fatalf("report is missing the placeholder for a whitespace-only Session:\n%s", md)
+	}
+	if strings.Contains(md, "**Tasks:**") {
+		t.Fatalf("report rendered a Tasks line with no non-empty task:\n%s", md)
 	}
 }
