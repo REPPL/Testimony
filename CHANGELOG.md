@@ -198,6 +198,10 @@ Checks and installer:
   checksum, exactly like no `gh`; a verification `gh` actually performed and
   rejected still refuses, and gh's own message is shown instead of being
   swallowed.
+- `install.sh --dir`/`--version` refuse an explicitly-empty value, not only a
+  missing one: `--dir ""` used to run the full download and hash
+  verification before dying on a bare `mkdir` error naming no flag, and
+  `--version ""` built a malformed release URL.
 - An optional-dependency failure (an unreachable ffmpeg or uv host, a failed
   unpack or brew install) skips its step with guidance instead of aborting
   the whole installer with the child's raw exit code and a leaked temp
@@ -276,6 +280,13 @@ Documentation:
   goal, matching the analysis brief and delivery-phase pages it previously
   contradicted. The verification brief's release-only gate list now names
   the `install.sh` end-to-end smoke test added below.
+- `itd-2-analysis-findings.md` moved from `intents/planned/` to
+  `intents/shipped/` — `analyze`/`review` shipped in v0.2.0 and directory
+  location is the intents' own single source of truth for lifecycle state,
+  the same rule round 19 applied to its sibling `itd-1`. Its AC3 is narrowed
+  to the request-level keyframe flag that actually shipped, matching
+  `spc-2`'s own flagged divergence; extraction is out of scope pending
+  maintainer confirmation.
 
 Invocation contract:
 
@@ -363,6 +374,20 @@ Invocation contract:
   external recording the caller named (with a session `audio.wav` present),
   or claiming `-audio` was never given at the wrong exit status (without
   one).
+- An explicitly-empty `review -finding`/`-verdict` refuses at exit 2,
+  joining `transcribe -audio`: it used to be indistinguishable from
+  omitting both flags, silently no-oping on piped input or, on a
+  character-device stdin, falling through to the interactive walk and
+  appending a verdict for a finding the caller never named.
+
+Analysis request integrity:
+
+- `analyze` filters a blank or invisible-only-Unicode manifest task from the
+  emitted request's numbered task list, matching `report`'s task rendering:
+  it used to print such a task as a content-less numbered item, giving the
+  request's "attribute each finding to a task" instruction a referent with
+  no content and disagreeing with `report.md`'s task list for the same
+  session.
 
 Capture integrity:
 
