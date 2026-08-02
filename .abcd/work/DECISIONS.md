@@ -431,3 +431,27 @@ Architecture-shaping decisions graduate to an ADR under
   the verification brief's release-only gate list, the instrument-your-own-app
   how-to's `t` validation list, and the tutorial's installer-prompt claims
   corrected against the code.
+- 2026-08-02 — Bug-hunt round 18: `analyze`'s selector/route index gated on
+  the raw string's emptiness but stored under its SafeText key, so an
+  invisible-only-Unicode `ui.selector`/`ui.route` validated against nothing
+  real, mirroring an id-index bug already fixed for ids; `report` and
+  `review` decided a finding's on-screen anchor on the same raw-vs-rendered
+  gap, rendering a blank anchor (backticks-only or invisible-only) instead of
+  falling back to the evidence ids; `audio.offset.json`'s `offset_seconds`
+  was value-typed, so a sidecar missing the key decoded to a silent `0`
+  instead of refusing, contradicting the documented "refuses rather than
+  guess"; `mapSegments` now bounds the offset+segment-time sum, closing the
+  narrow band where two individually in-bounds values summed past what
+  `merge` accepts; `record -out ""`/`demo -out ""` now exit 2 naming the
+  flag instead of a bare `mkdir` error at exit 1; release.yml gained an
+  end-to-end `install.sh` smoke test — every prior gate only checked syntax
+  and the four early-return flag paths, never the real fetch/verify/extract
+  path; `ci.yml`'s Go module cache disabled (no dependencies to cache);
+  `instrument-your-own-app.md`'s `record -demo` alternative now notes its
+  ffmpeg prerequisite; the record brief page's non-macOS `-demo` wording and
+  missing SIGHUP corrected, and the purpose brief's codebase-mapping claim
+  qualified as a future goal, matching the analysis brief and delivery
+  phases. Recorded, not fixed: `go.mod`'s EOL Go 1.22 pin (a go.mod change
+  is out of scope for an autonomous round) and `DECISIONS.md`'s few
+  out-of-calendar-order entries (reordering an append-only log would itself
+  break the append-only property; noted, not corrected).
