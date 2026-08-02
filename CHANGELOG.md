@@ -67,7 +67,7 @@ Evidence integrity:
 - An ASR engine's own reported segment start/end time is bounded to the same
   magnitude every other externally-sourced time in the pipeline is: an
   implausibly large value silently overflowed to `+Inf` through the
-  millisecond-rounding step, failing the transcript write with a bare JSON
+  two-decimal rounding step, failing the transcript write with a bare JSON
   encoding error, or — for a merely absurd rather than astronomical value —
   wrote a transcript at exit 0 that `merge` only refused one command later,
   naming `transcript.jsonl` rather than the engine that produced it. A
@@ -188,6 +188,15 @@ Documentation:
 - A `-notes` flag named in the CHANGELOG and in an `internal/session` code
   comment never existed; both now name the real `-task`/`-app` flags (or a
   hand-edited `notes` field).
+- `cli.md` and the merge surface brief page corrected against the code:
+  `merge`'s zero-entries refusal fires when the two source files together
+  yield nothing, not only when both are missing. The instrument-your-own-app
+  how-to's 400-response list now names the `t` plausibility rules `cli.md`
+  already documented; `ci.yml`'s header comment names the checks it actually
+  runs; the verification brief names every release-only gate; and the
+  getting-started tutorial states that both dependency prompts accept a
+  second install word rather than skipping on anything but the recommended
+  reply.
 
 Invocation contract:
 

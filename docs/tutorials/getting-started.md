@@ -19,8 +19,9 @@ Each prompt lists the exact replies it accepts. Answer **brew** when it offers
 ffmpeg — or **local** if you have no Homebrew, which is the only install option
 the prompt then lists — and **whisperx** when it offers the engine. At those
 two prompts, only the words the prompt lists install anything — the ffmpeg
-prompt also accepts **local** (a static build, no Homebrew), and the engine
-prompt also accepts **whisper.cpp** — and any other reply, including `y`,
+prompt also accepts **local** (a static build, no Homebrew), and, when you
+have Homebrew, the engine prompt also accepts **whisper.cpp** (without
+Homebrew it offers **whisperx** alone) — and any other reply, including `y`,
 skips that dependency, which matters because step 2 needs ffmpeg. The one
 yes/no confirmation inside the whisperx setup (installing its `uv` tool) is
 the exception: there `y` accepts.
