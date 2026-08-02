@@ -229,7 +229,17 @@ Refusing to install."
         *":$INSTALL_DIR:"*) : ;;
         *) say ""
            say "NOTE: $INSTALL_DIR is not on your PATH. Add it, e.g.:"
-           say "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc && exec zsh" ;;
+           # The installer runs on both macOS and Linux (platform(), above), and
+           # neither implies a shell: a hardcoded ~/.zshrc + exec zsh, this
+           # installer's shell for years, was wrong advice on any bash-default
+           # Linux box — it appended to a file bash never reads and then tried
+           # to exec a shell that may not even be installed. $SHELL is the
+           # operator's actual login shell on both platforms, so route on that.
+           case "${SHELL:-}" in
+               */zsh)  say "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc && exec zsh" ;;
+               */bash) say "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bashrc && exec bash" ;;
+               *)      say "  export PATH=\"$INSTALL_DIR:\$PATH\"  (add this line to your shell's startup file)" ;;
+           esac ;;
     esac
 }
 
