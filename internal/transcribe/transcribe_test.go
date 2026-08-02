@@ -776,7 +776,13 @@ func TestModelResolvedBeforeConverting(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // no cached model anywhere for resolveModel to find
 
 	_, err := Run(Options{SessionDir: dir, Audio: externalRecording(t), Engine: EngineWhisperCpp, Model: "missing-model", Log: io.Discard})
-	if err == nil || !strings.Contains(err.Error(), "model") {
+	// The exact resolveModel guidance text, not a loose "model" substring: a
+	// broader check passed vacuously even with the whisper-cli stub removed
+	// from fakeTools, since detectEngine's own whisper-cli-not-found message
+	// also mentions "model" ("...a ggml model file is also needed; see
+	// -model"). This pins the refusal to the model-resolution failure this
+	// test exists to exercise, not any other refusal on the same run.
+	if err == nil || !strings.Contains(err.Error(), `model "missing-model" not found`) {
 		t.Fatalf("a missing whisper.cpp model must fail the run, got %v", err)
 	}
 	assertSessionUntouched(t, dir, wav, converted)

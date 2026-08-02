@@ -33,7 +33,7 @@ The literature on LLM analysis of think-aloud data is consistent: machines are e
 - Any claim of statistical significance; findings are qualitative signals.
 - Automated re-analysis or self-tuning of the rubric from verdict history.
 - Keyframe *extraction* (`ffmpeg -ss` at an utterance timestamp): needs local video and a multimodal pass, tied to Mode B/mapping, and deferred pending maintainer confirmation (spc-2, flagged divergence). This slice covers the on-demand *request* only.
-- Task-boundary chunking: `timeline.jsonl` carries no task markers, so the analysis pass emits the whole timeline as one chunk rather than one per task (spc-2, flagged divergence).
+- Task-boundary chunking: `timeline.jsonl` carries no task markers and the manifest's task list carries no timestamps, so the analysis pass emits the whole timeline as one chunk, deferring real per-task chunking behind a seam (spc-2, flagged divergence).
 
 ## Acceptance Criteria
 
