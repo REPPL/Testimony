@@ -582,7 +582,7 @@ Architecture-shaping decisions graduate to an ADR under
   already load-bearing in the committed brief's own constraints/ethics
   pages and in the shipped `docs/explanation/privacy.md`, dated after the
   host-delegation decision.
-- 2026-08-02: Round 23 (PR #TBD). Confirmed: whisper.cpp's `-model` is now
+- 2026-08-02: Round 23 (PR #40). Confirmed: whisper.cpp's `-model` is now
   resolved alongside `-engine`, before the external-audio conversion —
   previously resolved inside the whisper.cpp runner, after the conversion
   had already replaced a record-origin `audio.wav`, so the ordinary
