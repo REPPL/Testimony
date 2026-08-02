@@ -76,7 +76,7 @@ unverified findings and records your verdict:
 testimony review -session sessions/<dir>
 ```
 
-For each finding it shows its id, the clock, type, severity, the participant's
+For each finding it shows its id, type, severity, the clock, the participant's
 quote, and the on-screen anchor, then prompts `[c]onfirm [r]eject [d]uplicate-of
 [s]kip [q]uit`. Choosing `d` asks which finding this duplicates (`F-NNN`). Your verdict
 is *appended* to `findings.jsonl` with today's date — the original finding is

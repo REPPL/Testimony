@@ -507,8 +507,9 @@ Architecture-shaping decisions graduate to an ADR under
   corrected against the shipped code (the microphone capture argv uses
   avfoundation's `:default` device, not a resolved index — a fixed index
   can capture a virtual audio driver instead of the real microphone; signal
-  handling includes SIGHUP alongside SIGINT/SIGTERM, per round 15's fix to
-  `record.go`); the README architecture diagram's `screen ──► rrweb` line
+  handling includes SIGHUP alongside SIGINT/SIGTERM, matching round 18's
+  correction of the same gap in the record surface brief); the README
+  architecture diagram's `screen ──► rrweb` line
   relabelled `page ──► rrweb` — rrweb records DOM/pointer activity from the
   instrumented page, not the screen capture, which is a separate stream
   (`screen.mp4`) the diagram does not depict. Refuted: a `release.yml`
@@ -517,8 +518,9 @@ Architecture-shaping decisions graduate to an ADR under
   private repo 404s before the `gh attestation verify` branch is ever
   reached); `AGENTS.md` claiming CI runs plain `go test ./...` (the `-race`
   leg is a strict superset, already refuted in round 13); the CHANGELOG
-  having no per-round documentation entry (no such convention exists —
-  rounds 8 and 13 also landed doc-only commits with no CHANGELOG bullet);
+  having no per-round documentation entry (recent rounds have not
+  maintained one consistently — rounds 8 and 13 also landed doc-only
+  commits with no CHANGELOG bullet, though most rounds since 12 have);
   the `.gitignore` rule for `examples/*/report.md` (the file is not
   tracked, so the rule is correct and exactly parallel to the
   `timeline.jsonl` sibling); persona role-label wording drift across intent

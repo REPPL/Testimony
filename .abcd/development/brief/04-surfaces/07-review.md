@@ -22,7 +22,7 @@ the birth state and the full decision history both survive.
   finding's effective status: every finding starts `unverified`, verdict records
   apply in file order, and the last one for a finding wins.
 - **Interactive** (`review -session DIR`): walks the `unverified` findings in id
-  order. For each it prints the id, the clock, type, severity, the quote, and
+  order. For each it prints the id, type, severity, the clock, the quote, and
   the anchor (the `ui` selector/route, else the evidence ids), then prompts
   `[c]onfirm [r]eject [d]uplicate-of [s]kip [q]uit`. `d` asks for the canonical
   `F-NNN`. Each decision appends a verdict record stamped with today's date.

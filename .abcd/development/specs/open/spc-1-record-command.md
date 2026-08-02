@@ -197,8 +197,8 @@ and the report reads correctly; fixes land before the PR.
   writes `manifest.json` with `t0_epoch_ms` from the same `now` that names the
   dir; the mic recorder (and screen with `-video`) is started before the
   command blocks on signals, so capture is live while the session runs.
-- **Clean stop leaves artefacts under expected names** — SIGINT/SIGTERM sends
-  SIGINT to the ffmpeg children so each finalises its container (`audio.wav`,
+- **Clean stop leaves artefacts under expected names** — SIGINT/SIGTERM/SIGHUP
+  sends SIGINT to the ffmpeg children so each finalises its container (`audio.wav`,
   `screen.mp4`), with SIGKILL escalation only on timeout; the demo server (when
   present) is shut down gracefully, leaving `interactions.jsonl`/
   `events.rrweb.jsonl` intact.

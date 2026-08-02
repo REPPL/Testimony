@@ -205,7 +205,7 @@ and nothing lands `confirmed`.
 
 - **Interactive** `review -session DIR`: load findings + verdicts, compute
   effective status, and walk the `unverified` findings in id order. For each,
-  print the clock, `type`/`severity`, the quote, the anchor (`ui` selector/route
+  print the id, `type`/`severity`, the clock, the quote, the anchor (`ui` selector/route
   or the evidence ids), and prompt: `[c]onfirm [r]eject [d]uplicate-of [s]kip
   [q]uit`. `d` asks for the canonical `F-NNN`. Each decision **appends** a
   verdict record with today's date. Interactive mode is gated on stdin being a
