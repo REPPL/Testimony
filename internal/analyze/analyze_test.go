@@ -325,6 +325,32 @@ func TestLoadRejectsDuplicateFindingIDBySafeText(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsEmptyFindingID covers a hand-edited or exchanged
+// findings.jsonl carrying a finding with no id at all. Pre-fix, ParseRecords
+// only checked for duplicates, so a single id-less finding loaded silently,
+// and a second one was refused as `duplicate finding id ""` — technically
+// true but misnaming the actual problem, the same class the sibling
+// id-uniqueness checks (timeline.Merge, loadTimeline) explicitly avoid by
+// skipping empty ids (legitimate there; never legitimate for a finding,
+// since EffectiveStatus and findByID both key on it).
+func TestLoadRejectsEmptyFindingID(t *testing.T) {
+	dir := t.TempDir()
+	noID := `{"id":"","t":22,"type":"bug","severity":3,"quote":"a","evidence":["utt-004"],"status":"unverified"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(noID), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	_, _, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "no id") {
+		t.Fatalf("expected a no-id refusal naming line 1, got %v", err)
+	}
+	if strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("a single id-less finding must not be reported as a duplicate, got %v", err)
+	}
+	if !strings.Contains(err.Error(), ":1:") {
+		t.Fatalf("refusal should name the offending line, got %v", err)
+	}
+}
+
 // TestLoadRejectsNullLine covers a hand-edited or exchanged findings.jsonl
 // carrying a bare JSON null line. Pre-fix, ParseRecords unmarshalled it into a
 // value-typed Finding as a no-op, silently appending a phantom finding (empty
