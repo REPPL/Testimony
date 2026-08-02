@@ -97,11 +97,23 @@ func Render(dir string, window float64) (string, error) {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Session report — %s\n\n", mdInline(man.Session))
+	fmt.Fprintf(&b, "# Session report — %s\n\n", mdOrDash(man.Session))
 	fmt.Fprintf(&b, "**App:** %s · **Participant:** %s · **Duration:** %s · **Utterances:** %d · **Events:** %d\n\n",
 		mdOrDash(man.App), mdOrDash(man.Participant), clock(end(entries)), len(speech), len(events))
-	if len(man.Tasks) > 0 {
-		fmt.Fprintf(&b, "**Tasks:** %s\n\n", mdInline(strings.Join(man.Tasks, "; ")))
+	// Presence is decided per task on its rendered form, not raw emptiness
+	// (the findingAnchor/eventLine pattern): a manifest's tasks are
+	// operator-supplied and unvalidated by session.SaveManifest, so a
+	// whitespace-only or invisible-only-Unicode entry must not render as a
+	// bare "; " separator with nothing either side.
+	var tasks []string
+	for _, task := range man.Tasks {
+		if inlineRendersEmpty(task) {
+			continue
+		}
+		tasks = append(tasks, mdInline(task))
+	}
+	if len(tasks) > 0 {
+		fmt.Fprintf(&b, "**Tasks:** %s\n\n", strings.Join(tasks, "; "))
 	}
 	b.WriteString("## Timeline\n\n")
 
