@@ -603,3 +603,28 @@ Architecture-shaping decisions graduate to an ADR under
   carrying two entries one day out of order near its start (a genuine
   parallel-branch merge artefact, not a discipline lapse, and any fix would
   violate the file's own append-only contract).
+- 2026-08-02 — Bug-hunt round 24: `demo`/`record -demo`'s `-addr` now refuses
+  a numeric port outside 0-65535 (e.g. `:99999`) at exit 2 instead of
+  reaching `net.Listen` and failing there at exit 1, indistinguishable from
+  a port already taken; a named service port (e.g. `:http`) is left to the
+  runtime's own lookup, unaffected. Docs: `02-verification.md`'s CI gate
+  enumeration now names the version-stamp ldflags check `AGENTS.md` already
+  listed (round 23); `01-phases.md`'s Phase 2 status cell no longer
+  unqualifiedly claims chunking shipped, matching the flagged-divergence
+  wording round 23 already applied to `itd-2`. Refuted: an intents-README
+  "always they/them" persona-quote rule read as contradicting
+  `03-personas.md`'s gendered narrative pronouns (different registers for
+  the same names, co-authored in one commit, and the intents rule is
+  honoured with zero exceptions across all nine intent drafts); a claimed
+  staleness in `spc-1`'s non-macOS `record -demo` "exits 0" wording (split
+  verdict between refuters — discarded per the loop's tie-breaking rule,
+  not a confirmed finding); AGENTS.md's two dangling `.abcd/development/`
+  links inside the abcd-managed fence (upstream plugin boilerplate, per
+  round 8's identical precedent); a "four" vs "six" installer flag-path
+  count (four code paths, six invocations — both accurate at their own
+  granularity); no Go test reading `examples/sample-session` directly (a
+  coverage preference, nothing currently inconsistent); `mode`'s "default
+  A" wording and `-offset`'s "0 when derivation is impossible" wording
+  (both scoped correctly by their surrounding text); two CHANGELOG
+  `[Unreleased]` group headings ("Capture and diagnostics:"/"Capture
+  integrity:") that read as overlapping but cover distinct topics.
