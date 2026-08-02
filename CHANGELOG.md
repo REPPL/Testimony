@@ -129,6 +129,12 @@ Evidence integrity:
   where an id-less line is legitimate and skipped, a finding's id is never
   optional, so the previous message misnamed what was actually wrong with
   the first line.
+- `analyze` filters a blank or invisible-only-Unicode manifest task from the
+  emitted request's numbered task list, matching `report`'s task rendering:
+  it used to print such a task as a content-less numbered item, giving the
+  request's "attribute each finding to a task" instruction a referent with
+  no content and disagreeing with `report.md`'s task list for the same
+  session.
 
 Capture and diagnostics:
 
@@ -379,15 +385,6 @@ Invocation contract:
   omitting both flags, silently no-oping on piped input or, on a
   character-device stdin, falling through to the interactive walk and
   appending a verdict for a finding the caller never named.
-
-Analysis request integrity:
-
-- `analyze` filters a blank or invisible-only-Unicode manifest task from the
-  emitted request's numbered task list, matching `report`'s task rendering:
-  it used to print such a task as a content-less numbered item, giving the
-  request's "attribute each finding to a task" instruction a referent with
-  no content and disagreeing with `report.md`'s task list for the same
-  session.
 
 Capture integrity:
 
