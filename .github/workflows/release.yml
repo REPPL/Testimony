@@ -385,6 +385,35 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: End-to-end install.sh smoke test
+        # Every gate above this line only parses install.sh's syntax (verify's
+        # "Installer syntax" step) or its four early-return flag paths (verify's
+        # "Installer flag handling" step: --help/--dir/--version/--bogus, all of
+        # which return before any network access or write). Nothing has ever run
+        # install_binary itself: the SHA256SUMS fetch, the awk lookup of this
+        # tarball's line, the hash compare, the gh attestation branch, tar
+        # extraction, the staged-probe, and the final mv. Run it for real now
+        # against the release just published, into a throwaway directory.
+        # --no-deps skips the interactive dependency stage (irrelevant to the
+        # install path this step exists to cover); GH_TOKEN authenticates gh so
+        # the attestation-verify branch runs rather than falling back to the
+        # checksum-only path. install_binary already refuses on a version
+        # mismatch before it moves the staged binary into place, so success here
+        # is itself the assertion; the explicit check below just names the
+        # binary and version for the log.
+        run: |
+          set -euo pipefail
+          DEST="$RUNNER_TEMP/install-e2e"
+          sh install.sh --no-deps --version "$TAG" --dir "$DEST"
+          got="$("$DEST/testimony" version)"
+          if [ "$got" != "testimony $TAG" ]; then
+            echo "installed binary reports \"$got\", expected \"testimony $TAG\"" >&2
+            exit 1
+          fi
+          echo "install.sh installed a working $got at $DEST/testimony"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Assert the release job pushed nothing to the default branch
         # Close the no-branch-commit tripwire opened at job start. Runs last so it
         # covers every preceding step. !cancelled(): the tripwire must still run when
