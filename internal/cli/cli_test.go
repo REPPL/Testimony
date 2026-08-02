@@ -213,6 +213,12 @@ func TestStrayPositionalIsAUsageError(t *testing.T) {
 // already stat'd the session directory and loaded findings.jsonl — at exit
 // 1, and on a session with no findings.jsonl yet, masked entirely behind
 // "run analyze -ingest first".
+//
+// An explicitly-empty -audio on transcribe is the same class as analyze's
+// -ingest/-out: unchecked, it silently selected the in-place branch instead
+// of refusing the caller's mistake — transcribing the session's own
+// audio.wav at exit 0 when one exists, or failing at exit 1 with a message
+// claiming -audio was never given when one doesn't.
 func TestInvalidFlagValuesExitTwo(t *testing.T) {
 	dir := miniSession(t)
 	demoOut := t.TempDir()
@@ -234,6 +240,7 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 		{[]string{"record", "-out", ""}, `record: -out must not be empty`},
 		{[]string{"analyze", "-session", dir, "-ingest", ""}, `analyze: -ingest must not be empty`},
 		{[]string{"analyze", "-session", dir, "-out", ""}, `analyze: -out must not be empty`},
+		{[]string{"transcribe", "-session", dir, "-audio", ""}, `transcribe: -audio must not be empty`},
 		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", "duplicate-of-F-001"}, `review: -finding cannot be a duplicate of itself`},
 	}
 	for _, c := range cases {

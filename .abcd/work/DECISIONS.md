@@ -527,3 +527,38 @@ Architecture-shaping decisions graduate to an ADR under
   drafts (the repo's naming rule constrains persona names, not role
   labels, and the varying labels are compatible facets of each persona's
   definition).
+- 2026-08-02 — Bug-hunt round 21: an explicitly-empty `transcribe -audio`
+  now refuses at exit 2 instead of silently switching to the in-place
+  branch (transcribing the session's own `audio.wav`, or claiming `-audio`
+  was never given), the last unguarded empty-flag site in that family;
+  `timeline.ReadEntries` now bounds an entry's `t` and a speech entry's
+  payload `t1` to the same ±1e9s magnitude `checkedUtterances` already
+  enforces on `transcript.jsonl` — a hand-edited or exchanged
+  `timeline.jsonl` reaches this reader without passing through that check
+  at all, and an oversized `t1` previously misattributed every later event
+  to the poisoned utterance in `report.md` and widened `analyze`'s accepted
+  finding range to match, both silently at exit 0. Nitpicks: `report`'s
+  title now falls back to a placeholder on its rendered (SafeText) form,
+  matching the App/Participant pattern, while the Tasks line drops entries
+  that render empty and is omitted entirely once none survive; `record
+  -demo` removes the session directory it just created when `serveDemoFn` fails
+  after `session.Create` succeeds, mirroring the cleanup its sibling
+  `startRecordersFn` failure path already had; a findings.jsonl line with
+  no id is now refused with its own message instead of a `duplicate
+  finding id ""` on the second one; `how-alignment-works.md` and
+  `session-directory.md` now state the join's first-utterance-wins
+  tie-break explicitly, rather than a per-utterance predicate a reader
+  could apply to conclude an event went missing from a later utterance it
+  overlapped; `ci.yml`'s cross-compile check gained a version-stamp ldflags
+  check — the Go linker silently ignores `-X` for a symbol that no longer
+  exists, so a `cli.Version` rename would stay green through every gate
+  and only surface in `release.yml` after a tag is already pushed;
+  `spc-2-analysis-findings.md` corrected against the shipped code (`ingest`
+  reads `timeline.jsonl` only, not `manifest.json`; the finding-`t` floor
+  is `0` unless the timeline holds a negative-time entry, and `sessionEnd`
+  includes event times, not only speech `t1`). Refuted: a `cli.md`
+  `-offset` table-row imprecision already reviewed and left twice across
+  rounds 8 and 14 (self-correcting via the adjacent paragraph); a
+  `spc-1-record-command.md` flag synopsis "missing" `-commit` (the
+  synopsis already omits `-addr` too — an illustrative sketch, not a
+  promised-complete invocation contract).

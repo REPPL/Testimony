@@ -1009,6 +1009,44 @@ func TestRunRecorderStartFailureRemovesEmptySessionDir(t *testing.T) {
 	}
 }
 
+// TestRunDemoServeFailureRemovesEmptySessionDir covers the failure gap
+// neither TestRunBindFailureWithDemoCreatesNoSessionDir nor
+// TestRunRecorderStartFailureRemovesEmptySessionDir does: serveDemoFn itself
+// refusing (serveOn's manifest/stream-file opens can fail after both bind
+// and session.Create succeeded, e.g. disk full) previously only stopped the
+// recorders and returned, leaving the just-created session directory (with
+// only manifest.json in it) behind — unlike the analogous startRecordersFn
+// failure path just above, which already gets this cleanup.
+func TestRunDemoServeFailureRemovesEmptySessionDir(t *testing.T) {
+	origBind, origServe := bindDemoFn, serveDemoFn
+	t.Cleanup(func() { bindDemoFn, serveDemoFn = origBind, origServe })
+	bindDemoFn = func(addr string) (net.Listener, error) {
+		return net.Listen("tcp", "127.0.0.1:0")
+	}
+	serveDemoFn = func(ln net.Listener, addr, dir string) (*http.Server, error) {
+		ln.Close()
+		return nil, errors.New("open interactions.jsonl: no space left on device")
+	}
+
+	out := t.TempDir()
+	runErr := Run(Options{
+		Out:  out,
+		Demo: true,
+		GOOS: "linux",
+		Log:  io.Discard,
+	})
+	if runErr == nil {
+		t.Fatal("Run with a refused demo serve: want an error, got nil")
+	}
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatalf("read out root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("a refused demo serve left a stray session directory behind: %v", entries)
+	}
+}
+
 // TestRunRecorderStartFailureKeepsPartialCapture guards the fix's own
 // caveat: startRecordersFn can fail on a later stream after an earlier one
 // in the same run already recorded and was finalised (stopAll runs inside

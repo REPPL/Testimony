@@ -197,6 +197,14 @@ func Run(opts Options) error {
 		srv, err = serveDemoFn(ln, opts.Addr, dir)
 		if err != nil {
 			stopAll(children)
+			// Same guarantee as the startRecordersFn failure path above: don't
+			// leave a stray, manifest-only session directory behind. Only
+			// reachable when serveOn's own stream-file opens fail (disk full,
+			// read-only filesystem) right after session.Create succeeded and no
+			// recorder has written anything yet.
+			if onlyManifest(dir) {
+				os.RemoveAll(dir)
+			}
 			return fmt.Errorf("start demo server: %w", err)
 		}
 	}

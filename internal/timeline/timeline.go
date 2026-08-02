@@ -183,6 +183,16 @@ func CheckSrc(entries []Entry) error {
 // trusted. Positions named in the error are 1-based entry ordinals, which
 // match file lines only when the file carries no blank lines (ReadJSONL
 // skips those).
+//
+// t and a speech entry's payload t1 are also bounded to maxUtteranceSeconds,
+// mirroring checkedUtterances' identical bound on transcript.jsonl. Merge
+// never writes past that bound, so this too bites solely on a hand-edited or
+// exchanged timeline.jsonl — but unlike the merge-time check, an extreme t1
+// here reaches SpeechEnd unclamped for magnitude (only inversion is
+// clamped), which report.Render's join window and analyze's session-range
+// bound both trust directly: an oversized t1 pulls every later event into
+// the entry it belongs to and widens analyze's accepted finding range to
+// match.
 func ReadEntries(path string) ([]Entry, error) {
 	raw, err := session.ReadJSONL[rawEntry](path)
 	if err != nil {
@@ -192,6 +202,12 @@ func ReadEntries(path string) ([]Entry, error) {
 	for i, r := range raw {
 		if r.T == nil {
 			return nil, fmt.Errorf("%s: entry %d is missing t; cannot place it on the session clock", path, i+1)
+		}
+		if math.Abs(*r.T) > maxUtteranceSeconds {
+			return nil, fmt.Errorf("%s: entry %d has t %g; a session-relative time in seconds cannot exceed %g in magnitude", path, i+1, *r.T, maxUtteranceSeconds)
+		}
+		if t1, ok := r.Payload["t1"].(float64); ok && math.Abs(t1) > maxUtteranceSeconds {
+			return nil, fmt.Errorf("%s: entry %d has t1 %g; a session-relative time in seconds cannot exceed %g in magnitude", path, i+1, t1, maxUtteranceSeconds)
 		}
 		out = append(out, Entry{
 			T:       *r.T,

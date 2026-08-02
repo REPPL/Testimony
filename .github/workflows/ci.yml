@@ -93,6 +93,27 @@ jobs:
             GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -o /dev/null ./cmd/testimony
           done
 
+      # The Go linker silently ignores -X for a symbol that does not exist —
+      # rename or move internal/cli.Version, or the module path, and every
+      # gate above stays green while release.yml's -ldflags stamp silently
+      # stops taking effect, surfacing only after a tag is already pushed (the
+      # same "surfaces only after the tag is public" class the cross-compile
+      # check above exists to close, applied to the version stamp instead of
+      # a GOOS-conditional break). Built and run on the host (linux/amd64) with
+      # the identical -X path release.yml uses, so a broken symbol path fails
+      # here first.
+      - name: Version-stamp ldflags check
+        run: |
+          set -euo pipefail
+          go build -o /tmp/testimony-stamp-check \
+            -ldflags "-X github.com/REPPL/Testimony/internal/cli.Version=vTEST" \
+            ./cmd/testimony
+          got="$(/tmp/testimony-stamp-check version)"
+          if [ "$got" != "testimony vTEST" ]; then
+            echo "version-stamp ldflags had no effect: got \"$got\", want \"testimony vTEST\" — internal/cli.Version or the module path may have moved" >&2
+            exit 1
+          fi
+
       # The full pipeline against the bundled sample session: merge must produce
       # a timeline, report must render it, and both outputs must be non-empty.
       # Ubuntu-only, like the rest of this job — it also proves the freshly built
