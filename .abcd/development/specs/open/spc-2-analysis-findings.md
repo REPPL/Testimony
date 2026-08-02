@@ -36,7 +36,7 @@ enforces**:
 | Field | Type | Required | Validation |
 |---|---|---|---|
 | `id` | string | yes | matches `^F-\d{3}$` (F-NNN, zero-padded); unique within the file |
-| `t` | float64 | yes | `0 ≤ t ≤ sessionEnd`, where `sessionEnd` is the max entry time (speech `t1`) in `timeline.jsonl` |
+| `t` | float64 | yes | `floor ≤ t ≤ sessionEnd`, where `floor` is `0` unless the timeline holds a negative-time entry (then the earliest entry start) and `sessionEnd` is the max entry time (speech `t1` or event `t`) in `timeline.jsonl` |
 | `type` | string | yes | one of `bug \| friction \| inconsistency \| preference \| idea` |
 | `severity` | int | yes | integer `1..4` (Nielsen-style scale, below); non-integer or out-of-range rejected |
 | `mode` | string | no | when present, `A \| B`; defaults to `A`. Only Mode A is produced in this slice (Mode B is itd-4) |
@@ -69,10 +69,10 @@ text, so there are no leading/trailing-space surprises.) Consequence, enforced
 above: every finding cites at least one `utt-*` id, and one of those utterances
 contains the quote.
 
-**Timestamp.** `t` is validated for range only (`0 ≤ t ≤ sessionEnd`); it is not
-forced to equal an evidence item's time, but the rubric instructs the model to
-set it to the utterance's start. A `t` outside the session is a fabrication and
-is rejected.
+**Timestamp.** `t` is validated for range only (`floor ≤ t ≤ sessionEnd`, the
+same bounds as the schema table above); it is not forced to equal an evidence
+item's time, but the rubric instructs the model to set it to the utterance's
+start. A `t` outside the session is a fabrication and is rejected.
 
 ### Verdict record — append-only, non-destructive (decision)
 
@@ -120,9 +120,10 @@ testimony review  -session DIR -finding F-NNN -verdict confirmed|rejected|duplic
 ```
 
 `analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`).
-`-out` and `-ingest` together is an error. Both subcommands require `-session`
-and read `manifest.json` + `timeline.jsonl`, hinting to run `merge` first when
-the timeline is missing (matching `report`).
+`-out` and `-ingest` together is an error. Both modes require `-session`; emit
+reads `manifest.json` and `timeline.jsonl`, ingest reads `timeline.jsonl`
+only, and both hint to run `merge` first when the timeline is missing
+(matching `report`).
 
 ### `analyze` — emitting the request (host-delegated)
 
