@@ -82,8 +82,8 @@ CI (`.github/workflows/ci.yml`) runs every gate above (the single-test example
 line is illustrative, not a gate) on every push and pull request, plus checks
 with no local command above: installer flag-handling
 tests (`--help`/`--dir`/`--version`/`--bogus`), a compile-only cross-check for
-the other release platforms, a full-history `gitleaks` secret scan, and a
-`zizmor` workflow-security audit.
+the other release platforms, a version-stamp ldflags check, a full-history
+`gitleaks` secret scan, and a `zizmor` workflow-security audit.
 
 <!-- working-conventions 2026-07-17 -->
 
