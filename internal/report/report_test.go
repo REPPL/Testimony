@@ -662,8 +662,9 @@ func TestReportFindingAnchorFallsBackOnBlankUI(t *testing.T) {
 // TestReportEventLineOmitsSelectorThatRendersEmpty is the eventLine sibling:
 // an event selector made entirely of Unicode format characters (here U+200B
 // ZERO WIDTH SPACE) is non-empty raw but strips to "" under session.SafeText.
-// Pre-fix, eventLine appended mdCode(sel) unconditionally, rendering a bare
-// "“" in the middle of the line instead of omitting the field.
+// Pre-fix, eventLine appended mdCode(sel) unconditionally, rendering a bare,
+// empty code span ("“") in the middle of the line instead of omitting the
+// field.
 func TestReportEventLineOmitsSelectorThatRendersEmpty(t *testing.T) {
 	dir := t.TempDir()
 	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
@@ -684,5 +685,36 @@ func TestReportEventLineOmitsSelectorThatRendersEmpty(t *testing.T) {
 	}
 	if !strings.Contains(md, "[00:02] click") {
 		t.Fatalf("event line lost its kind:\n%s", md)
+	}
+}
+
+// TestReportFindingAnchorFallsBackOnWhitespaceOnlyUI is the literal-whitespace
+// sibling of TestReportFindingAnchorFallsBackOnBlankUI: session.SafeText maps
+// a tab to a space rather than stripping it, so a selector of "\t" is
+// non-empty even after SafeText and backtick removal — codeRendersEmpty must
+// judge it on the TRIMMED form to still fall back to the evidence ids, not
+// render a code span holding only a space.
+func TestReportFindingAnchorFallsBackOnWhitespaceOnlyUI(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	findings := "{\"id\":\"F-001\",\"t\":22,\"type\":\"bug\",\"severity\":3,\"quote\":\"I clicked save and nothing happened\",\"evidence\":[\"utt-004\"],\"ui\":{\"selector\":\"\\t\"},\"status\":\"unverified\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "— ` `\n") {
+		t.Fatalf("finding anchor rendered as a whitespace-only code span with no evidence fallback:\n%s", md)
+	}
+	if !strings.Contains(md, "— evidence utt-004") {
+		t.Fatalf("report is missing the evidence-id fallback for a ui that renders as whitespace only:\n%s", md)
 	}
 }

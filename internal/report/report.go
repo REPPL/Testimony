@@ -195,19 +195,19 @@ func renderFindings(b *strings.Builder, dir string) {
 // findingAnchor renders a finding's on-screen anchor: the ui selector (in
 // backticks) and route when present, else the evidence ids.
 //
-// Presence is decided on the rendered form, not the raw one: mdCode strips
-// backticks and both mdCode and mdInline run session.SafeText, so a selector
-// or route that is non-empty raw but renders to nothing (invisible-only
-// Unicode, or a selector of backticks alone) must fall through to the
-// evidence ids rather than render a blank anchor with no fallback.
+// Presence is decided on the rendered form, not the raw one (codeRendersEmpty/
+// inlineRendersEmpty): a selector or route that is non-empty raw but renders
+// to nothing or to whitespace only (invisible-only Unicode, a selector of
+// backticks alone, or literal whitespace) must fall through to the evidence
+// ids rather than render a blank or whitespace-only anchor with no fallback.
 func findingAnchor(f analyze.Finding) string {
 	if f.UI != nil {
 		var parts []string
-		if sel := mdCode(f.UI.Selector); sel != "``" {
-			parts = append(parts, sel)
+		if !codeRendersEmpty(f.UI.Selector) {
+			parts = append(parts, mdCode(f.UI.Selector))
 		}
-		if route := mdInline(f.UI.Route); route != "" {
-			parts = append(parts, route)
+		if !inlineRendersEmpty(f.UI.Route) {
+			parts = append(parts, mdInline(f.UI.Route))
 		}
 		if len(parts) > 0 {
 			return strings.Join(parts, " ")
@@ -305,6 +305,25 @@ func mdCode(s string) string {
 	return "`" + strings.ReplaceAll(session.SafeText(s), "`", "") + "`"
 }
 
+// codeRendersEmpty reports whether mdCode(s) would carry no meaningful
+// content — s reduces to nothing but whitespace once SafeText and backtick
+// removal are applied (invisible-only Unicode, backticks alone, or literal
+// whitespace, e.g. a lone tab, which SafeText maps to a space). A caller
+// deciding whether to show a code span at all, rather than fall back to
+// something more informative, must judge presence on this rendered form —
+// judging it on s's raw emptiness lets a value that renders as nothing (or
+// as invisible whitespace) through as if it were real content.
+func codeRendersEmpty(s string) bool {
+	return strings.TrimSpace(strings.ReplaceAll(session.SafeText(s), "`", "")) == ""
+}
+
+// inlineRendersEmpty is codeRendersEmpty's mdInline sibling: mdInline escapes
+// a backtick rather than stripping it, so a lone backtick is meaningful,
+// visible content there, unlike inside a code span.
+func inlineRendersEmpty(s string) bool {
+	return strings.TrimSpace(session.SafeText(s)) == ""
+}
+
 func speaker(u timeline.Entry) string {
 	if s, ok := u.Payload["speaker"].(string); ok && s != "" {
 		return mdInline(s)
@@ -334,20 +353,21 @@ func eventLine(e timeline.Entry) string {
 		return ""
 	}
 	parts := []string{mdInline(raw("kind"))}
-	// Decide on the rendered form, not the raw one: mdCode strips backticks and
-	// applies session.SafeText, so a selector that is non-empty raw but renders
-	// to nothing (invisible-only Unicode, or backticks alone) must be omitted
-	// rather than appended as a bare, empty code span.
-	if sel := mdCode(raw("selector")); sel != "``" {
-		parts = append(parts, sel)
+	// Every field below is decided on its rendered form, not its raw one
+	// (codeRendersEmpty/inlineRendersEmpty): a field that is non-empty raw but
+	// renders to nothing or to whitespace only (invisible-only Unicode,
+	// backticks alone in a code span, or literal whitespace) must be omitted
+	// rather than appended as an empty or blank fragment.
+	if sel := raw("selector"); !codeRendersEmpty(sel) {
+		parts = append(parts, mdCode(sel))
 	}
-	if t := raw("text"); t != "" {
+	if t := raw("text"); !inlineRendersEmpty(t) {
 		parts = append(parts, `"`+mdInline(t)+`"`)
 	}
-	if v := raw("value"); v != "" {
+	if v := raw("value"); !inlineRendersEmpty(v) {
 		parts = append(parts, `value="`+mdInline(v)+`"`)
 	}
-	if r := raw("route"); r != "" {
+	if r := raw("route"); !inlineRendersEmpty(r) {
 		parts = append(parts, "("+mdInline(r)+")")
 	}
 	return orDash(strings.Join(parts, " "))

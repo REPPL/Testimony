@@ -445,10 +445,10 @@ func printFinding(w io.Writer, f analyze.Finding) {
 func anchor(f analyze.Finding) string {
 	if f.UI != nil {
 		var parts []string
-		if sel := session.SafeText(f.UI.Selector); sel != "" {
+		if sel := session.SafeText(f.UI.Selector); strings.TrimSpace(sel) != "" {
 			parts = append(parts, sel)
 		}
-		if route := session.SafeText(f.UI.Route); route != "" {
+		if route := session.SafeText(f.UI.Route); strings.TrimSpace(route) != "" {
 			parts = append(parts, route)
 		}
 		if len(parts) > 0 {
