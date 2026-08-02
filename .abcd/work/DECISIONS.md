@@ -538,9 +538,10 @@ Architecture-shaping decisions graduate to an ADR under
   at all, and an oversized `t1` previously misattributed every later event
   to the poisoned utterance in `report.md` and widened `analyze`'s accepted
   finding range to match, both silently at exit 0. Nitpicks: `report`'s
-  title and Tasks line now fall back to a placeholder on their rendered
-  (SafeText) form, matching the App/Participant pattern; `record -demo`
-  removes the session directory it just created when `serveDemoFn` fails
+  title now falls back to a placeholder on its rendered (SafeText) form,
+  matching the App/Participant pattern, while the Tasks line drops entries
+  that render empty and is omitted entirely once none survive; `record
+  -demo` removes the session directory it just created when `serveDemoFn` fails
   after `session.Create` succeeds, mirroring the cleanup its sibling
   `startRecordersFn` failure path already had; a findings.jsonl line with
   no id is now refused with its own message instead of a `duplicate

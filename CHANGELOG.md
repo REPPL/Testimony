@@ -118,11 +118,12 @@ Evidence integrity:
   misattributing every later event to the poisoned utterance in `report.md`
   and admitting an equally absurd finding time as "inside" the inflated
   session range, both at exit 0.
-- `report`'s title and Tasks line fall back to a `—` placeholder on their
-  rendered (SafeText) form, matching the App/Participant/`kind` pattern
-  above: a whitespace-only or invisible-only-Unicode Session name, or a
-  Tasks list of only such entries, used to render a bare trailing dash or a
-  lone `; ` with nothing either side.
+- `report`'s title falls back to a `—` placeholder on its rendered
+  (SafeText) form, matching the App/Participant/`kind` pattern above: a
+  whitespace-only or invisible-only-Unicode Session name used to render a
+  bare trailing dash with nothing either side. The Tasks line now drops
+  entries that render empty and is omitted entirely once none survive,
+  instead of rendering a lone `; ` with nothing either side.
 - A `findings.jsonl` line with no id is refused with its own message instead
   of `duplicate finding id ""` on a second one: unlike a timeline entry,
   where an id-less line is legitimate and skipped, a finding's id is never
