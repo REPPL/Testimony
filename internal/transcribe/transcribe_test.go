@@ -281,6 +281,34 @@ func TestMapSegmentsRefusesOversizedSum(t *testing.T) {
 	}
 }
 
+// TestMapSegmentsDropsOversizedWordKeepsSegment is the word-level sibling of
+// the sum-bound test above, pinning the DROP-not-refuse policy: an implausible
+// word time costs only word-level detail, matching the policy
+// whisperx.go's own word loop already states for a word time out of bounds
+// before the offset is applied. A word whose offset-shifted time alone exceeds
+// the bound must not refuse the whole segment — only that word is dropped;
+// the segment's own bound (checked separately) still governs the utterance.
+func TestMapSegmentsDropsOversizedWordKeepsSegment(t *testing.T) {
+	utts, err := mapSegments([]segment{
+		{
+			start: 0, end: 2, text: "two words",
+			words: []timeline.Word{
+				{W: "two", T: 0},
+				{W: "words", T: 7e8}, // in-bounds alone; the offset pushes it past the bound
+			},
+		},
+	}, 4e8) // in-bounds offset; "words" maps to 7e8+4e8=1.1e9, past the bound; "two" maps to 4e8, well within it
+	if err != nil {
+		t.Fatalf("a segment with one oversized word must still be accepted, got %v", err)
+	}
+	if len(utts) != 1 {
+		t.Fatalf("want 1 utterance, got %d", len(utts))
+	}
+	if len(utts[0].Words) != 1 || utts[0].Words[0].W != "two" {
+		t.Fatalf("want only the in-bounds word kept, got %+v", utts[0].Words)
+	}
+}
+
 // TestCheckOffset pins the explicit-flag bound: the derived and sidecar paths
 // refuse a non-finite or over-magnitude offset where the bad value enters, and
 // the flag path must apply the same rule. Every genuine offset (including the

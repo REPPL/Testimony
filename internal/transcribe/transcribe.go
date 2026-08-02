@@ -510,9 +510,16 @@ func mapSegments(segs []segment, offset float64) ([]timeline.Utterance, error) {
 			if word == "" {
 				continue
 			}
+			// An implausible word time is dropped, not refused: the same policy
+			// whisperx.go's own word loop states for a word time out of bounds
+			// before the offset is even applied — it costs only word-level detail,
+			// and the segment's own bound above already guards the utterance-level
+			// stakes (report.md's timeline, the analysis request). Refusing the
+			// whole run over one word's offset-shifted sum would be a stricter
+			// policy than the parser itself applies to the same value unshifted.
 			wt := round2(w.T + offset)
 			if !checkSegmentTime(wt) {
-				return nil, fmt.Errorf("word %q maps to %+.2fs with offset %+.2fs, exceeding %g seconds in magnitude", word, wt, offset, maxOffsetSeconds)
+				continue
 			}
 			u.Words = append(u.Words, timeline.Word{W: word, T: wt})
 		}
