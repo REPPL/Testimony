@@ -218,6 +218,36 @@ func Run(args []string) int {
 				return usageErr(fmt.Errorf("transcribe: %w", err))
 			}
 		}
+		// -engine, -device, and -vad are closed enums (docs/reference/cli.md).
+		// Explicitly empty is the same wrong-invocation class as -audio above
+		// (an unset shell variable spliced into the flag), not "omit the
+		// flag" — left unchecked, each Check* function's own zero-value case
+		// treats "" the same as the documented "auto" and silently keeps the
+		// run going at exit 0, discarding the caller's actual choice instead
+		// of the exit-2 refusal every other closed-enum flag on this command
+		// gets. -compute_type stays unchecked: its documented set is
+		// open-ended (auto, int8, float16, ...), so there is no closed set
+		// for an empty value to fall outside of.
+		engineSet, deviceSet, vadSet := false, false, false
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "engine":
+				engineSet = true
+			case "device":
+				deviceSet = true
+			case "vad":
+				vadSet = true
+			}
+		})
+		if engineSet && *engine == "" {
+			return usageErr(fmt.Errorf("transcribe: -engine must not be empty"))
+		}
+		if deviceSet && *device == "" {
+			return usageErr(fmt.Errorf("transcribe: -device must not be empty"))
+		}
+		if vadSet && *vad == "" {
+			return usageErr(fmt.Errorf("transcribe: -vad must not be empty"))
+		}
 		// An unknown engine name is a wrong invocation (exit 2) — reported from
 		// detectEngine it took the runtime status a script could not tell from a
 		// genuinely missing engine binary.
