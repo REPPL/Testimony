@@ -582,3 +582,24 @@ Architecture-shaping decisions graduate to an ADR under
   already load-bearing in the committed brief's own constraints/ethics
   pages and in the shipped `docs/explanation/privacy.md`, dated after the
   host-delegation decision.
+- 2026-08-02: Round 23 (PR #TBD). Confirmed: whisper.cpp's `-model` is now
+  resolved alongside `-engine`, before the external-audio conversion —
+  previously resolved inside the whisper.cpp runner, after the conversion
+  had already replaced a record-origin `audio.wav`, so the ordinary
+  first-run "model not found" failure destroyed the irreplaceable capture;
+  `transcribe -engine`/`-device`/`-vad` refuse an explicitly-empty value at
+  exit 2, closing the last gap in that empty-flag-guard family
+  (`-compute_type`'s open-ended set is unaffected);
+  `itd-2-analysis-findings.md`'s press release no longer claims
+  task-boundary chunking the shipped pass does not do — `spc-2`'s own
+  flagged divergence already recorded it, now named in itd-2's out-of-scope
+  list alongside the keyframe-extraction divergence. Nitpick: `AGENTS.md`'s
+  CI gate enumeration now names the version-stamp ldflags check `ci.yml`
+  gained in round 21. Refuted: an empty `transcribe -model`/`-language`
+  reaching the engine verbatim (fails loudly either way, same as any other
+  bad value); `analyze` emitting a content-free request for an empty
+  timeline at exit 0 (a stateless renderer, not a destructive writer —
+  `report` treats an empty timeline the same way); `.abcd/work/DECISIONS.md`
+  carrying two entries one day out of order near its start (a genuine
+  parallel-branch merge artefact, not a discipline lapse, and any fix would
+  violate the file's own append-only contract).

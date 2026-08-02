@@ -293,6 +293,14 @@ Documentation:
   to the request-level keyframe flag that actually shipped, matching
   `spc-2`'s own flagged divergence; extraction is out of scope pending
   maintainer confirmation.
+- `itd-2-analysis-findings.md`'s press release no longer claims the shipped
+  analysis pass chunks `timeline.jsonl` by task boundaries: `timeline.jsonl`
+  carries no task markers, and the pass emits the whole timeline as one
+  chunk, a divergence `spc-2` already flags. The out-of-scope list now names
+  it, alongside the keyframe-extraction divergence already recorded there.
+- `AGENTS.md`'s CI gate enumeration now names the version-stamp ldflags
+  check `ci.yml` added in round 21 — the one gate with no local command
+  that its "plus checks" list had dropped.
 
 Invocation contract:
 
@@ -385,6 +393,13 @@ Invocation contract:
   omitting both flags, silently no-oping on piped input or, on a
   character-device stdin, falling through to the interactive walk and
   appending a verdict for a finding the caller never named.
+- `transcribe -engine`, `-device`, and `-vad` refuse an explicitly-empty
+  value at exit 2, matching `-audio`: their own closed-enum validators
+  treated `""` the same as the documented `auto`, so an unset shell
+  variable spliced into the flag silently discarded the caller's choice at
+  exit 0 instead of refusing it like every other closed-enum flag on the
+  command. `-compute_type`'s documented set is open-ended, so it is
+  unaffected.
 
 Capture integrity:
 
@@ -427,6 +442,12 @@ Capture integrity:
   files cannot be opened), mirroring the cleanup its sibling recorder-start
   failure path already had; it used to leave a manifest-only directory
   behind for every retry.
+- whisper.cpp's `-model` is resolved alongside `-engine`, before the external
+  audio conversion, instead of inside the whisper.cpp runner, after the
+  conversion had already replaced `audio.wav`: a missing model — the
+  ordinary first-run whisper.cpp failure, since it never auto-downloads one —
+  used to destroy the record-origin capture for a refusal `-model` alone
+  already made knowable in advance.
 
 ## [0.4.0] - 2026-07-24
 
