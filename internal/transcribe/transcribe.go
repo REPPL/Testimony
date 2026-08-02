@@ -196,7 +196,10 @@ func Run(opts Options) (int, error) {
 		return 0, err
 	}
 
-	utts := mapSegments(segs, offset)
+	utts, err := mapSegments(segs, offset)
+	if err != nil {
+		return 0, err
+	}
 	if len(utts) == 0 {
 		// WriteJSONL opens with O_TRUNC: writing zero utterances would silently
 		// destroy a transcript.jsonl a prior run already produced (a re-run with a
@@ -307,9 +310,16 @@ func resolveOffset(opts Options, man session.Manifest, external bool) (float64, 
 
 // offsetSidecar is the persisted audio→session offset written beside audio.wav
 // after an external -audio conversion, so a later in-place re-run recovers it.
+//
+// OffsetSeconds is a pointer so that an absent or null "offset_seconds" stays
+// distinguishable from a genuine 0, exactly as timeline.rawUtterance's T0 is:
+// a value-typed field would decode a sidecar that omits the key — hand-edited,
+// partially rewritten, or produced by another tool — to 0.0 with no error,
+// which is precisely the silent-shift-to-0 outcome this sidecar exists to
+// prevent (see readOffsetSidecar).
 type offsetSidecar struct {
-	OffsetSeconds float64 `json:"offset_seconds"`
-	Provenance    string  `json:"provenance,omitempty"`
+	OffsetSeconds *float64 `json:"offset_seconds"`
+	Provenance    string   `json:"provenance,omitempty"`
 }
 
 // maxOffsetSidecarBytes caps the sidecar read: a genuine one is well under a
@@ -378,7 +388,7 @@ func CheckOffset(v float64) error {
 // file was never restored: every later bare transcribe then refused on the
 // unreadable sidecar, with the prior offset unrecoverable from the session.
 func writeOffsetSidecar(dir string, offset float64, provenance string) error {
-	b, err := json.Marshal(offsetSidecar{OffsetSeconds: offset, Provenance: provenance})
+	b, err := json.Marshal(offsetSidecar{OffsetSeconds: &offset, Provenance: provenance})
 	if err != nil {
 		return err
 	}
@@ -431,17 +441,24 @@ func readOffsetSidecar(dir string) (offset float64, provenance string, ok bool, 
 	if err := json.Unmarshal(b, &sc); err != nil {
 		return 0, "", false, offsetSidecarErr(err)
 	}
-	if math.IsNaN(sc.OffsetSeconds) || math.IsInf(sc.OffsetSeconds, 0) {
+	// A missing or null "offset_seconds" is unusable, not a genuine 0: guessing
+	// 0 here is exactly the silent shift the sidecar exists to prevent (see the
+	// offsetSidecar doc comment).
+	if sc.OffsetSeconds == nil {
+		return 0, "", false, offsetSidecarErr(fmt.Errorf("offset_seconds is missing"))
+	}
+	offset = *sc.OffsetSeconds
+	if math.IsNaN(offset) || math.IsInf(offset, 0) {
 		return 0, "", false, offsetSidecarErr(fmt.Errorf("offset_seconds is not a finite number"))
 	}
 	// Bound the persisted offset the same as the derived one: a hand-edited sidecar
 	// carrying an astronomical offset would otherwise shift every re-run's utterance
 	// past the magnitude merge accepts, and refusing here names the sidecar as the
 	// fault rather than letting merge reject the resulting transcript.
-	if math.Abs(sc.OffsetSeconds) > maxOffsetSeconds {
-		return 0, "", false, offsetSidecarErr(fmt.Errorf("offset_seconds %+.2fs exceeds %g in magnitude", sc.OffsetSeconds, maxOffsetSeconds))
+	if math.Abs(offset) > maxOffsetSeconds {
+		return 0, "", false, offsetSidecarErr(fmt.Errorf("offset_seconds %+.2fs exceeds %g in magnitude", offset, maxOffsetSeconds))
 	}
-	return sc.OffsetSeconds, fmt.Sprintf("persisted: audio.wav converted from an external recording (%+.2fs)", sc.OffsetSeconds), true, nil
+	return offset, fmt.Sprintf("persisted: audio.wav converted from an external recording (%+.2fs)", offset), true, nil
 }
 
 // offsetSidecarErr wraps a sidecar fault in the same refuse-with-guidance
@@ -455,7 +472,18 @@ func offsetSidecarErr(cause error) error {
 // docs/reference/session-directory.md: sequential utt-NNN IDs, offset applied, times
 // rounded to 2 decimal places, whitespace trimmed, empty segments skipped,
 // speaker defaulting to "P1" when the engine supplies no diarisation label.
-func mapSegments(segs []segment, offset float64) []timeline.Utterance {
+//
+// checkSegmentTime already bounds each segment's own start/end/word times to
+// maxOffsetSeconds, and CheckOffset bounds the offset the same way — but each
+// checks its own value in isolation, so a segment time and an offset that are
+// both individually in bounds can still sum past maxOffsetSeconds (e.g. a
+// segment near +1e9 combined with a derived or sidecar offset near +1e9,
+// neither of which CheckOffset's own call site sees together). mapSegments is
+// where the sum is first computed, so it is where that residual case is
+// caught — refusing here, at write time, rather than leaving a transcript.jsonl
+// that only merge rejects one command later, naming transcript.jsonl rather
+// than the true cause.
+func mapSegments(segs []segment, offset float64) ([]timeline.Utterance, error) {
 	var utts []timeline.Utterance
 	for _, s := range segs {
 		text := strings.TrimSpace(s.text)
@@ -466,10 +494,14 @@ func mapSegments(segs []segment, offset float64) []timeline.Utterance {
 		if speaker == "" {
 			speaker = "P1"
 		}
+		t0, t1 := round2(s.start+offset), round2(s.end+offset)
+		if !checkSegmentTime(t0) || !checkSegmentTime(t1) {
+			return nil, fmt.Errorf("segment %q maps to [%+.2fs, %+.2fs] with offset %+.2fs, exceeding %g seconds in magnitude", text, t0, t1, offset, maxOffsetSeconds)
+		}
 		u := timeline.Utterance{
 			ID:      fmt.Sprintf("utt-%03d", len(utts)+1),
-			T0:      round2(s.start + offset),
-			T1:      round2(s.end + offset),
+			T0:      t0,
+			T1:      t1,
 			Speaker: speaker,
 			Text:    text,
 		}
@@ -478,11 +510,15 @@ func mapSegments(segs []segment, offset float64) []timeline.Utterance {
 			if word == "" {
 				continue
 			}
-			u.Words = append(u.Words, timeline.Word{W: word, T: round2(w.T + offset)})
+			wt := round2(w.T + offset)
+			if !checkSegmentTime(wt) {
+				return nil, fmt.Errorf("word %q maps to %+.2fs with offset %+.2fs, exceeding %g seconds in magnitude", word, wt, offset, maxOffsetSeconds)
+			}
+			u.Words = append(u.Words, timeline.Word{W: word, T: wt})
 		}
 		utts = append(utts, u)
 	}
-	return utts
+	return utts, nil
 }
 
 func round2(x float64) float64 { return math.Round(x*100) / 100 }
