@@ -200,6 +200,19 @@ func TestStrayPositionalIsAUsageError(t *testing.T) {
 // mistyped flag from a session that genuinely could not be read. Validation
 // must also precede any work: `demo -addr bogus` used to create a session
 // directory before refusing the address.
+//
+// An explicitly-empty -ingest/-out on analyze is the same "unset shell
+// variable spliced into the flag" class as demo/record's -out guard, but at
+// the one site where it silently changes which mode the command runs in: an
+// empty -ingest fell through analyze's `*ingest != ""` mode check to emit
+// mode at exit 0, and an empty -out fell through to stdout at exit 0 instead
+// of writing a file — both a script trusts to have written the wrong thing.
+// A finding claimed as a duplicate of itself is knowable from the flags
+// alone (IsFindingID makes plain string equality decide it), but was
+// previously refused only in review.checkTargets after review.Run had
+// already stat'd the session directory and loaded findings.jsonl — at exit
+// 1, and on a session with no findings.jsonl yet, masked entirely behind
+// "run analyze -ingest first".
 func TestInvalidFlagValuesExitTwo(t *testing.T) {
 	dir := miniSession(t)
 	demoOut := t.TempDir()
@@ -219,6 +232,9 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 		{[]string{"record", "-demo", "-addr", "bogus", "-out", t.TempDir()}, `record: invalid capture address "bogus"`},
 		{[]string{"demo", "-out", ""}, `demo: -out must not be empty`},
 		{[]string{"record", "-out", ""}, `record: -out must not be empty`},
+		{[]string{"analyze", "-session", dir, "-ingest", ""}, `analyze: -ingest must not be empty`},
+		{[]string{"analyze", "-session", dir, "-out", ""}, `analyze: -out must not be empty`},
+		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", "duplicate-of-F-001"}, `review: -finding cannot be a duplicate of itself`},
 	}
 	for _, c := range cases {
 		var code int

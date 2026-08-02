@@ -266,6 +266,29 @@ func Run(args []string) int {
 		if *dir == "" {
 			return usageErr(fmt.Errorf("analyze: -session is required"))
 		}
+		outSet, ingestSet := false, false
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "out":
+				outSet = true
+			case "ingest":
+				ingestSet = true
+			}
+		})
+		// An explicitly-empty -ingest or -out is a wrong invocation (an unset
+		// shell variable spliced into the flag, say), not a valid path — the
+		// demo/record -out precedent above. Left unchecked here, an empty
+		// -ingest silently falls through the `*ingest != ""` mode check below
+		// to emit mode at exit 0 (the answer is never validated), and an empty
+		// -out in emit mode silently falls through to stdout at exit 0 instead
+		// of writing a file — both leave a caller trusting the wrong thing
+		// happened.
+		if ingestSet && *ingest == "" {
+			return usageErr(fmt.Errorf("analyze: -ingest must not be empty"))
+		}
+		if outSet && *out == "" {
+			return usageErr(fmt.Errorf("analyze: -out must not be empty"))
+		}
 		if *ingest != "" {
 			if *out != "" {
 				return usageErr(fmt.Errorf("analyze: -out and -ingest cannot be combined"))
@@ -338,8 +361,20 @@ func Run(args []string) int {
 			return usageErr(fmt.Errorf("review: invalid -finding %q (want F-NNN)", f))
 		}
 		if v != "" {
-			if _, _, err := review.ParseVerdictFlag(v); err != nil {
+			verdict, of, err := review.ParseVerdictFlag(v)
+			if err != nil {
 				return usageErr(fmt.Errorf("review: %w", err))
+			}
+			// A finding claimed as a duplicate of itself is a contradiction
+			// knowable from the flags alone (IsFindingID is a strict F-NNN
+			// match, so plain string equality decides it) — refused here, at
+			// exit 2, alongside the other pairing/syntax checks. Left to
+			// review.checkTargets, it surfaced only after review.Run had
+			// stat'd the session directory and loaded findings.jsonl: at exit
+			// 1, and on a session with no findings.jsonl yet, masked entirely
+			// behind "run analyze -ingest first".
+			if verdict == "duplicate" && of == f {
+				return usageErr(fmt.Errorf("review: -finding cannot be a duplicate of itself"))
 			}
 		}
 		if err := review.Run(review.Options{
