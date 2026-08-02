@@ -217,6 +217,8 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 		{[]string{"transcribe", "-session", dir, "-vad", "silreo"}, `transcribe: unknown -vad "silreo"`},
 		{[]string{"demo", "-addr", "bogus", "-out", demoOut}, `demo: invalid capture address "bogus"`},
 		{[]string{"record", "-demo", "-addr", "bogus", "-out", t.TempDir()}, `record: invalid capture address "bogus"`},
+		{[]string{"demo", "-out", ""}, `demo: -out must not be empty`},
+		{[]string{"record", "-out", ""}, `record: -out must not be empty`},
 	}
 	for _, c := range cases {
 		var code int

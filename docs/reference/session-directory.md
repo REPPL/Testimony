@@ -70,7 +70,7 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 | `t1` | number | yes | utterance end, session-relative seconds |
 | `speaker` | string | no | speaker label; `"P1"` when the engine supplies no diarisation |
 | `text` | string | yes | utterance text, whitespace-trimmed (empty segments are dropped) |
-| `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — words the aligner could not time, or whose engine-reported time (before the session offset is added) is implausible (non-finite, or beyond ±1e9 seconds), are omitted |
+| `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — words the aligner could not time, or whose time is implausible (non-finite, or beyond ±1e9 seconds) either as engine-reported (before the session offset is added) or after adding the offset, are omitted |
 
 ```json
 {"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Now I expect this save button to confirm somehow.","words":[{"w":"Now","t":17.6},{"w":"I","t":17.92}]}

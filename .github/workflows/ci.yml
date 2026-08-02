@@ -48,6 +48,13 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
+          # cache: false — the repo has zero dependencies and no go.sum, so
+          # there is nothing for actions/setup-go's module cache to hold; the
+          # default (true) restores nothing every run and prints a standing
+          # "cache folder ... doesn't exist on disk" warning. release.yml
+          # already sets this for its own reason (cache-poisoning surface on
+          # a tag-triggered workflow); here it is pure removed overhead.
+          cache: false
 
       # Any file gofmt lists needs `gofmt -w` and fails the job.
       - name: Format (gofmt)

@@ -30,7 +30,10 @@ func mapFixture(t *testing.T, name string, parse func([]byte) ([]segment, error)
 	if err != nil {
 		t.Fatalf("parse %s: %v", name, err)
 	}
-	utts := mapSegments(segs, offset)
+	utts, err := mapSegments(segs, offset)
+	if err != nil {
+		t.Fatalf("mapSegments %s: %v", name, err)
+	}
 
 	out := filepath.Join(t.TempDir(), session.TranscriptFile)
 	if err := session.WriteJSONL(out, utts); err != nil {
@@ -132,7 +135,7 @@ func TestWhisperXRejectsUntimedSegment(t *testing.T) {
 		segs, err := parseWhisperX([]byte(c.raw))
 		if err == nil {
 			// Pre-fix this branch ran, and the utterance landed at t0=0.
-			utts := mapSegments(segs, 0)
+			utts, _ := mapSegments(segs, 0)
 			t.Fatalf("%s: want refusal, got utterances %+v", c.name, utts)
 		}
 		if !strings.Contains(err.Error(), c.want) {
@@ -165,7 +168,7 @@ func TestWhisperCppRejectsUntimedSegment(t *testing.T) {
 		segs, err := parseWhisperCpp([]byte(c.raw))
 		if err == nil {
 			// Pre-fix this branch ran, and the utterance landed at t0=0.
-			utts := mapSegments(segs, 0)
+			utts, _ := mapSegments(segs, 0)
 			t.Fatalf("%s: want refusal, got utterances %+v", c.name, utts)
 		}
 		if !strings.Contains(err.Error(), c.want) {
@@ -229,9 +232,12 @@ func TestParseSegmentRejectsImplausibleTime(t *testing.T) {
 }
 
 func TestMapSegmentsNegativeOffset(t *testing.T) {
-	utts := mapSegments([]segment{
+	utts, err := mapSegments([]segment{
 		{start: 10.0, end: 12.345, text: " Carol pauses. ", words: []timeline.Word{{W: " Carol ", T: 10.004}}},
 	}, -1.5)
+	if err != nil {
+		t.Fatalf("mapSegments: %v", err)
+	}
 	if len(utts) != 1 {
 		t.Fatalf("want 1 utterance, got %d", len(utts))
 	}
@@ -244,6 +250,62 @@ func TestMapSegmentsNegativeOffset(t *testing.T) {
 	}
 	if len(u.Words) != 1 || u.Words[0].W != "Carol" || u.Words[0].T != 8.5 {
 		t.Fatalf("word not trimmed/shifted/rounded: %+v", u.Words)
+	}
+}
+
+// TestMapSegmentsRefusesOversizedSum is the offset-plus-segment-time
+// regression: CheckOffset and checkSegmentTime each bound their own value to
+// maxOffsetSeconds independently, but the value mapSegments actually writes
+// is their SUM, which neither check alone bounds. A segment near the
+// boundary combined with an offset near the boundary — both individually
+// in-bounds — used to write a transcript.jsonl at exit 0 that merge then
+// refused one command later, naming transcript.jsonl rather than the true
+// cause. mapSegments must catch it where the sum is first computed.
+func TestMapSegmentsRefusesOversizedSum(t *testing.T) {
+	_, err := mapSegments([]segment{
+		{start: 6e8, end: 6e8 + 1, text: "a segment near the boundary"},
+	}, 6e8)
+	if err == nil || !strings.Contains(err.Error(), "exceeding") {
+		t.Fatalf("an offset+segment sum past the bound must be refused, got %v", err)
+	}
+
+	// Individually in-bounds, and the sum stays in-bounds too: still accepted.
+	utts, err := mapSegments([]segment{
+		{start: 4e8, end: 4e8 + 1, text: "a segment comfortably inside the bound"},
+	}, 4e8)
+	if err != nil {
+		t.Fatalf("an in-bounds offset+segment sum must be accepted, got %v", err)
+	}
+	if len(utts) != 1 {
+		t.Fatalf("want 1 utterance, got %d", len(utts))
+	}
+}
+
+// TestMapSegmentsDropsOversizedWordKeepsSegment is the word-level sibling of
+// the sum-bound test above, pinning the DROP-not-refuse policy: an implausible
+// word time costs only word-level detail, matching the policy
+// whisperx.go's own word loop already states for a word time out of bounds
+// before the offset is applied. A word whose offset-shifted time alone exceeds
+// the bound must not refuse the whole segment — only that word is dropped;
+// the segment's own bound (checked separately) still governs the utterance.
+func TestMapSegmentsDropsOversizedWordKeepsSegment(t *testing.T) {
+	utts, err := mapSegments([]segment{
+		{
+			start: 0, end: 2, text: "two words",
+			words: []timeline.Word{
+				{W: "two", T: 0},
+				{W: "words", T: 7e8}, // in-bounds alone; the offset pushes it past the bound
+			},
+		},
+	}, 4e8) // in-bounds offset; "words" maps to 7e8+4e8=1.1e9, past the bound; "two" maps to 4e8, well within it
+	if err != nil {
+		t.Fatalf("a segment with one oversized word must still be accepted, got %v", err)
+	}
+	if len(utts) != 1 {
+		t.Fatalf("want 1 utterance, got %d", len(utts))
+	}
+	if len(utts[0].Words) != 1 || utts[0].Words[0].W != "two" {
+		t.Fatalf("want only the in-bounds word kept, got %+v", utts[0].Words)
 	}
 }
 
@@ -394,6 +456,31 @@ func TestResolveOffsetInPlaceRefusesBadSidecar(t *testing.T) {
 	_, _, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
 	if err == nil || !strings.Contains(err.Error(), "re-run with -audio") {
 		t.Fatalf("a malformed sidecar must refuse with guidance, got %v", err)
+	}
+}
+
+// TestResolveOffsetInPlaceRefusesSidecarMissingOffsetSeconds is the
+// absent-vs-zero regression: a sidecar that is valid JSON but omits
+// "offset_seconds" (or carries it as null) is unusable, exactly like a
+// malformed one — the audio is known external (only convertAudio writes this
+// file) but its offset is unrecoverable. Pre-fix, OffsetSeconds was
+// value-typed float64, so json.Unmarshal silently left it at its zero value
+// and readOffsetSidecar returned ok=true, offset=0 with an affirmative
+// "persisted" provenance string — the exact silent-shift-to-0 outcome the
+// sidecar exists to prevent.
+func TestResolveOffsetInPlaceRefusesSidecarMissingOffsetSeconds(t *testing.T) {
+	for _, body := range []string{
+		`{"provenance":"derived: audio creation_time − manifest t0"}`,
+		`{"offset_seconds":null,"provenance":"derived: audio creation_time − manifest t0"}`,
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, session.AudioOffsetFile), []byte(body), 0o644); err != nil {
+			t.Fatalf("write sidecar: %v", err)
+		}
+		_, _, err := resolveOffset(Options{SessionDir: dir}, session.Manifest{T0EpochMS: 1}, false)
+		if err == nil || !strings.Contains(err.Error(), "re-run with -audio") {
+			t.Fatalf("a sidecar missing offset_seconds must refuse with guidance, got %v (body %q)", err, body)
+		}
 	}
 }
 

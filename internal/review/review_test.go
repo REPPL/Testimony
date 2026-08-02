@@ -272,6 +272,49 @@ func TestPrintFindingSanitisesID(t *testing.T) {
 	}
 }
 
+// TestPrintFindingAnchorFallsBackOnInvisibleUI is the review-side sibling of
+// the report package's blank-anchor regression. anchor() used to branch on
+// the raw emptiness of f.UI.Selector/Route, but printFinding wraps the whole
+// return value in session.SafeText before printing — so a selector or route
+// that is non-empty raw but strips to nothing under SafeText (invisible-only
+// Unicode) took the ui branch and rendered a blank (or whitespace-only)
+// anchor line, never falling back to the evidence ids.
+func TestPrintFindingAnchorFallsBackOnInvisibleUI(t *testing.T) {
+	zeroWidthSpace := string(rune(0x200B))
+	wordJoiner := string(rune(0x2060))
+	f := analyze.Finding{
+		ID: "F-001", Type: "bug", Severity: 3, T: 1,
+		Quote:    "ok",
+		Evidence: []string{"utt-004"},
+		UI:       &analyze.UI{Selector: zeroWidthSpace, Route: wordJoiner},
+	}
+	var buf bytes.Buffer
+	printFinding(&buf, f)
+	if !strings.Contains(buf.String(), "anchor: evidence utt-004\n") {
+		t.Fatalf("expected the evidence-id fallback for an invisible-only ui, got: %q", buf.String())
+	}
+}
+
+// TestPrintFindingAnchorFallsBackOnWhitespaceOnlyUI is the literal-whitespace
+// sibling of TestPrintFindingAnchorFallsBackOnInvisibleUI: session.SafeText
+// maps a tab to a space rather than stripping it, so a selector of "\t" is
+// still non-empty after SafeText — anchor() must judge presence on the
+// TRIMMED form to still fall back to the evidence ids, not print a line
+// holding only a space.
+func TestPrintFindingAnchorFallsBackOnWhitespaceOnlyUI(t *testing.T) {
+	f := analyze.Finding{
+		ID: "F-001", Type: "bug", Severity: 3, T: 1,
+		Quote:    "ok",
+		Evidence: []string{"utt-004"},
+		UI:       &analyze.UI{Selector: "\t", Route: "\t"},
+	}
+	var buf bytes.Buffer
+	printFinding(&buf, f)
+	if !strings.Contains(buf.String(), "anchor: evidence utt-004\n") {
+		t.Fatalf("expected the evidence-id fallback for a whitespace-only ui, got: %q", buf.String())
+	}
+}
+
 // TestInteractiveWalkFailsWhenVerdictCannotBePersisted is the lost-verdict
 // regression: an AppendVerdict I/O failure used to be returned through the same
 // channel as an invalid-keystroke validation error, so the walk printed it as a

@@ -45,7 +45,7 @@ screen video is opt-in retained evidence, not yet consumed downstream.
 - Runs until interrupted. The interrupt handler is installed before any recorder
   starts, and each recorder runs in its own process group, so Ctrl+C is handled
   by `record` alone — no child is ever orphaned still recording.
-- On SIGINT/SIGTERM, sends each recorder an interrupt so it finalises its
+- On SIGINT/SIGTERM/SIGHUP, sends each recorder an interrupt so it finalises its
   container, waits up to five seconds, and escalates to a hard kill only on
   timeout; a running demo server is shut down gracefully. It then validates each
   recorder's artefact — `audio.wav`, and `screen.mp4` with `-video` — and prints
@@ -74,8 +74,11 @@ screen video is opt-in retained evidence, not yet consumed downstream.
   whose cause is in the recorder output; after the window it is an unexpected
   mid-session stop (for example a disconnected device). The raw recorder tail is
   always appended, and the command exits non-zero.
-- On platforms other than macOS, capture is unavailable: `record` still writes a
-  valid manifest and session directory, states that microphone and screen capture
-  were skipped, advises recording audio externally and running
-  `transcribe -session DIR -audio FILE`, and exits cleanly. `-demo` still serves
-  the demo app, since it is cross-platform.
+- On platforms other than macOS, capture is unavailable: without `-demo`,
+  `record` still writes a valid manifest and session directory, states that
+  microphone and screen capture were skipped, advises recording audio
+  externally and running `transcribe -session DIR -audio FILE`, and exits
+  cleanly. With `-demo` it still serves the demo app, since that is
+  cross-platform — but a served demo app means the command blocks until
+  interrupted exactly as it does on macOS, not "exits cleanly"; only the
+  recorders are unavailable, not the demo server.

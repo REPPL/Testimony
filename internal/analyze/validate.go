@@ -66,11 +66,20 @@ func indexTimeline(entries []timeline.Entry) timelineIndex {
 				idx.uttText[session.SafeText(e.ID)] = session.SafeText(s)
 			}
 		case "event":
-			if s, ok := e.Payload["selector"].(string); ok && s != "" {
-				idx.selectors[session.SafeText(s)] = true
+			// As with ids above: gate on the SafeText form, not the raw one. An
+			// invisible-only-Unicode selector/route (e.g. a lone Cf character) is
+			// non-empty raw but strips to "" under SafeText — indexing it under the
+			// raw test would seed idx.selectors[""]/idx.routes[""], letting any
+			// invisible-only-Unicode answer validate against no real anchor.
+			if s, ok := e.Payload["selector"].(string); ok {
+				if sel := session.SafeText(s); sel != "" {
+					idx.selectors[sel] = true
+				}
 			}
-			if r, ok := e.Payload["route"].(string); ok && r != "" {
-				idx.routes[session.SafeText(r)] = true
+			if r, ok := e.Payload["route"].(string); ok {
+				if route := session.SafeText(r); route != "" {
+					idx.routes[route] = true
+				}
 			}
 		}
 		// Seed idx.end on the first entry, exactly as idx.start is seeded below, so

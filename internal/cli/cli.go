@@ -61,6 +61,14 @@ func Run(args []string) int {
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
 		}
+		// An empty -out is a wrong invocation (an unset shell variable spliced
+		// into the flag, say), not a valid root: every other validated flag on
+		// this path exits 2 naming itself, but an empty -out previously reached
+		// os.MkdirAll unvalidated and surfaced as a bare "mkdir : no such file
+		// or directory" at exit 1, naming no flag at all.
+		if *out == "" {
+			return usageErr(fmt.Errorf("demo: -out must not be empty"))
+		}
 		// Refuse a malformed address here, where wrong invocations exit 2 —
 		// reported from Serve it took the runtime status, after Run had already
 		// created a session directory for a server that could never bind.
@@ -137,6 +145,12 @@ func Run(args []string) int {
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
+		}
+		// See demo's identical check above: an empty -out is a wrong invocation,
+		// not a valid root, and must exit 2 naming the flag rather than surface
+		// os.MkdirAll's bare "mkdir : no such file or directory" at exit 1.
+		if *out == "" {
+			return usageErr(fmt.Errorf("record: -out must not be empty"))
 		}
 		if *demoFlag {
 			if err := demo.CheckAddr(*addr); err != nil {
