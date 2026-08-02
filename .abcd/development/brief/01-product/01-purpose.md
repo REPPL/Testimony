@@ -5,9 +5,10 @@ does it — a screen recording plus concurrent *think-aloud* narration — and
 turns them into machine-readable, time-aligned records: a word-timestamped
 transcript merged with a timestamped interaction stream. From there, an
 analysis layer derives findings (bugs, friction, inconsistencies,
-preferences) and maps them back to the codebase. The name describes the
-artefact the pipeline produces — a first-person spoken account offered as
-evidence — and happens to begin with *test*.
+preferences), with codebase mapping as a future goal (see
+[`04-analysis.md`](04-analysis.md)). The name describes the artefact the
+pipeline produces — a first-person spoken account offered as evidence — and
+happens to begin with *test*.
 
 ## Operating modes
 
