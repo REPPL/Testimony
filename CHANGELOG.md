@@ -342,6 +342,11 @@ Invocation contract:
   `-finding`/`-verdict` pairing and verdict syntax, an unknown
   `transcribe -engine`, and a malformed capture `-addr` (which also no longer
   creates a session directory before refusing).
+- `demo`/`record -demo`'s capture `-addr` refuses a numeric port outside
+  0-65535 (e.g. `:99999`) up front, instead of failing later inside
+  `net.Listen` at exit 1 — indistinguishable from a port already in use. A
+  named service port (e.g. `:http`) is left to the runtime's own lookup,
+  unaffected.
 - `review -finding`'s value is validated against the `F-NNN` syntax at exit
   2, the one flag value in this family the previous pass left unchecked: a
   malformed id used to fail inside `review.Run` with `"finding ... not

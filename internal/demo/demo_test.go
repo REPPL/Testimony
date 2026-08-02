@@ -148,6 +148,30 @@ func TestListenAddrRejectsUnparseableAddr(t *testing.T) {
 	}
 }
 
+// TestListenAddrRejectsOutOfRangePort is the invalid-port regression: a numeric
+// port outside 0-65535 must be refused by listenAddr itself, not handed on to
+// net.Listen. Pre-fix, ":99999" reached net.Listen and failed there with a bind
+// error at exit 1, indistinguishable from a port already in use, instead of the
+// exit-2 usage refusal every other invalid -addr gets. A non-numeric port (a
+// service name such as "http") is left untouched: only net.Listen's own
+// /etc/services lookup can tell whether it resolves.
+func TestListenAddrRejectsOutOfRangePort(t *testing.T) {
+	for _, in := range []string{":99999", ":65536", ":-1", "127.0.0.1:99999"} {
+		got, err := listenAddr(in)
+		if err == nil {
+			t.Errorf("listenAddr(%q) = %q with no error; want a refusal", in, got)
+		}
+		if got != "" {
+			t.Errorf("listenAddr(%q) returned %q alongside its error; want no address", in, got)
+		}
+	}
+	for _, in := range []string{":8737", ":0", ":65535", ":http"} {
+		if _, err := listenAddr(in); err != nil {
+			t.Errorf("listenAddr(%q) returned an error: %v", in, err)
+		}
+	}
+}
+
 // TestServeRefusesUnparseableAddr proves the refusal reaches the capture server:
 // Serve must not bind at all for an empty addr, and must not leave stream files
 // behind in the session directory for a session it never served.
