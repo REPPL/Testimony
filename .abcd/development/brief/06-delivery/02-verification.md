@@ -19,8 +19,13 @@ tag being released, so a stale pin fails the release rather than shipping the
 `curl | sh` install path a version behind; it asserts the built binary, and
 then the binary in the published tarball, each report that same tag; it
 re-verifies the published attestation against a freshly downloaded tarball;
-and a tripwire asserts the job pushed nothing to the default branch. The
-supply-chain jobs are repeated
+it runs `install.sh` itself end to end against the just-published release —
+CI's installer checks only cover the syntax check and the four early-return
+flag paths, never the real fetch/verify/extract path (the `SHA256SUMS`
+lookup, the hash compare, the `gh attestation` branch, and the staged probe)
+— into a throwaway directory, asserting the installed binary reports the
+released tag; and a tripwire asserts the job pushed nothing to the default
+branch. The supply-chain jobs are repeated
 here rather than trusted from an earlier CI run because a tag can point at a
 commit that was never pushed through a branch (the installer-syntax step's own
 comment names the same gap) — release.yml checks out `github.sha` for every

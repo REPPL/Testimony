@@ -78,6 +78,26 @@ Evidence integrity:
   nothing downstream bounds a word's time as `merge` bounds an utterance's
   `t0`/`t1`. Such a word is now silently omitted from that utterance's
   `words`, the same outcome an unaligned word already had.
+- **Behaviour:** `transcribe`'s offset+segment-time sum is bounded, closing
+  the residual case the segment- and offset-level bounds above each miss
+  individually: a segment time and an offset that were both, on their own,
+  within magnitude could still sum past what `merge` accepts, writing a
+  transcript at exit 0 that `merge` only refused one command later. An
+  oversized word's offset-shifted time is dropped rather than refusing the
+  whole segment, matching the existing unaligned/implausible-word policy.
+- `analyze`'s `ui.selector`/`ui.route` index is keyed on the same sanitised
+  (`SafeText`) form its lookup already uses, closing the sibling of the
+  duplicate-id gap `analyze` already refuses: a timeline event whose selector
+  or route was entirely invisible-Unicode formatting characters (non-empty
+  raw, empty once sanitised) previously indexed under the empty key, letting
+  any invisible-only-Unicode `ui.selector`/`ui.route` in an ingested answer
+  validate against that phantom entry rather than a real one.
+- `report` and `review` fall back to a finding's evidence ids when its `ui`
+  selector/route renders to nothing or to whitespace only (invisible-Unicode
+  formatting characters, a selector of backticks alone, or literal
+  whitespace) instead of rendering a blank or whitespace-only anchor with no
+  fallback; `report`'s event lines apply the same rendered-form check
+  uniformly across `selector`, `text`, `value`, and `route`.
 
 Capture and diagnostics:
 
@@ -136,6 +156,12 @@ Checks and installer:
 - CI and the release workflow now actually execute `install.sh --help` and
   its flag-error paths (`--dir`/`--version` without a value, an unknown
   flag), instead of only parsing the script's syntax.
+- The release workflow runs `install.sh` end to end against the just-published
+  release, into a throwaway directory, and asserts the installed binary
+  reports the released tag: every prior check only parsed the script's syntax
+  or its early-return flag paths, never the real fetch/verify/extract path
+  (the SHA256SUMS lookup, the hash compare, the `gh attestation` branch, and
+  the staged probe).
 
 Documentation:
 
@@ -197,6 +223,16 @@ Documentation:
   getting-started tutorial states that both dependency prompts accept a
   second install word rather than skipping on anything but the recommended
   reply.
+- The instrument-your-own-app how-to scopes `record -demo`'s `ffmpeg`
+  prerequisite to macOS (the platform its recorders actually run on) instead
+  of stating it unconditionally; `.abcd/development/brief/`'s record surface
+  page now lists `SIGHUP` alongside `SIGINT`/`SIGTERM`, and no longer implies
+  non-macOS `record -demo` exits cleanly — a served demo app blocks the
+  command until interrupted on every platform. The purpose brief no longer
+  states codebase mapping as shipped, present-tense; it is named a future
+  goal, matching the analysis brief and delivery-phase pages it previously
+  contradicted. The verification brief's release-only gate list now names
+  the `install.sh` end-to-end smoke test added below.
 
 Invocation contract:
 
@@ -264,6 +300,10 @@ Invocation contract:
   surface only after engine detection, either masked as "no ASR engine
   found" on a machine with none installed, or as the same error one
   step later, at exit 1 either way.
+- `record -out`/`demo -out` refuse an empty value at exit 2, naming the flag:
+  it used to reach `os.MkdirAll` unvalidated and surface as a bare
+  `mkdir : no such file or directory` at exit 1, unlike every other
+  validated flag on either command.
 
 Capture integrity:
 
@@ -290,6 +330,13 @@ Capture integrity:
   durable `[data-testid=...]` one, and any click or change captured on a
   bare-control `data-testid` element carried an empty label, since the
   control itself has no text content to read.
+- **Behaviour:** `audio.offset.json`'s `offset_seconds` is required, matching
+  the documented contract: a sidecar that is valid JSON but omits the key (or
+  carries it as `null`) — hand-edited, partially rewritten, or produced by
+  another tool — used to decode to a silent `0` and transcribe at exit 0 with
+  an affirmative "persisted" provenance line, the exact silent-shift-to-0
+  outcome the sidecar exists to prevent. It now refuses with the same
+  guidance a malformed sidecar already gives.
 
 Installer:
 
