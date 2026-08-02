@@ -175,9 +175,19 @@ func parseWhisperX(raw []byte) ([]segment, error) {
 		if s.End == nil {
 			return nil, fmt.Errorf("whisperx segment %d is missing end; cannot say when the speech stopped", i+1)
 		}
+		if !checkSegmentTime(*s.Start) {
+			return nil, fmt.Errorf("whisperx segment %d has an implausible start %v; an audio-clock time cannot exceed %g seconds in magnitude", i+1, *s.Start, maxOffsetSeconds)
+		}
+		if !checkSegmentTime(*s.End) {
+			return nil, fmt.Errorf("whisperx segment %d has an implausible end %v; an audio-clock time cannot exceed %g seconds in magnitude", i+1, *s.End, maxOffsetSeconds)
+		}
 		seg := segment{start: *s.Start, end: *s.End, text: s.Text, speaker: s.Speaker}
 		for _, w := range s.Words {
-			if w.Start == nil {
+			// An implausible word time is dropped rather than refusing the whole
+			// segment, matching the missing-timestamp case just above: it costs
+			// only word-level detail, and the segment's own start/end are already
+			// bound by the checks above.
+			if w.Start == nil || !checkSegmentTime(*w.Start) {
 				continue
 			}
 			seg.words = append(seg.words, timeline.Word{W: w.Word, T: *w.Start})

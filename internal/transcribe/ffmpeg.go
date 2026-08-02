@@ -18,6 +18,20 @@ import (
 // and plain WAV. Everything is normalised through ffmpeg regardless.
 var audioExts = map[string]bool{".m4a": true, ".mov": true, ".wav": true}
 
+// CheckAudioExt validates an explicit -audio value's extension without
+// touching the filesystem, so the CLI can refuse it at exit 2 — the
+// CheckEngine/CheckDevice/CheckVAD pattern — before detectEngine and offset
+// resolution spend any work on a path whisperx/whisper.cpp were never going
+// to accept. checkExternalAudio calls this too (and adds the stat/regular-file
+// check, which does need the filesystem), so the extension rule keeps one home.
+func CheckAudioExt(in string) error {
+	ext := strings.ToLower(filepath.Ext(in))
+	if !audioExts[ext] {
+		return fmt.Errorf("unsupported audio format %q: expected .m4a, .mov, or .wav", ext)
+	}
+	return nil
+}
+
 // checkExternalAudio validates the operator-named recording before anything
 // opens it. It lives apart from convertAudio because the conversion is no longer
 // the first thing to touch the path: transcribe.Run resolves the audio→session
@@ -32,9 +46,8 @@ var audioExts = map[string]bool{".m4a": true, ".mov": true, ".wav": true}
 // os.Stat resolves a symlink, so an operator pointing -audio at a symlinked
 // recording is fine; what must be refused is a non-regular target.
 func checkExternalAudio(in string) error {
-	ext := strings.ToLower(filepath.Ext(in))
-	if !audioExts[ext] {
-		return fmt.Errorf("unsupported audio format %q: expected .m4a, .mov, or .wav", ext)
+	if err := CheckAudioExt(in); err != nil {
+		return err
 	}
 	if fi, err := os.Stat(in); err != nil {
 		return fmt.Errorf("audio file: %w", err)

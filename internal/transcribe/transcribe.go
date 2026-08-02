@@ -327,6 +327,21 @@ const maxOffsetSidecarBytes = 64 << 10
 // so the operator learns which input is wrong.
 const maxOffsetSeconds = 1e9
 
+// checkSegmentTime reports whether v is a plausible time on the audio clock:
+// finite and within maxOffsetSeconds in magnitude (the same bound every other
+// externally-sourced time in this package uses). An ASR engine's segment
+// start/end is the one such time that reached mapSegments unbounded: round2's
+// x*100 silently overflows to +Inf for a segment near 1e307, well below the
+// platform's float64 maximum, and a segment between maxOffsetSeconds and
+// ~1.8e306 wrote a transcript at exit 0 that merge refused one command
+// later — naming transcript.jsonl rather than the engine that produced the
+// bad time. Checked at each parser's boundary, alongside its existing
+// missing-start/missing-end refusals, so a malformed engine response is
+// refused where it enters rather than downstream.
+func checkSegmentTime(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && math.Abs(v) <= maxOffsetSeconds
+}
+
 // CheckOffset validates an explicit -offset value without touching the
 // session, so the CLI can refuse an unusable offset as a usage error before
 // any work starts — the CheckEngine/CheckAddr pattern. The derived and
