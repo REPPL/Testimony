@@ -215,6 +215,17 @@ func TestParseSegmentRejectsImplausibleTime(t *testing.T) {
 	if err != nil || len(segs) != 1 {
 		t.Fatalf("a plausible segment must be accepted, got segs=%+v err=%v", segs, err)
 	}
+
+	// An implausible WORD timestamp — reachable even when the segment's own
+	// start/end are fine — must be dropped rather than left to overflow
+	// mapSegments' round2 to +Inf, matching the missing-timestamp case.
+	segs, err = parseWhisperX([]byte(`{"segments":[{"start":0,"end":1,"text":"Bob.","words":[{"word":"Bob","start":1e307}]}]}`))
+	if err != nil {
+		t.Fatalf("an implausible word must not refuse the segment, got %v", err)
+	}
+	if len(segs) != 1 || len(segs[0].words) != 0 {
+		t.Fatalf("implausible word must be dropped, got %+v", segs)
+	}
 }
 
 func TestMapSegmentsNegativeOffset(t *testing.T) {

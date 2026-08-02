@@ -149,7 +149,8 @@ func cudaVisible() bool {
 }
 
 // parseWhisperX converts the WhisperX JSON into engine-neutral segments.
-// Words without a start timestamp (alignment miss) are omitted.
+// Words without a start timestamp (alignment miss), or with an implausible
+// one, are omitted.
 //
 // A segment missing either of its own times is a hard error rather than a
 // silent default. An unaligned word is a routine, expected outcome the engine
@@ -184,9 +185,9 @@ func parseWhisperX(raw []byte) ([]segment, error) {
 		seg := segment{start: *s.Start, end: *s.End, text: s.Text, speaker: s.Speaker}
 		for _, w := range s.Words {
 			// An implausible word time is dropped rather than refusing the whole
-			// segment, matching the missing-timestamp case just above: it costs
-			// only word-level detail, and the segment's own start/end are already
-			// bound by the checks above.
+			// segment, matching the missing-timestamp case it now shares a
+			// condition with below: it costs only word-level detail, and the
+			// segment's own start/end are already bound by the checks above.
 			if w.Start == nil || !checkSegmentTime(*w.Start) {
 				continue
 			}
