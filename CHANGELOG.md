@@ -317,7 +317,7 @@ Documentation:
 - `02-scope.md`'s "Current status" section no longer claims Phase 2 shipped
   unqualified against its own deliverable list that names chunking — the
   one remaining sibling of `01-phases.md` and `04-analysis.md` still making
-  that claim; it now carries the same flagged-divergence wording they do.
+  that claim; it now carries the same flagged-divergence caveat they do.
 
 Invocation contract:
 
@@ -425,8 +425,8 @@ Invocation contract:
   unaffected.
 - `review`'s interactive walk echoes the trimmed choice it actually matched
   against in its "unrecognised choice" message, instead of the raw,
-  unterminated input line: typing `x` used to print `unrecognised choice
-  "x\n"`, a value visibly different from the trimmed form the switch
+  newline-terminated input line: typing `x` used to print `unrecognised
+  choice "x\n"`, a value visibly different from the trimmed form the switch
   compared it to.
 
 Capture integrity:
