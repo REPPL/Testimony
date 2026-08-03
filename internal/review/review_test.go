@@ -220,6 +220,27 @@ func TestInteractiveQuitStops(t *testing.T) {
 	}
 }
 
+// TestUnrecognisedChoiceErrorIsTrimmed proves the unrecognised-choice error
+// echoes the same trimmed value the switch actually matched against, not the
+// raw line readLine returns (which keeps its trailing '\n', and any
+// surrounding whitespace the analyst's terminal happened to send). Pre-fix
+// the error interpolated the untrimmed choice, so typing "x" printed
+// `unrecognised choice "x\n"` — a message that visibly disagreed with what
+// was compared.
+func TestUnrecognisedChoiceErrorIsTrimmed(t *testing.T) {
+	dir := writeSession(t)
+	var out bytes.Buffer
+	if err := Run(Options{Dir: dir, In: strings.NewReader("  Zap  \nq\n"), Out: &out, IsTTY: true, Today: "2026-07-17"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(out.String(), `unrecognised choice "Zap"`) {
+		t.Fatalf("expected the trimmed choice in the error, got %q", out.String())
+	}
+	if strings.Contains(out.String(), "\\n") || strings.Contains(out.String(), "  Zap  ") {
+		t.Fatalf("error echoed the raw untrimmed choice:\n%s", out.String())
+	}
+}
+
 // TestPrintFindingSanitisesANSI is the terminal-injection regression: a
 // finding's quote/anchor come from an untrusted (downloaded) session, so an
 // embedded ESC must not reach the analyst's terminal. Pre-fix f.Quote was

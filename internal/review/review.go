@@ -183,7 +183,8 @@ func walk(opts Options, findings []analyze.Finding, verdicts []analyze.Verdict) 
 // applyChoice handles one keystroke. done means advance to the next finding;
 // quit means stop the walk.
 func applyChoice(opts Options, findings []analyze.Finding, f analyze.Finding, choice string, r *bufio.Reader) (done, quit bool, err error) {
-	switch strings.ToLower(strings.TrimSpace(choice)) {
+	trimmed := strings.TrimSpace(choice)
+	switch strings.ToLower(trimmed) {
 	case "c":
 		return true, false, record(opts, f, analyze.Verdict{Kind: "verdict", Finding: f.ID, Verdict: "confirmed", At: opts.Today})
 	case "r":
@@ -208,7 +209,7 @@ func applyChoice(opts Options, findings []analyze.Finding, f analyze.Finding, ch
 	case "q":
 		return false, true, nil
 	default:
-		return false, false, fmt.Errorf("unrecognised choice %q", choice)
+		return false, false, fmt.Errorf("unrecognised choice %q", trimmed)
 	}
 }
 
