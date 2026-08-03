@@ -872,3 +872,35 @@ func TestReportVerdictOmitsAtThatRendersEmpty(t *testing.T) {
 		t.Fatalf("finding should still be Confirmed but with no dangling verdict suffix:\n%s", md)
 	}
 }
+
+// TestReportVerdictOmitsOfThatRendersEmpty is TestReportVerdictOmitsAtThatRendersEmpty's
+// "of" sibling: a duplicate verdict whose "of" target is non-empty raw but
+// renders to nothing (invisible-only Unicode) must be treated as absent, like
+// a non-duplicate verdict with no "of" at all, instead of rendering a
+// dangling "of" with a blank target.
+func TestReportVerdictOmitsOfThatRendersEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	zeroWidthSpace := string(rune(0x200B))
+	findings := "{\"id\":\"F-001\",\"t\":22,\"type\":\"bug\",\"severity\":3,\"quote\":\"ok\",\"evidence\":[\"utt-004\"],\"status\":\"unverified\"}\n" +
+		"{\"kind\":\"verdict\",\"finding\":\"F-001\",\"verdict\":\"duplicate\",\"of\":\"" + zeroWidthSpace + "\",\"at\":\"2026-07-17\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "duplicate of ") {
+		t.Fatalf("report rendered a dangling \"of\" with a blank target for an invisible-only of:\n%s", md)
+	}
+	if !strings.Contains(md, "· duplicate (2026-07-17)") {
+		t.Fatalf("finding should render the duplicate verdict without an \"of\" clause:\n%s", md)
+	}
+}
