@@ -135,6 +135,13 @@ Evidence integrity:
   request's "attribute each finding to a task" instruction a referent with
   no content and disagreeing with `report.md`'s task list for the same
   session.
+- `report`'s speaker label and its verdict suffix's `at`/`of` fields decide
+  presence on their rendered (SafeText) form, matching every other field in
+  the file: a diarisation label or a verdict date that is non-empty raw but
+  renders to nothing or to whitespace only used to skip the `P?` fallback
+  and render a blank speaker with no attribution at all, or render a
+  dangling, empty `()` after a finding's verdict instead of omitting the
+  suffix as an absent `at` would.
 
 Capture and diagnostics:
 
@@ -307,6 +314,10 @@ Documentation:
   corrected against above. Its sibling `02-verification.md`'s CI gate
   enumeration now also names the version-stamp ldflags check, as
   `AGENTS.md` already does.
+- `02-scope.md`'s "Current status" section no longer claims Phase 2 shipped
+  unqualified against its own deliverable list that names chunking — the
+  one remaining sibling of `01-phases.md` and `04-analysis.md` still making
+  that claim; it now carries the same flagged-divergence wording they do.
 
 Invocation contract:
 
@@ -412,6 +423,11 @@ Invocation contract:
   exit 0 instead of refusing it like every other closed-enum flag on the
   command. `-compute_type`'s documented set is open-ended, so it is
   unaffected.
+- `review`'s interactive walk echoes the trimmed choice it actually matched
+  against in its "unrecognised choice" message, instead of the raw,
+  unterminated input line: typing `x` used to print `unrecognised choice
+  "x\n"`, a value visibly different from the trimmed form the switch
+  compared it to.
 
 Capture integrity:
 

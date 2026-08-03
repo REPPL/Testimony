@@ -629,3 +629,15 @@ Architecture-shaping decisions graduate to an ADR under
   (both scoped correctly by their surrounding text); two CHANGELOG
   `[Unreleased]` group headings ("Capture and diagnostics:"/"Capture
   integrity:") that read as overlapping but cover distinct topics.
+- 2026-08-03 — Bug-hunt round 25: `report`'s `speaker` and its verdict
+  suffix's `at`/`of` fields now decide presence on their rendered
+  (SafeText) form, closing the last raw-emptiness check in `report.go` —
+  a diarisation label or verdict date that is non-empty raw but renders to
+  nothing or whitespace only used to skip the `P?` fallback (blank speaker,
+  no attribution) or leave a dangling empty `()` after a verdict. Nitpick:
+  `review`'s "unrecognised choice" message now echoes the trimmed value it
+  actually matched against, instead of the raw, newline-terminated input
+  line. `02-scope.md`'s "Current status" section no longer claims Phase 2
+  shipped unqualified against its own deliverable list naming chunking — the
+  last remaining sibling of `01-phases.md`/`04-analysis.md` still missing
+  the flagged-divergence wording they already carry.
