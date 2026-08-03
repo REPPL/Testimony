@@ -29,7 +29,9 @@ Whisper engine), `merge`, and `report` — capture a session with narration,
 transcribe it locally, merge the streams, and read the aligned report. Phase 2
 is also shipped: `analyze` emits a host-delegated analysis request and
 validates the answer into `findings.jsonl`; `review` records human verdicts on
-it, appended non-destructively.
+it, appended non-destructively. Chunking is a flagged divergence — v1 emits
+the whole timeline as one chunk, deferring real per-task chunking behind a
+seam.
 
 `demo` — a small instrumented settings app serving as the capture testbed —
 is an addition beyond the original Phase 1 command list: it exists so the
