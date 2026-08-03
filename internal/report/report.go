@@ -191,8 +191,12 @@ func renderFindings(b *strings.Builder, dir string) {
 		for _, f := range group {
 			fmt.Fprintf(b, "- **%s** %s · severity %d · [%s] — “%s” — %s",
 				mdInline(f.ID), mdInline(f.Type), f.Severity, clock(f.T), mdInline(f.Quote), findingAnchor(f))
-			if st := eff[f.ID]; st.At != "" {
-				if st.Of != "" {
+			// Presence is decided on the rendered form, not the raw one
+			// (inlineRendersEmpty): an at/of that is non-empty raw but renders
+			// to nothing or to whitespace only must be treated as absent
+			// rather than render a blank or dangling verdict suffix.
+			if st := eff[f.ID]; !inlineRendersEmpty(st.At) {
+				if !inlineRendersEmpty(st.Of) {
 					fmt.Fprintf(b, " · %s of %s (%s)", mdInline(st.Value), mdInline(st.Of), mdInline(st.At))
 				} else {
 					fmt.Fprintf(b, " · %s (%s)", mdInline(st.Value), mdInline(st.At))
@@ -336,8 +340,13 @@ func inlineRendersEmpty(s string) bool {
 	return strings.TrimSpace(session.SafeText(s)) == ""
 }
 
+// Presence is decided on the rendered form, not the raw one
+// (inlineRendersEmpty): a speaker that is non-empty raw but renders to
+// nothing or to whitespace only (invisible-only Unicode, or literal
+// whitespace) must fall through to the "P?" placeholder rather than render
+// a blank speaker label with no fallback.
 func speaker(u timeline.Entry) string {
-	if s, ok := u.Payload["speaker"].(string); ok && s != "" {
+	if s, ok := u.Payload["speaker"].(string); ok && !inlineRendersEmpty(s) {
 		return mdInline(s)
 	}
 	return "P?"

@@ -806,3 +806,69 @@ func TestReportTitlePlaceholdersInvisibleOnlySession(t *testing.T) {
 		t.Fatalf("report rendered a Tasks line with no non-empty task:\n%s", md)
 	}
 }
+
+// TestReportSpeakerPlaceholdersInvisibleOnlySpeaker is speaker's sibling of
+// the App/Participant/Session placeholder fixes: speaker decided presence on
+// the raw string ("" check) rather than the rendered form
+// (inlineRendersEmpty), the one field in this file that still did. A speaker
+// that is non-empty raw but renders to nothing (invisible-only Unicode) or to
+// whitespace only skipped the "P?" fallback and rendered a blank label with
+// no attribution at all, instead of the placeholder that exists precisely to
+// mark an unknown speaker.
+func TestReportSpeakerPlaceholdersInvisibleOnlySpeaker(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	zeroWidthSpace := string(rune(0x200B))
+	tl := `{"t":2,"src":"speech","id":"utt-001","payload":{"t1":5,"speaker":"` + zeroWidthSpace + `","text":"hello there"}}
+{"t":8,"src":"speech","id":"utt-002","payload":{"t1":9,"speaker":"   ","text":"second line"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "[00:02] :**") || strings.Contains(md, "[00:08]    :**") {
+		t.Fatalf("report rendered a blank speaker label instead of the P? placeholder:\n%s", md)
+	}
+	if strings.Count(md, "[00:02] P?:**") != 1 || strings.Count(md, "[00:08] P?:**") != 1 {
+		t.Fatalf("report is missing the P? placeholder for an invisible/whitespace-only speaker:\n%s", md)
+	}
+}
+
+// TestReportVerdictOmitsAtThatRendersEmpty is renderFindings' sibling of the
+// same class: the verdict suffix decided presence on the raw "at"/"of"
+// strings rather than their rendered form, so a verdict whose "at" is
+// non-empty raw but renders to nothing (invisible-only Unicode) still passed
+// the presence check and rendered a dangling, empty "()" instead of omitting
+// the whole verdict suffix as an absent "at" would.
+func TestReportVerdictOmitsAtThatRendersEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	zeroWidthSpace := string(rune(0x200B))
+	findings := "{\"id\":\"F-001\",\"t\":22,\"type\":\"bug\",\"severity\":3,\"quote\":\"ok\",\"evidence\":[\"utt-004\"],\"status\":\"unverified\"}\n" +
+		"{\"kind\":\"verdict\",\"finding\":\"F-001\",\"verdict\":\"confirmed\",\"at\":\"" + zeroWidthSpace + "\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "confirmed ()") {
+		t.Fatalf("report rendered a dangling empty verdict suffix for an invisible-only at:\n%s", md)
+	}
+	if !strings.Contains(md, "### Confirmed (1)") || strings.Contains(md, "**F-001** bug · severity 3 · [00:22] — “ok” — evidence utt-004 ·") {
+		t.Fatalf("finding should still be Confirmed but with no dangling verdict suffix:\n%s", md)
+	}
+}
