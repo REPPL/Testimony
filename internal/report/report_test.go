@@ -938,3 +938,71 @@ func TestReportVerdictOmitsOfThatRendersEmpty(t *testing.T) {
 		t.Fatalf("finding should render the duplicate verdict without an \"of\" clause:\n%s", md)
 	}
 }
+
+// TestReportUtteranceTextPlaceholdersInvisibleOnlyText is text()'s sibling of
+// TestReportSpeakerPlaceholdersInvisibleOnlySpeaker: timeline.checkedUtterances
+// never validates an utterance's text, so a hand-edited or exchanged
+// timeline.jsonl whose text is empty, whitespace-only, or invisible-only
+// Unicode used to render a blank quotation ("“”") next to a real speaker and
+// timestamp, with no fallback at all — the one field on that line with
+// neither a raw nor a rendered-form guard.
+func TestReportUtteranceTextPlaceholdersInvisibleOnlyText(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	zeroWidthSpace := string(rune(0x200B))
+	tl := `{"t":2,"src":"speech","id":"utt-001","payload":{"t1":5,"speaker":"P1","text":""}}
+{"t":8,"src":"speech","id":"utt-002","payload":{"t1":9,"speaker":"P1","text":"   "}}
+{"t":14,"src":"speech","id":"utt-003","payload":{"t1":15,"speaker":"P1","text":"` + zeroWidthSpace + `"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "“”") {
+		t.Fatalf("report rendered a blank quotation instead of the no words placeholder:\n%s", md)
+	}
+	if strings.Count(md, "“no words”") != 3 {
+		t.Fatalf("report is missing the no words placeholder for empty/whitespace/invisible-only utterance text:\n%s", md)
+	}
+}
+
+// TestReportFindingTypeAndQuotePlaceholderOnEmpty is findingAnchor's sibling:
+// analyze.Load enforces neither a finding's type nor its quote, so a
+// hand-edited or exchanged findings.jsonl with an empty or invisible-only
+// type/quote reached report and review's rendering with no fallback,
+// producing a dangling "  · severity" (empty type) and a blank "“”" quote.
+func TestReportFindingTypeAndQuotePlaceholderOnEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	zeroWidthSpace := string(rune(0x200B))
+	findings := "{\"id\":\"F-001\",\"t\":22,\"type\":\"\",\"severity\":3,\"quote\":\"\",\"evidence\":[\"utt-004\"],\"status\":\"unverified\"}\n" +
+		"{\"id\":\"F-002\",\"t\":22,\"type\":\"" + zeroWidthSpace + "\",\"severity\":2,\"quote\":\"" + zeroWidthSpace + "\",\"evidence\":[\"utt-004\"],\"status\":\"unverified\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "“”") {
+		t.Fatalf("report rendered a blank finding quote instead of the no quote placeholder:\n%s", md)
+	}
+	if strings.Count(md, "“no quote”") != 2 {
+		t.Fatalf("report is missing the no quote placeholder for empty/invisible-only finding quotes:\n%s", md)
+	}
+	if !strings.Contains(md, "**F-001** — · severity 3") || !strings.Contains(md, "**F-002** — · severity 2") {
+		t.Fatalf("report is missing the — placeholder for an empty/invisible-only finding type:\n%s", md)
+	}
+}

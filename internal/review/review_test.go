@@ -367,6 +367,47 @@ func TestPrintFindingAnchorPlaceholdersEmptyEvidence(t *testing.T) {
 	}
 }
 
+// TestPrintFindingPlaceholdersEmptyTypeAndQuote is printFinding's type/quote
+// sibling of TestPrintFindingAnchorPlaceholdersEmptyEvidence: analyze.Load
+// enforces neither field, so a hand-edited or exchanged findings.jsonl
+// reaching printFinding directly used to print a dangling "— , severity"
+// (empty type) and a blank "“”" quote, with no fallback.
+func TestPrintFindingPlaceholdersEmptyTypeAndQuote(t *testing.T) {
+	zeroWidthSpace := string(rune(0x200B))
+	f := analyze.Finding{
+		ID: "F-001", Type: "", Severity: 3, T: 1,
+		Quote:    "",
+		Evidence: []string{"utt-001"},
+	}
+	var buf bytes.Buffer
+	printFinding(&buf, f)
+	out := buf.String()
+	if !strings.Contains(out, "F-001 — —, severity 3") {
+		t.Fatalf("expected the — placeholder for an empty type, got: %q", out)
+	}
+	if !strings.Contains(out, "“no quote”") {
+		t.Fatalf("expected the no quote placeholder for an empty quote, got: %q", out)
+	}
+
+	f2 := analyze.Finding{
+		ID: "F-002", Type: zeroWidthSpace, Severity: 2, T: 1,
+		Quote:    zeroWidthSpace,
+		Evidence: []string{"utt-001"},
+	}
+	buf.Reset()
+	printFinding(&buf, f2)
+	out2 := buf.String()
+	if strings.Contains(out2, "“”") {
+		t.Fatalf("printFinding rendered a blank quote instead of the no quote placeholder:\n%s", out2)
+	}
+	if !strings.Contains(out2, "F-002 — —, severity 2") {
+		t.Fatalf("expected the — placeholder for an invisible-only type, got: %q", out2)
+	}
+	if !strings.Contains(out2, "“no quote”") {
+		t.Fatalf("expected the no quote placeholder for an invisible-only quote, got: %q", out2)
+	}
+}
+
 // TestInteractiveWalkFailsWhenVerdictCannotBePersisted is the lost-verdict
 // regression: an AppendVerdict I/O failure used to be returned through the same
 // channel as an invalid-keystroke validation error, so the walk printed it as a

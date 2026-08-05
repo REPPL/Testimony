@@ -189,8 +189,19 @@ func renderFindings(b *strings.Builder, dir string) {
 			continue
 		}
 		for _, f := range group {
+			// type and quote are decided on the rendered form too
+			// (mdOrDash/inlineRendersEmpty): analyze.Load validates neither, so a
+			// hand-edited or exchanged findings.jsonl reaches this sink directly,
+			// the same threat model every other field on this line already
+			// defends against.
+			quote := f.Quote
+			if inlineRendersEmpty(quote) {
+				quote = "no quote"
+			} else {
+				quote = mdInline(quote)
+			}
 			fmt.Fprintf(b, "- **%s** %s · severity %d · [%s] — “%s” — %s",
-				mdInline(f.ID), mdInline(f.Type), f.Severity, clock(f.T), mdInline(f.Quote), findingAnchor(f))
+				mdInline(f.ID), mdOrDash(f.Type), f.Severity, clock(f.T), quote, findingAnchor(f))
 			// Presence is decided on the rendered form, not the raw one
 			// (inlineRendersEmpty): an at/of that is non-empty raw but renders
 			// to nothing or to whitespace only must be treated as absent
@@ -364,11 +375,18 @@ func speaker(u timeline.Entry) string {
 	return "P?"
 }
 
+// Presence is decided on the rendered form, not the raw one
+// (inlineRendersEmpty), matching speaker above: timeline.checkedUtterances
+// never validates Text, so a hand-edited or exchanged timeline.jsonl — or a
+// transcript segment that is non-empty raw but invisible-only Unicode, which
+// transcribe's own whitespace-only drop does not catch — must fall through
+// to a placeholder rather than render a blank quotation attributed to a real
+// speaker and timestamp.
 func text(u timeline.Entry) string {
-	if s, ok := u.Payload["text"].(string); ok {
+	if s, ok := u.Payload["text"].(string); ok && !inlineRendersEmpty(s) {
 		return mdInline(s)
 	}
-	return ""
+	return "no words"
 }
 
 // eventLine renders one event. Every payload string is untrusted — an event's
