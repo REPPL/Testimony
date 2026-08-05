@@ -23,9 +23,9 @@ Two modes share the same capture rig:
   a participant demos third-party applications while narrating what they
   like, dislike, or find notable. The goal is a tagged design-preferences
   corpus feeding requirements and design decisions. Mode B has no access to
-  the target app's internals, so the transcript carries the semantic load and
-  keyframes extracted from the video supply the referents
-  (see [`04-analysis.md`](04-analysis.md)).
+  the target app's internals, so the transcript carries the semantic load,
+  with keyframes extracted from the video supplying the referents as a future
+  goal (see [`04-analysis.md`](04-analysis.md)).
 
 ## Method grounding
 

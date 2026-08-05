@@ -103,6 +103,37 @@ func TestNonInteractiveDuplicate(t *testing.T) {
 	}
 }
 
+// TestNonInteractiveConfirmMatchesRenderedID covers a finding whose raw id
+// carries an invisible character (as a hand-edited or exchanged findings.jsonl
+// might: analyze.Load never re-validates ^F-\d{3}$, only ingest does). The id
+// still renders as "F-001" everywhere it is shown (report, review's
+// printFinding), via session.SafeText, so -finding F-001 — the id an operator
+// actually sees — must resolve to it, and the recorded verdict must attach to
+// it in analyze.EffectiveStatus (keyed on the finding's raw id), not vanish
+// because it was stored under the clean flag value instead.
+func TestNonInteractiveConfirmMatchesRenderedID(t *testing.T) {
+	dir := t.TempDir()
+	dirty := "F-001​" // zero-width space, stripped by session.SafeText
+	fixture := `{"id":"` + dirty + `","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"status":"unverified"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(fixture), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := Run(Options{Dir: dir, Finding: "F-001", Verdict: "confirmed", Out: &out, Today: "2026-07-17"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	findings, verdicts, err := analyze.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	eff := analyze.EffectiveStatus(findings, verdicts)
+	if eff[dirty].Value != "confirmed" {
+		t.Fatalf("finding %q status: %+v, want confirmed", dirty, eff[dirty])
+	}
+}
+
 func TestNonInteractiveErrors(t *testing.T) {
 	dir := writeSession(t)
 	cases := []struct {
@@ -205,6 +236,37 @@ func TestInteractiveDuplicateTargetMustExist(t *testing.T) {
 	_, verdicts, _ := analyze.Load(dir)
 	if len(verdicts) != 0 {
 		t.Fatalf("bad duplicate target wrote %d verdicts, want 0", len(verdicts))
+	}
+}
+
+// TestInteractiveDuplicateRefusesRenderedSelfMatch covers a finding whose raw
+// id carries an invisible character (session.SafeText strips it on render;
+// see TestNonInteractiveConfirmMatchesRenderedID). The analyst only ever sees
+// the clean rendered id ("F-001"), so typing it back as a duplicate-of target
+// for that same finding must be refused as a self-duplicate, the same as it
+// would be for a clean id — not silently accepted because the raw bytes
+// differ from what checkTargets compared.
+func TestInteractiveDuplicateRefusesRenderedSelfMatch(t *testing.T) {
+	dir := t.TempDir()
+	dirty := "F-001​" // zero-width space, stripped by session.SafeText
+	fixture := `{"id":"` + dirty + `","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"status":"unverified"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(fixture), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	// Mark the finding a duplicate of the rendered form of its own id, then
+	// skip; must be refused rather than recorded.
+	script := "d\nF-001\ns\n"
+	var out bytes.Buffer
+	if err := Run(Options{Dir: dir, In: strings.NewReader(script), Out: &out, IsTTY: true, Today: "2026-07-17"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(out.String(), "duplicate of itself") {
+		t.Fatalf("expected a self-duplicate refusal, got %q", out.String())
+	}
+	_, verdicts, _ := analyze.Load(dir)
+	if len(verdicts) != 0 {
+		t.Fatalf("self-duplicate target wrote %d verdicts, want 0", len(verdicts))
 	}
 }
 

@@ -95,7 +95,7 @@ func Run(args []string) int {
 			return fail(err)
 		}
 		fmt.Printf("merged %d utterances + %d events → %s\n",
-			speech, events, filepath.Join(*dir, "timeline.jsonl"))
+			speech, events, filepath.Join(*dir, session.TimelineFile))
 		return 0
 
 	case "report":
@@ -123,7 +123,7 @@ func Run(args []string) int {
 		if err != nil {
 			return fail(err)
 		}
-		out := filepath.Join(*dir, "report.md")
+		out := filepath.Join(*dir, session.ReportFile)
 		if err := session.WriteFileNoFollow(out, []byte(md), 0o644); err != nil {
 			return fail(err)
 		}

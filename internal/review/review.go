@@ -99,7 +99,17 @@ func single(opts Options, findings []analyze.Finding) error {
 	// checkTargets passed, so the id is present in the snapshot; bind the verdict
 	// to that finding so AppendVerdict can confirm it is unchanged at write time.
 	target := findByID(findings, opts.Finding)
-	rec := analyze.Verdict{Kind: "verdict", Finding: opts.Finding, Verdict: verdict, Of: of, At: opts.Today}
+	// The verdict's Finding/Of must carry the finding's actual (raw) id, not the
+	// operator's clean flag value: analyze.EffectiveStatus keys its map on each
+	// finding's raw id, so a verdict recorded under -finding's rendered form would
+	// silently fail to attach to a finding whose raw id findByID only matched via
+	// SafeText (see findByID).
+	if verdict == "duplicate" {
+		if dup := findByID(findings, of); dup != nil {
+			of = dup.ID
+		}
+	}
+	rec := analyze.Verdict{Kind: "verdict", Finding: target.ID, Verdict: verdict, Of: of, At: opts.Today}
 	if err := AppendVerdict(opts.Dir, rec, target); err != nil {
 		return err
 	}
@@ -107,11 +117,19 @@ func single(opts Options, findings []analyze.Finding) error {
 	return nil
 }
 
-// findByID returns a pointer to the finding with the given id, or nil. The
-// returned pointer is into a copy, safe to retain.
+// findByID returns a pointer to the finding with the given id, or nil. Ids are
+// compared in their session.SafeText form, matching analyze.ParseRecords' load-
+// time uniqueness check: a finding's id renders through SafeText everywhere it
+// is shown (report, review's printFinding), so an operator matching it via
+// -finding, or an interactive duplicate-of target, only ever has the rendered
+// form to type. Comparing raw would leave a finding whose raw id carries a
+// stripped byte (e.g. a hand-edited findings.jsonl with an invisible
+// character) permanently unreachable by the id it displays as. The returned
+// pointer is into a copy, safe to retain.
 func findByID(findings []analyze.Finding, id string) *analyze.Finding {
+	want := session.SafeText(id)
 	for i := range findings {
-		if findings[i].ID == id {
+		if session.SafeText(findings[i].ID) == want {
 			f := findings[i]
 			return &f
 		}
@@ -202,7 +220,13 @@ func applyChoice(opts Options, findings []analyze.Finding, f analyze.Finding, ch
 		if err := checkTargets(findings, f.ID, "duplicate", target); err != nil {
 			return false, false, err
 		}
-		return true, false, record(opts, f, analyze.Verdict{Kind: "verdict", Finding: f.ID, Verdict: "duplicate", Of: target, At: opts.Today})
+		// Resolve the typed target back to its actual (raw) id; see the matching
+		// comment in single() for why the clean typed form cannot be stored as-is.
+		of := target
+		if dup := findByID(findings, target); dup != nil {
+			of = dup.ID
+		}
+		return true, false, record(opts, f, analyze.Verdict{Kind: "verdict", Finding: f.ID, Verdict: "duplicate", Of: of, At: opts.Today})
 	case "s", "":
 		fmt.Fprintln(opts.Out, "  skipped.")
 		return true, false, nil
@@ -235,7 +259,7 @@ func checkTargets(findings []analyze.Finding, id, verdict, of string) error {
 		return fmt.Errorf("finding %s not found", session.SafeText(id))
 	}
 	if verdict == "duplicate" {
-		if of == id {
+		if session.SafeText(of) == session.SafeText(id) {
 			return fmt.Errorf("a finding cannot be a duplicate of itself")
 		}
 		if !contains(findings, of) {
@@ -498,13 +522,10 @@ func describe(v analyze.Verdict) string {
 		session.SafeText(v.Finding), session.SafeText(v.Verdict), session.SafeText(v.At))
 }
 
+// contains reports whether id (in its session.SafeText form) names one of
+// findings; see findByID for why the comparison is SafeText, not raw.
 func contains(findings []analyze.Finding, id string) bool {
-	for _, f := range findings {
-		if f.ID == id {
-			return true
-		}
-	}
-	return false
+	return findByID(findings, id) != nil
 }
 
 func readLine(r *bufio.Reader) (string, error) {
