@@ -103,6 +103,37 @@ func TestNonInteractiveDuplicate(t *testing.T) {
 	}
 }
 
+// TestNonInteractiveConfirmMatchesRenderedID covers a finding whose raw id
+// carries an invisible character (as a hand-edited or exchanged findings.jsonl
+// might: analyze.Load never re-validates ^F-\d{3}$, only ingest does). The id
+// still renders as "F-001" everywhere it is shown (report, review's
+// printFinding), via session.SafeText, so -finding F-001 — the id an operator
+// actually sees — must resolve to it, and the recorded verdict must attach to
+// it in analyze.EffectiveStatus (keyed on the finding's raw id), not vanish
+// because it was stored under the clean flag value instead.
+func TestNonInteractiveConfirmMatchesRenderedID(t *testing.T) {
+	dir := t.TempDir()
+	dirty := "F-001​" // zero-width space, stripped by session.SafeText
+	fixture := `{"id":"` + dirty + `","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"status":"unverified"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(fixture), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := Run(Options{Dir: dir, Finding: "F-001", Verdict: "confirmed", Out: &out, Today: "2026-07-17"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	findings, verdicts, err := analyze.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	eff := analyze.EffectiveStatus(findings, verdicts)
+	if eff[dirty].Value != "confirmed" {
+		t.Fatalf("finding %q status: %+v, want confirmed", dirty, eff[dirty])
+	}
+}
+
 func TestNonInteractiveErrors(t *testing.T) {
 	dir := writeSession(t)
 	cases := []struct {
