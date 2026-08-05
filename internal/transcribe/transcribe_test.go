@@ -309,6 +309,28 @@ func TestMapSegmentsDropsOversizedWordKeepsSegment(t *testing.T) {
 	}
 }
 
+// TestMapSegmentsDropsInvisibleOnlyText pins the rendered-form emptiness
+// check: the drop-empty-segment guard used to test only strings.TrimSpace,
+// which strips Unicode whitespace but not invisible-only Cf format
+// characters (ZWSP U+200B), so a segment whose text was entirely such
+// characters survived into transcript.jsonl as an utterance with a real
+// speaker and timestamp but no visible words. An ordinary whitespace-only
+// segment must still be dropped the same way.
+func TestMapSegmentsDropsInvisibleOnlyText(t *testing.T) {
+	zeroWidthSpace := string(rune(0x200B))
+	utts, err := mapSegments([]segment{
+		{start: 0, end: 1, text: zeroWidthSpace},
+		{start: 2, end: 3, text: "   "},
+		{start: 4, end: 5, text: "real words"},
+	}, 0)
+	if err != nil {
+		t.Fatalf("mapSegments: %v", err)
+	}
+	if len(utts) != 1 || utts[0].Text != "real words" {
+		t.Fatalf("want only the segment with real words kept, got %+v", utts)
+	}
+}
+
 // TestCheckOffset pins the explicit-flag bound: the derived and sidecar paths
 // refuse a non-finite or over-magnitude offset where the bad value enters, and
 // the flag path must apply the same rule. Every genuine offset (including the

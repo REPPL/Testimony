@@ -499,7 +499,13 @@ func mapSegments(segs []segment, offset float64) ([]timeline.Utterance, error) {
 	var utts []timeline.Utterance
 	for _, s := range segs {
 		text := strings.TrimSpace(s.text)
-		if text == "" {
+		// Presence is decided on the rendered form, not the raw one
+		// (session.SafeText): a segment whose text is invisible-only Unicode
+		// (Cf) is non-empty raw and survives TrimSpace, which strips only
+		// Unicode whitespace, so it would otherwise reach transcript.jsonl
+		// and later report.md as an utterance stamped with a real speaker
+		// and timestamp but no visible words.
+		if strings.TrimSpace(session.SafeText(text)) == "" {
 			continue
 		}
 		speaker := s.speaker
@@ -571,5 +577,11 @@ func tail(b []byte) string {
 		}
 		s = "…" + s[i:]
 	}
-	return s
+	// The tail is an engine's stderr/stdout, printed straight to the
+	// operator's terminal in a wrapping error — a crafted input file's
+	// container metadata can reach it before conversion fails. session.SafeText
+	// closes the same invisible-Unicode/bidi-reordering gap it closes at every
+	// other terminal sink; SafeTextLines keeps the multi-line dump readable
+	// rather than collapsing it to one line.
+	return session.SafeTextLines(s)
 }

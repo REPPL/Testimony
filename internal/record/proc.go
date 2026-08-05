@@ -7,6 +7,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/REPPL/Testimony/internal/session"
 )
 
 // proc is the minimal process surface the lifecycle drives, so the SIGINT →
@@ -108,12 +110,12 @@ func (l *lockedBuffer) tail() string {
 		for i < len(b) && !utf8.RuneStart(b[i]) {
 			i++
 		}
-		return "…" + string(b[i:])
+		return "…" + session.SafeTextLines(string(b[i:]))
 	}
 	if l.dropped {
-		return "…" + string(b)
+		return "…" + session.SafeTextLines(string(b))
 	}
-	return string(b)
+	return session.SafeTextLines(string(b))
 }
 
 // liveChild is one running recorder plus the machinery to reap it exactly once.

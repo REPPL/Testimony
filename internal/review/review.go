@@ -431,9 +431,23 @@ func writeVerdict(f verdictFile, rec []byte) error {
 // attacker-influenceable field (a finding in a downloaded session is untrusted)
 // is passed through session.SafeText first, so embedded ESC/ANSI or control
 // bytes cannot manipulate the terminal.
+//
+// type and quote are decided on the SafeText-rendered form, not the raw one,
+// matching anchor below: analyze.Load validates neither, so a hand-edited or
+// exchanged findings.jsonl reaching this sink directly must fall through to a
+// placeholder rather than print a dangling ", severity" with nothing before
+// it, or a blank quotation.
 func printFinding(w io.Writer, f analyze.Finding) {
-	fmt.Fprintf(w, "%s — %s, severity %d, [%s]\n", session.SafeText(f.ID), session.SafeText(f.Type), f.Severity, clock(f.T))
-	fmt.Fprintf(w, "  “%s”\n", session.SafeText(f.Quote))
+	typ := session.SafeText(f.Type)
+	if strings.TrimSpace(typ) == "" {
+		typ = "—"
+	}
+	quote := session.SafeText(f.Quote)
+	if strings.TrimSpace(quote) == "" {
+		quote = "no quote"
+	}
+	fmt.Fprintf(w, "%s — %s, severity %d, [%s]\n", session.SafeText(f.ID), typ, f.Severity, clock(f.T))
+	fmt.Fprintf(w, "  “%s”\n", quote)
 	fmt.Fprintf(w, "  anchor: %s\n", session.SafeText(anchor(f)))
 }
 

@@ -69,7 +69,7 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 | `t0` | number | yes | utterance start, session-relative seconds; must not exceed 1e9 seconds in magnitude (`merge` refuses otherwise) |
 | `t1` | number | yes | utterance end, session-relative seconds; defaults to `t0` when absent or earlier than `t0`, and otherwise must not exceed 1e9 seconds in magnitude (`merge` refuses) |
 | `speaker` | string | no | speaker label; `"P1"` when the engine supplies no diarisation |
-| `text` | string | yes | utterance text, whitespace-trimmed (empty segments are dropped) |
+| `text` | string | yes | utterance text, whitespace-trimmed (segments that are empty, whitespace-only, or invisible-only Unicode are dropped) |
 | `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — words the aligner could not time, or whose time is implausible (non-finite, or beyond ±1e9 seconds) either as engine-reported (before the session offset is added) or after adding the offset, are omitted |
 
 ```json

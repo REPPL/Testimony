@@ -661,3 +661,36 @@ Architecture-shaping decisions graduate to an ADR under
   `kind`/`suggested_kind`/`reclassification_history`/`builds_on` placeholder
   keys only on itd-6 onward — and splits Open Questions from Audit Notes,
   which is populated at ship time, not while a draft is still open.
+- 2026-08-05 — Bug-hunt round 27: `report`/`review` render "no words" for an
+  utterance whose `text` is empty, whitespace-only, or invisible-only
+  Unicode, "no quote" for a finding's empty/invisible-only `quote`, and "—"
+  for an empty/invisible-only `type` — `type`, `quote`, and utterance `text`
+  were the last fields on these two rendering paths with no rendered-form
+  fallback, previously rendering a blank quotation next to a real speaker
+  and timestamp, or a dangling separator with no type. `transcribe`'s
+  `mapSegments` now drops a segment on the same rendered-form check
+  (`session.SafeText`), not raw `strings.TrimSpace` alone, so an
+  invisible-only-Unicode segment cannot reach `transcript.jsonl` from a real
+  transcription run in the first place. ffmpeg/whisperx/whisper.cpp's
+  captured output, and `record`'s device-probe and recorder-stderr tails,
+  now pass through a new `session.SafeTextLines` (SafeText applied line by
+  line, keeping line breaks) before reaching the operator's terminal — the
+  one class of terminal sink SafeText's earlier hardening rounds had not
+  reached. `itd-1`'s In Scope bullet no longer claims the launcher "starts
+  screen and audio capture" by default, the one sibling of its Press
+  Release/AC1 round 26 quoted as the problem but never actually edited.
+  `02-dependencies.md`'s "Transcription never touches the network" is
+  qualified with the same model-fetch exception its siblings carry.
+  CHANGELOG.md gains the entry round 26's evidence-anchor fallback should
+  have carried. Refuted: `report -window`'s missing magnitude bound (an
+  ordinary window wider than the session span already produces the same
+  "join everything" output as an unbounded one — no bound short of the
+  session's own span would change the outcome, and it is documented,
+  intended behaviour); `session-directory.md`'s `t1`/`text`/`status` rows
+  marked "Required: yes" beside a documented default or drop (no reader
+  refuses their absence either, matching `session`, finding `type`,
+  `severity`, and `quote`, none of which are flagged; the table's
+  "Required" column is not a strict writer/reader-contract split — its
+  `speaker` row is the counter-example, marked "no" despite `transcribe`
+  always emitting it — so this is closer to established, if imprecise,
+  usage than a fresh inconsistency worth acting on this round).
