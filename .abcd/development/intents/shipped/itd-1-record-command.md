@@ -20,9 +20,9 @@ The rest of the pipeline stands or falls on synchronisation: an utterance can on
 
 ## What's In Scope
 
-- `testimony record` launcher: starts screen and audio capture, creates the session directory, writes `manifest.json` with `t0` (epoch ms), app under test, build/commit hash, participant pseudonym, and task list. Participant consent is out of scope here (itd-5).
+- `testimony record` launcher: starts audio capture (and, with `-video`, screen capture too), creates the session directory, writes `manifest.json` with `t0` (epoch ms), app under test, build/commit hash, participant pseudonym, and task list. Participant consent is out of scope here (itd-5).
 - The spoken-marker fallback convention ("session start") documented and prompted for, as the belt-and-braces anchor if a stream loses its absolute clock.
-- Clean session stop that finalises the manifest and leaves artefacts named as the session layout expects (`screen.mp4`, `audio.wav`, event stream files).
+- Clean session stop that finalises the manifest and leaves artefacts named as the session layout expects (`audio.wav`, and `screen.mp4` with `-video`, event stream files).
 
 ## What's Out of Scope
 
