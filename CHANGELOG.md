@@ -104,15 +104,15 @@ Evidence integrity:
   instead of the dangling `evidence ` label that fallback could still
   produce.
 - `report` renders a `no words` placeholder for an utterance whose `text`
-  is whitespace-only or invisible-only Unicode, and `no quote` for a
-  finding's `quote` (both `report` and `review`'s printed quote), and a
-  `—` placeholder for a finding's `type` in both, instead of a blank
-  quotation or a dangling `— severity` label with nothing before it —
-  `type`, `quote`, and utterance `text` were the last fields on these two
-  rendering paths with no rendered-form fallback. `transcribe` now drops a
-  segment whose text is invisible-only Unicode, not only whitespace-only
-  raw text, so the same defect cannot reach `transcript.jsonl` from a real
-  transcription run.
+  is empty, whitespace-only, invisible-only Unicode, or absent, and
+  `no quote` for a finding's empty or invisible-only `quote` (both `report`
+  and `review`'s printed quote), and a `—` placeholder for a finding's
+  empty or invisible-only `type` in both, instead of a blank quotation or a
+  dangling severity label with nothing before it — `type`, `quote`, and
+  utterance `text` were the last fields on these two rendering paths with
+  no rendered-form fallback. `transcribe` now drops a segment whose text is
+  invisible-only Unicode, not only whitespace-only raw text, so the same
+  defect cannot reach `transcript.jsonl` from a real transcription run.
 - `report` renders a `—` placeholder for an App, Participant, or event
   `kind` that is whitespace-only or invisible-only Unicode, instead of a
   blank field, and `analyze`'s emitted request does the same with `(none)`

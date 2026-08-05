@@ -687,6 +687,10 @@ Architecture-shaping decisions graduate to an ADR under
   "join everything" output as an unbounded one — no bound short of the
   session's own span would change the outcome, and it is documented,
   intended behaviour); `session-directory.md`'s `t1`/`text`/`status` rows
-  marked "Required: yes" beside a documented default or drop (the column
-  means "every writer emits this", not "every reader refuses its absence",
-  consistently across the whole document, not only these three rows).
+  marked "Required: yes" beside a documented default or drop (no reader
+  refuses their absence either, matching `session`, finding `type`,
+  `severity`, and `quote`, none of which are flagged; the table's
+  "Required" column is not a strict writer/reader-contract split — its
+  `speaker` row is the counter-example, marked "no" despite `transcribe`
+  always emitting it — so this is closer to established, if imprecise,
+  usage than a fresh inconsistency worth acting on this round).
