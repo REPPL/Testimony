@@ -216,6 +216,9 @@ func renderFindings(b *strings.Builder, dir string) {
 // to nothing or to whitespace only (invisible-only Unicode, a selector of
 // backticks alone, or literal whitespace) must fall through to the evidence
 // ids rather than render a blank or whitespace-only anchor with no fallback.
+// The evidence ids themselves are filtered the same way: an id that renders
+// to nothing is dropped, and an evidence list with no renderable id left
+// falls back to "no evidence" rather than the dangling "evidence " label.
 func findingAnchor(f analyze.Finding) string {
 	if f.UI != nil {
 		var parts []string
@@ -229,7 +232,16 @@ func findingAnchor(f analyze.Finding) string {
 			return strings.Join(parts, " ")
 		}
 	}
-	return "evidence " + mdInline(strings.Join(f.Evidence, ", "))
+	var ids []string
+	for _, id := range f.Evidence {
+		if !inlineRendersEmpty(id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return "no evidence"
+	}
+	return "evidence " + mdInline(strings.Join(ids, ", "))
 }
 
 func end(entries []timeline.Entry) float64 {

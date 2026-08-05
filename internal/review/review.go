@@ -442,7 +442,10 @@ func printFinding(w io.Writer, f analyze.Finding) {
 // the whole return value in session.SafeText before printing, so a selector
 // or route that is non-empty raw but strips to nothing under SafeText
 // (invisible-only Unicode) must fall through to the evidence ids rather than
-// render a blank (or merely whitespace) anchor with no fallback.
+// render a blank (or merely whitespace) anchor with no fallback. The evidence
+// ids themselves are filtered the same way: an id that strips to nothing is
+// dropped, and an evidence list with no renderable id left falls back to
+// "no evidence" rather than the dangling "evidence " label.
 func anchor(f analyze.Finding) string {
 	if f.UI != nil {
 		var parts []string
@@ -456,7 +459,16 @@ func anchor(f analyze.Finding) string {
 			return strings.Join(parts, " ")
 		}
 	}
-	return "evidence " + strings.Join(f.Evidence, ", ")
+	var ids []string
+	for _, id := range f.Evidence {
+		if strings.TrimSpace(session.SafeText(id)) != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return "no evidence"
+	}
+	return "evidence " + strings.Join(ids, ", ")
 }
 
 // describe echoes a recorded verdict to the analyst's terminal. Its fields
