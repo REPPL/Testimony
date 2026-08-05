@@ -164,6 +164,24 @@ func TestOutputTail(t *testing.T) {
 	}
 }
 
+// TestOutputTailSanitisesOutput is TestLockedBufferTailSanitisesOutput's
+// sibling for probeDevices' ffmpeg -list_devices capture: a crafted device
+// name containing ESC/ANSI or invisible-Unicode bytes must not reach the
+// operator's terminal unsanitised, and a multi-line device listing must
+// keep its line breaks.
+func TestOutputTailSanitisesOutput(t *testing.T) {
+	got := outputTail([]byte("[0] Built-in\x1b[31mMicrophone\x1b[0m\nrtl\u202eoverride"))
+	if strings.ContainsAny(got, "\x1b") {
+		t.Fatalf("outputTail must strip ESC bytes, got %q", got)
+	}
+	if strings.Contains(got, "\u202e") {
+		t.Fatalf("outputTail must strip invisible-Unicode bidi override, got %q", got)
+	}
+	if !strings.Contains(got, "\n") {
+		t.Fatalf("outputTail must keep line breaks across sanitisation, got %q", got)
+	}
+}
+
 // fakeFFmpeg writes an executable shell script standing in for the ffmpeg
 // binary, so probeDevices' spawn-and-wait paths run hermetically on any Unix.
 func fakeFFmpeg(t *testing.T, script string) string {
@@ -1319,6 +1337,27 @@ func TestLockedBufferBoundsMemory(t *testing.T) {
 	s.Write([]byte("short output"))
 	if got := s.tail(); got != "short output" {
 		t.Fatalf("under-cap tail must be verbatim, got %q", got)
+	}
+}
+
+// TestLockedBufferTailSanitisesOutput pins the terminal-safety gap ffmpeg's
+// own stderr output left open: tail() printed the recorder's captured
+// stderr into an error the operator's terminal displays with no
+// sanitisation, unlike every other place untrusted text reaches a terminal
+// in this codebase. ESC/ANSI and invisible-Unicode bytes must be stripped,
+// and a multi-line capture must keep its line breaks.
+func TestLockedBufferTailSanitisesOutput(t *testing.T) {
+	var b lockedBuffer
+	b.Write([]byte("line one\x1b[31mred\x1b[0m\nrtl\u202eoverride"))
+	got := b.tail()
+	if strings.ContainsAny(got, "\x1b") {
+		t.Fatalf("tail must strip ESC bytes, got %q", got)
+	}
+	if strings.Contains(got, "\u202e") {
+		t.Fatalf("tail must strip invisible-Unicode bidi override, got %q", got)
+	}
+	if !strings.Contains(got, "\n") {
+		t.Fatalf("tail must keep line breaks across sanitisation, got %q", got)
 	}
 }
 

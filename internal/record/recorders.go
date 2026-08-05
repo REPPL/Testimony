@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/REPPL/Testimony/internal/session"
 )
 
 // deviceListTimeout bounds the avfoundation device enumeration. It is a var, not a
@@ -271,5 +273,9 @@ func outputTail(out []byte) string {
 		}
 		s = "..." + s[i:]
 	}
-	return s
+	// ffmpeg's device listing is diagnostic text printed straight to the
+	// operator's terminal; session.SafeTextLines closes the same
+	// invisible-Unicode/bidi-reordering gap SafeText closes at every other
+	// terminal sink, without collapsing a multi-line listing to one line.
+	return session.SafeTextLines(s)
 }
