@@ -259,7 +259,7 @@ func checkTargets(findings []analyze.Finding, id, verdict, of string) error {
 		return fmt.Errorf("finding %s not found", session.SafeText(id))
 	}
 	if verdict == "duplicate" {
-		if of == id {
+		if session.SafeText(of) == session.SafeText(id) {
 			return fmt.Errorf("a finding cannot be a duplicate of itself")
 		}
 		if !contains(findings, of) {
