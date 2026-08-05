@@ -123,6 +123,18 @@ Evidence integrity:
   distinct only by invisible-Unicode bytes (a zero-width space, say) used to
   load without error and render under the same visible id in `report` and
   `review`, one in the Confirmed group and the other in Unverified.
+- `review`'s `findByID`/`checkTargets` compare a finding's id in its
+  `session.SafeText` rendered form, matching the duplicate-id check above: a
+  raw id carrying an invisible character (a hand-edited or exchanged
+  `findings.jsonl`; `analyze.Load` never re-validates `^F-\d{3}$`, only
+  `-ingest` does) rendered as a clean id everywhere it was shown but was
+  unreachable by that same id via `-finding` or an interactive duplicate-of
+  target, and a verdict recorded through it stored the operator's typed value
+  rather than the finding's actual id, so `analyze.EffectiveStatus` (keyed on
+  the raw id) silently failed to attach it. The "cannot be a duplicate of
+  itself" guard compares the same rendered form, so a duplicate-of target
+  matching a finding's own dirty id under `SafeText` is still refused rather
+  than recorded as a self-duplicate.
 - **Behaviour:** `timeline.ReadEntries` bounds an entry's `t` and a speech
   entry's payload `t1` to the same ±1e9s magnitude `merge` already enforces
   on `transcript.jsonl` — a hand-edited or exchanged `timeline.jsonl` reaches

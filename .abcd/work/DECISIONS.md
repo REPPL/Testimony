@@ -702,12 +702,22 @@ Architecture-shaping decisions graduate to an ADR under
   `-finding` or an interactive duplicate-of target; a verdict recorded for such
   a finding now also carries its actual raw id rather than the operator's
   clean flag/typed value, so `analyze.EffectiveStatus` (keyed on the raw id)
-  attaches it instead of silently dropping it from the report. `cli.go`'s
-  merge/report success messages now reference `session.TimelineFile`/
-  `ReportFile` instead of independently-spelled string literals for the same
-  filenames. `01-purpose.md`'s Mode B keyframe-extraction mention is qualified
-  as planned, matching `04-analysis.md`'s "Keyframes (planned)" heading and
-  the page's own "future goal" convention one paragraph earlier. Refuted:
+  attaches it instead of silently dropping it from the report. The correctness
+  adversarial reviewer caught a gap the initial fix left open: `checkTargets`'
+  "cannot be a duplicate of itself" guard still compared raw ids, so a
+  duplicate-of target matching the finding's own dirty id under SafeText slid
+  past it and recorded a finding as a duplicate of itself; that guard now
+  compares the same rendered form, fixed before merge. `cli.go`'s merge/report
+  success messages now reference `session.TimelineFile`/`ReportFile` instead
+  of independently-spelled string literals for the same filenames.
+  `01-purpose.md`'s Mode B keyframe-extraction mention now reads "as a future
+  goal", matching the same phrase the page's own opening paragraph already
+  uses for its other unshipped item (codebase mapping) — the docs-accuracy
+  reviewer caught that the round's first pass had instead coined "a planned
+  fallback", a phrase found nowhere else in the repo and inaccurate in this
+  Mode B context (keyframes stand in for the missing event stream here, per
+  the architecture note and `itd-4`, not a fallback from a cheaper primary
+  path the way `04-analysis.md` frames them for Mode A). Refuted:
   `report.go`'s `orDash` fallback branch being unreachable (true, but a
   deliberate locally-redundant guard against a future caller invariant
   change, per the same rationale `review.go`'s `checkTargets` states for its
