@@ -694,3 +694,38 @@ Architecture-shaping decisions graduate to an ADR under
   `speaker` row is the counter-example, marked "no" despite `transcribe`
   always emitting it — so this is closer to established, if imprecise,
   usage than a fresh inconsistency worth acting on this round).
+- 2026-08-05 — Bug-hunt round 28: `review`'s `findByID`/`contains` now compare
+  a finding id in its `session.SafeText` rendered form, matching every display
+  path — a hand-edited or exchanged `findings.jsonl` carrying an invisible
+  character in an id (`analyze.Load` never re-validates `^F-\d{3}$`; only
+  ingest does) displayed as a clean id but was unreachable by that same id via
+  `-finding` or an interactive duplicate-of target; a verdict recorded for such
+  a finding now also carries its actual raw id rather than the operator's
+  clean flag/typed value, so `analyze.EffectiveStatus` (keyed on the raw id)
+  attaches it instead of silently dropping it from the report. `cli.go`'s
+  merge/report success messages now reference `session.TimelineFile`/
+  `ReportFile` instead of independently-spelled string literals for the same
+  filenames. `01-purpose.md`'s Mode B keyframe-extraction mention is qualified
+  as planned, matching `04-analysis.md`'s "Keyframes (planned)" heading and
+  the page's own "future goal" convention one paragraph earlier. Refuted:
+  `report.go`'s `orDash` fallback branch being unreachable (true, but a
+  deliberate locally-redundant guard against a future caller invariant
+  change, per the same rationale `review.go`'s `checkTargets` states for its
+  own SafeText calls); `demo`'s `-addr ":"` bypassing `CheckAddr`'s numeric
+  range guard (not silent — the real bound ephemeral port is reported — and
+  an empty port is `net.Listen`'s own deferred-to-runtime case, the same as
+  a named service port, settled by round 24's identical precedent); `itd-2`'s
+  AC2 wording ("the finding's status becomes...") contradicting the
+  append-only invariant (AC2's own second clause names the append-only
+  mechanism; "status" at intent altitude is the effective status the pipeline
+  derives and displays, not the stored field the invariant docs constrain);
+  `02-verification.md`'s "kept under `sessions/`" line being unverifiable
+  (`sessions/` is gitignored by design — committing a real captured session
+  would violate the repo's own privacy rule). Also excluded before
+  verification, as precedent duplicates of findings already discussed in
+  earlier rounds: `AGENTS.md`'s dangling `03-configuration.md` link inside the
+  abcd-managed fence (round 8); `AGENTS.md` claiming CI runs plain
+  `go test ./...` (round 13); persona role-label wording drift across intent
+  drafts (round 20); the intents-README "always they/them"
+  persona-quote rule read against `03-personas.md`'s gendered narrative
+  pronouns (round 24).
