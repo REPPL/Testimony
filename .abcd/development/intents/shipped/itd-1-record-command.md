@@ -30,9 +30,10 @@ The rest of the pipeline stands or falls on synchronisation: an utterance can on
 - In-app interaction instrumentation (rrweb snippets, asciinema wrappers) beyond invoking recorders that are present.
 - Any GUI layer; this is the CLI capture surface.
 - Third-party app capture specifics (itd-4) and participant consent tooling (itd-5).
+- Screen capture as part of the default run: audio-only is the shipped default, with screen capture deferred behind the opt-in `-video` flag (spc-1, flagged divergence).
 
 ## Acceptance Criteria
 
-- **Given** a configured machine, **when** Alice runs `testimony record` with an app and task list, **then** a session directory exists containing a `manifest.json` with a populated `t0_epoch_ms`, and screen plus audio capture are running.
+- **Given** a configured machine, **when** Alice runs `testimony record` with an app and task list, **then** a session directory exists containing a `manifest.json` with a populated `t0_epoch_ms`, and audio capture is running (screen capture with `-video`).
 - **Given** a running session, **when** Alice stops it, **then** the recorders terminate cleanly and the session directory contains the capture artefacts under their expected names.
 - **Given** a completed session, **when** `testimony transcribe` and `testimony merge` run over it, **then** they consume the manifest's `t0` without any manual clock entry.
