@@ -25,13 +25,18 @@ Directory location is the single source of truth for lifecycle state — no inte
 
 ## File shape
 
-Each intent has minimal YAML frontmatter (`id`, `slug`, `spec_id`, `severity`) followed by:
+Every intent has YAML frontmatter carrying at minimum `id`, `slug`, `spec_id`,
+`severity`. `kind` (`standalone` or a compound classification) is set once an
+intent has been classified; a still-unclassified draft carries `kind`,
+`suggested_kind`, `reclassification_history`, and `builds_on` as placeholders
+until that classification happens. The body follows:
 
 - **Headline** — the capability, named from the user's side.
 - **Press Release** — 2–4 sentences in present tense, as if shipped, closing with a persona quote.
 - **Why This Matters** — the underlying need.
 - **What's In Scope / What's Out of Scope** — bullets; the out-of-scope list is the scope-creep fence.
 - **Acceptance Criteria** — observable Given/When/Then outcomes; required before an intent can be planned.
+- **Open Questions / Audit Notes** — optional, for a draft still being reasoned about before it is committed to work.
 
 ## Persona convention
 
