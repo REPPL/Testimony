@@ -505,6 +505,19 @@ func TestSafeText(t *testing.T) {
 	}
 }
 
+// TestSafeTextLines pins the multi-line sibling of TestSafeText: a
+// subprocess's captured diagnostic output can span several lines, and
+// applying SafeText to the whole string collapses it to one line (newline
+// falls under r < 0x20, the same range SafeText strips elsewhere). Each
+// line must be sanitised independently, with the line breaks preserved.
+func TestSafeTextLines(t *testing.T) {
+	in := "line one\x1b[31mred\x1b[0m\nrtl\u202eoverride\nplain line"
+	want := "line one[31mred[0m\nrtloverride\nplain line"
+	if got := SafeTextLines(in); got != want {
+		t.Errorf("SafeTextLines(%q) = %q, want %q", in, got, want)
+	}
+}
+
 // TestLoadManifestRefusesOversized covers the last untrusted read on the session
 // surface that was unbounded. manifest.json in an exchanged session is
 // attacker-controllable, so a multi-gigabyte manifest (a few KB once zipped)

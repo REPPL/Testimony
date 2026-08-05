@@ -390,6 +390,23 @@ func SafeText(s string) string {
 	}, s)
 }
 
+// SafeTextLines applies SafeText to s one line at a time, preserving the
+// newlines SafeText itself would strip (they fall under r < 0x20). A
+// subprocess's captured output — ffmpeg's multi-line metadata dump, a device
+// listing — is diagnostic text an operator reads across several lines;
+// collapsing it to one line to close the same bidi/invisible-Cf smuggling
+// gap SafeText closes elsewhere would cost more readability than the gap is
+// worth. Splitting on "\n" first still leaves each line individually safe:
+// SafeText strips \r within a line, so no line can reintroduce a carriage
+// return to overwrite what precedes it.
+func SafeTextLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = SafeText(l)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // MaxJSONLLine is the largest single JSONL record the readers accept. It is the
 // shared read-side invariant every writer must respect: a record persisted above
 // this size is durably unreadable, breaking merge, report, and analyze for the
