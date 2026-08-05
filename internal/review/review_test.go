@@ -336,6 +336,37 @@ func TestPrintFindingAnchorFallsBackOnWhitespaceOnlyUI(t *testing.T) {
 	}
 }
 
+// TestPrintFindingAnchorPlaceholdersEmptyEvidence is anchor()'s terminal
+// fallback: with no ui and an evidence list that renders empty (an empty
+// array, or ids that strip to nothing under SafeText), the function used to
+// print the dangling "anchor: evidence " (or "anchor: evidence , " for blank
+// ids) with no renderable content after it — the one branch in anchor() with
+// no rendered-form guard of its own, unlike the ui branch above it.
+func TestPrintFindingAnchorPlaceholdersEmptyEvidence(t *testing.T) {
+	zeroWidthSpace := string(rune(0x200B))
+	f := analyze.Finding{
+		ID: "F-001", Type: "bug", Severity: 3, T: 1,
+		Quote:    "ok",
+		Evidence: []string{},
+	}
+	var buf bytes.Buffer
+	printFinding(&buf, f)
+	if !strings.Contains(buf.String(), "anchor: no evidence\n") {
+		t.Fatalf("expected the no-evidence placeholder for an empty evidence list, got: %q", buf.String())
+	}
+
+	f2 := analyze.Finding{
+		ID: "F-002", Type: "bug", Severity: 3, T: 1,
+		Quote:    "ok",
+		Evidence: []string{zeroWidthSpace, ""},
+	}
+	buf.Reset()
+	printFinding(&buf, f2)
+	if !strings.Contains(buf.String(), "anchor: no evidence\n") {
+		t.Fatalf("expected the no-evidence placeholder for ids that render empty, got: %q", buf.String())
+	}
+}
+
 // TestInteractiveWalkFailsWhenVerdictCannotBePersisted is the lost-verdict
 // regression: an AppendVerdict I/O failure used to be returned through the same
 // channel as an invalid-keystroke validation error, so the walk printed it as a

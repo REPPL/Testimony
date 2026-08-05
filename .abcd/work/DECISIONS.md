@@ -641,3 +641,23 @@ Architecture-shaping decisions graduate to an ADR under
   shipped unqualified against its own deliverable list naming chunking — the
   last remaining sibling of `01-phases.md`/`04-analysis.md` still missing
   the flagged-divergence wording they already carry.
+- 2026-08-05 — Bug-hunt round 26: `report`'s `findingAnchor` and `review`'s
+  `anchor` now filter the evidence-id fallback to ids that render non-empty
+  and fall back to "no evidence" when none remain — the one sink in both
+  files with no rendered-form guard of its own, previously rendering the
+  dangling label "evidence " (or "evidence , ") for an empty or
+  whitespace/invisible-only evidence list. `ci.yml`'s header and
+  `release.yml`'s verify-job comment now both name the version-stamp ldflags
+  check in their gate enumerations, closing two more siblings in the chain
+  rounds 21/23/24 already corrected elsewhere. `itd-1`'s shipped intent no
+  longer claims a bare `record` starts screen capture by default in either
+  its Press Release or its acceptance criteria — audio-only is the shipped
+  default (`-video` opts in), and its Out-of-Scope list now points at spc-1's
+  own "Default: audio-only" section for the divergence. Nitpicks:
+  `02-transcribe.md`'s "Nothing touches the network" now carries the same
+  model-fetch caveat `docs/explanation/privacy.md` documents; the intents
+  README's file-shape section now describes the frontmatter accurately per
+  file — `kind: standalone` on the two shipped intents, the four newer
+  `kind`/`suggested_kind`/`reclassification_history`/`builds_on` placeholder
+  keys only on itd-6 onward — and splits Open Questions from Audit Notes,
+  which is populated at ship time, not while a draft is still open.

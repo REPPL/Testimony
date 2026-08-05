@@ -720,6 +720,40 @@ func TestReportFindingAnchorFallsBackOnWhitespaceOnlyUI(t *testing.T) {
 	}
 }
 
+// TestReportFindingAnchorPlaceholdersEmptyEvidence is findingAnchor's terminal
+// fallback: with no ui and an evidence list that renders empty (an empty
+// array, or ids that strip to nothing under mdInline), the function used to
+// return the dangling label "evidence " (or "evidence , " for blank ids)
+// with no renderable content after it — the one sink in findingAnchor with no
+// rendered-form guard of its own, unlike every branch above it.
+func TestReportFindingAnchorPlaceholdersEmptyEvidence(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "fixture"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	zeroWidthSpace := string(rune(0x200B))
+	findings := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":[],"status":"unverified"}
+{"id":"F-002","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["` + zeroWidthSpace + `",""],"status":"unverified"}
+`
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(md, "— evidence \n") || strings.Contains(md, "— evidence ,") {
+		t.Fatalf("finding anchor rendered a dangling evidence label with no renderable id:\n%s", md)
+	}
+	if strings.Count(md, "— no evidence") != 2 {
+		t.Fatalf("report is missing the no-evidence placeholder for both findings:\n%s", md)
+	}
+}
+
 // TestReportEventLinePlaceholdersInvisibleOnlyKind is the kind sibling of
 // TestReportEventLineOmitsSelectorThatRendersEmpty: timeline.checkInteraction
 // only requires kind's raw bytes be non-empty, so an event whose kind is

@@ -2,7 +2,8 @@
 
 Turns a session's voice recording into `transcript.jsonl` — time-aligned
 utterances on the session clock — using a local ASR engine invoked as a
-subprocess. Nothing touches the network.
+subprocess. Nothing touches the network beyond the engine fetching its own
+model files on first use; the recording itself never leaves the machine.
 
 ## Flags
 

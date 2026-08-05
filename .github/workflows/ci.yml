@@ -2,12 +2,12 @@ name: ci
 
 # Lightweight checks on every push and pull request: format, build, vet, and
 # test on Linux, a cross-compile check for the other release platforms, a
-# smoke test of the merge → report pipeline on the bundled sample, installer
-# syntax and flag-handling checks, full-history secret scanning, and a
-# workflow audit. Also runs on `merge_group` so the same jobs gate each entry
-# the merge queue builds — the queue tests every PR against the exact main it
-# will land on, and its required checks are these same contexts, so they MUST
-# trigger here or the queue hangs.
+# version-stamp ldflags check, a smoke test of the merge → report pipeline on
+# the bundled sample, installer syntax and flag-handling checks, full-history
+# secret scanning, and a workflow audit. Also runs on `merge_group` so the
+# same jobs gate each entry the merge queue builds — the queue tests every PR
+# against the exact main it will land on, and its required checks are these
+# same contexts, so they MUST trigger here or the queue hangs.
 on:
   push:
     branches: ['**']
