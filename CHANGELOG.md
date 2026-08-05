@@ -99,6 +99,20 @@ Evidence integrity:
   empty) instead of rendering a blank or whitespace-only anchor with no
   fallback; `report`'s event lines apply the same rendered-form check
   uniformly across `selector`, `text`, `value`, and `route`.
+- `report` and `review` fall back further to the literal `no evidence` when
+  a finding's evidence ids also render to nothing or to whitespace only,
+  instead of the dangling `evidence ` label that fallback could still
+  produce.
+- `report` renders a `no words` placeholder for an utterance whose `text`
+  is whitespace-only or invisible-only Unicode, and `no quote` for a
+  finding's `quote` (both `report` and `review`'s printed quote), and a
+  `—` placeholder for a finding's `type` in both, instead of a blank
+  quotation or a dangling `— severity` label with nothing before it —
+  `type`, `quote`, and utterance `text` were the last fields on these two
+  rendering paths with no rendered-form fallback. `transcribe` now drops a
+  segment whose text is invisible-only Unicode, not only whitespace-only
+  raw text, so the same defect cannot reach `transcript.jsonl` from a real
+  transcription run.
 - `report` renders a `—` placeholder for an App, Participant, or event
   `kind` that is whitespace-only or invisible-only Unicode, instead of a
   blank field, and `analyze`'s emitted request does the same with `(none)`
@@ -159,6 +173,12 @@ Capture and diagnostics:
   a record refused by the JSONL writer is named as a 1-based line of the
   output file; `transcribe` defaults its log sink instead of panicking when
   a caller leaves it unset.
+- ffmpeg/whisperx/whisper.cpp's captured output, and `record`'s device-probe
+  and recorder-stderr tails, are passed through the same invisible-Unicode/
+  bidi-reordering sanitiser applied everywhere else untrusted text reaches
+  the terminal, line by line so a multi-line tail keeps its line breaks —
+  the one class of terminal sink SafeText's earlier hardening rounds had
+  not reached.
 - `record` no longer prints the live-session banner ("Say \"session
   start\"…") for a run that is about to exit immediately (a platform with no
   capture and no `-demo`), and its no-audio guidance only suggests
@@ -318,6 +338,15 @@ Documentation:
   unqualified against its own deliverable list that names chunking — the
   one remaining sibling of `01-phases.md` and `04-analysis.md` still making
   that claim; it now carries the same flagged-divergence caveat they do.
+- `itd-1-record-command.md`'s In Scope bullet no longer claims the launcher
+  "starts screen and audio capture" by default, contradicting its own
+  Out-of-Scope bullet that `-video` is what opts screen capture in; the
+  bullet listing a stopped session's expected artefacts is qualified the
+  same way.
+- `02-dependencies.md`'s "Transcription never touches the network" is
+  qualified with the same model-fetch exception `02-transcribe.md` and
+  `docs/explanation/privacy.md` already carry — the one internal-brief page
+  still making the unqualified claim.
 
 Invocation contract:
 
