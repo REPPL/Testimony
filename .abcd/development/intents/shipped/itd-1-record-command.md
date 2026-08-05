@@ -10,7 +10,7 @@ kind: standalone
 
 ## Press Release
 
-> **Testimony ships `testimony record` — a managed capture launcher that starts a think-aloud session in one command.** It launches the screen and microphone recorders, writes the session `manifest.json` (app under test, build hash, participant pseudonym, task list), and stamps the shared `t0` wall-clock anchor that every downstream stream aligns to. The QuickTime hand-off — start the recorder by hand, note the time, hope the clocks agree — is gone; a session directory arrives ready for `transcribe`, `merge`, and `report`.
+> **Testimony ships `testimony record` — a managed capture launcher that starts a think-aloud session in one command.** It launches the microphone recorder (and, with `-video`, the screen recorder too), writes the session `manifest.json` (app under test, build hash, participant pseudonym, task list), and stamps the shared `t0` wall-clock anchor that every downstream stream aligns to. The QuickTime hand-off — start the recorder by hand, note the time, hope the clocks agree — is gone; a session directory arrives ready for `transcribe`, `merge`, and `report`.
 >
 > "Before, every session began with a checklist of things I could get wrong — which recorder, which folder, what time it actually started," said Alice, usability researcher. "Now I type one command, talk through the tasks, and stop. The manifest and the t0 anchor are just there."
 
@@ -30,7 +30,7 @@ The rest of the pipeline stands or falls on synchronisation: an utterance can on
 - In-app interaction instrumentation (rrweb snippets, asciinema wrappers) beyond invoking recorders that are present.
 - Any GUI layer; this is the CLI capture surface.
 - Third-party app capture specifics (itd-4) and participant consent tooling (itd-5).
-- Screen capture as part of the default run: audio-only is the shipped default, with screen capture deferred behind the opt-in `-video` flag (spc-1, flagged divergence).
+- Screen capture as part of the default run: audio-only is the shipped default, with screen capture deferred behind the opt-in `-video` flag (spc-1 §"Default: audio-only, `-video` opts in").
 
 ## Acceptance Criteria
 
