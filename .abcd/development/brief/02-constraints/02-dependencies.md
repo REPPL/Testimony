@@ -14,7 +14,8 @@
   - `whisper-cli` (whisper.cpp) — fallback ASR engine (segment-level
     timestamps); parsed from its `-oj` JSON file.
   - GPU detection uses `nvidia-smi` on PATH as a proxy — no bindings.
-- **ASR is local-only.** Transcription never touches the network; missing
-  tools fail with install guidance, not degraded cloud fallbacks. See
-  [`03-invariants.md`](03-invariants.md) for the privacy boundary this
-  serves.
+- **ASR is local-only.** Nothing touches the network beyond the engine
+  fetching its own model files on first use; the recording itself never
+  leaves the machine, and missing tools fail with install guidance, not
+  degraded cloud fallbacks. See [`03-invariants.md`](03-invariants.md) for
+  the privacy boundary this serves.
