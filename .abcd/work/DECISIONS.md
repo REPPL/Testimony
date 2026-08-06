@@ -803,3 +803,40 @@ Architecture-shaping decisions graduate to an ADR under
   diagnostic one, and the "three consistent siblings" premise doesn't
   hold — `timeline.go:514` prints neither form's first occurrence either,
   and `validate.go:155` prints raw like `analyze.go` does).
+- 2026-08-06 — Bug-hunt round 32: two confirmed defects. `POST
+  /api/interactions` (`demo.go`) and `transcribe` now check the *timeline
+  entry* a record becomes — via new `timeline.EventEntry`/`SpeechEntry` and
+  `session.EncodedLen` — against the JSONL line limit, not just the record
+  itself: `merge`'s `src`/`id`/`payload` wrapping (`timeline.BuildEntries`)
+  could push an entry over the limit that its source record, checked alone,
+  passed, so a record was durably persisted at 204/exit 0 and then
+  permanently unreadable by `merge`, `report`, and `analyze`, with no
+  CLI-level repair. `session.WriteJSONL`'s encoder also stopped HTML-escaping
+  `<`, `>`, `&` into six-byte `\uXXXX` sequences (`SetEscapeHTML(false)`,
+  matching `compactLine`'s existing non-escaping behaviour): the escaping
+  alone could inflate an accepted record's wrapped entry up to sixfold,
+  pulling the failure window down from a ~30-byte sliver at the very top of
+  the range to any record from roughly 700 KiB up. Second: `record -video`
+  excluded only the single recorder `anyExit`'s select happened to observe
+  (`if c != dead`) from the missing-output sweep; when a second recorder also
+  exited on its own at the same moment, it fell through to
+  `classifyMissingOutput`'s "stayed blocked on the permission prompt"
+  narrative — disproved by its own exit — with its real exit status never
+  surfaced. Now every child whose `done` channel is already closed when the
+  exit is observed (sampled before `stopAll`'s SIGINT reaches the others, so
+  a live recorder's clean shutdown is never mistaken for a self-exit) is
+  excluded and gets its own `classifyRecorderExit` diagnosis. Refuted:
+  `ci.yml`'s `check`-job comment omitting gofmt/ldflags/installer steps from
+  its own prose (both refuters: gofmt was already in the job when the
+  comment was first written, so its omission was never staleness, and the
+  comment was rewritten in round 15 — after the installer steps already
+  existed — without naming them either: a rationale note about
+  Ubuntu-only/single-job-name, not an enumeration, unlike the file header
+  ten lines above which round 26 fixed for exactly this reason); `release.yml`'s header omitting the install-e2e/version-assert/
+  no-branch-commit-tripwire steps (both refuters: the header states the
+  tripwire as an invariant ("nothing is pushed to any branch"), predates
+  none of the "omitted" steps — the post-publish attestation verify is
+  equally unnamed and equally day-one — and a full rewrite would duplicate
+  the fuller per-step comments 200 lines below). Not re-raised:
+  `session-directory.md`'s `words` row omission-cause gap, already
+  adjudicated and discarded on a split refuter verdict in round 31.
