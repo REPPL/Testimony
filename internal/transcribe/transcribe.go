@@ -220,6 +220,9 @@ func Run(opts Options) (int, error) {
 		// reason; transcribe is the sibling writer that lacked the guard.
 		return 0, fmt.Errorf("engine returned no utterances; refusing to overwrite %s", session.TranscriptFile)
 	}
+	if err := checkEntriesFit(utts); err != nil {
+		return 0, err
+	}
 	out := filepath.Join(opts.SessionDir, session.TranscriptFile)
 	if err := session.WriteJSONL(out, utts); err != nil {
 		return 0, fmt.Errorf("write transcript: %w", err)
@@ -548,6 +551,28 @@ func mapSegments(segs []segment, offset float64) ([]timeline.Utterance, error) {
 		utts = append(utts, u)
 	}
 	return utts, nil
+}
+
+// checkEntriesFit refuses an utterance whose timeline entry would not fit the
+// JSONL line limit. An utterance fitting transcript.jsonl's own line limit
+// does not mean merge can write it back out: merge re-frames it into a
+// timeline entry (a src/id/payload envelope added around it) that
+// session.WriteJSONL checks against the same limit, and that entry can be
+// larger than the utterance itself. Checking the entry here, before
+// transcript.jsonl is written, keeps this session out of the state where
+// transcribe succeeds but merge is permanently unable to read the transcript
+// back.
+func checkEntriesFit(utts []timeline.Utterance) error {
+	for i, u := range utts {
+		entryLen, err := session.EncodedLen(timeline.SpeechEntry(u))
+		if err != nil {
+			return fmt.Errorf("utterance %d: %w", i+1, err)
+		}
+		if entryLen > session.MaxJSONLLine {
+			return fmt.Errorf("utterance %d's timeline entry encodes to %d bytes, over the %d-byte JSONL line limit", i+1, entryLen, session.MaxJSONLLine)
+		}
+	}
+	return nil
 }
 
 func round2(x float64) float64 { return math.Round(x*100) / 100 }
