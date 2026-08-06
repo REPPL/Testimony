@@ -113,6 +113,12 @@ Evidence integrity:
   no rendered-form fallback. `transcribe` now drops a segment whose text is
   invisible-only Unicode, not only whitespace-only raw text, so the same
   defect cannot reach `transcript.jsonl` from a real transcription run.
+- `transcribe` now also drops an individual word whose text is
+  invisible-only Unicode, matching the segment-level guard above: a word
+  entirely made of Unicode format characters (e.g. a zero-width space) was
+  non-empty raw and survived trimming, so it reached `transcript.jsonl`,
+  `timeline.jsonl`, and the analysis request as a timestamped word with no
+  visible content.
 - `report` renders a `—` placeholder for an App, Participant, or event
   `kind` that is whitespace-only or invisible-only Unicode, instead of a
   blank field, and `analyze`'s emitted request does the same with `(none)`

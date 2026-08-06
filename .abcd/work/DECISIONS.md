@@ -776,3 +776,30 @@ Architecture-shaping decisions graduate to an ADR under
   so nothing depends on the byte-exact form). Also excluded before
   verification, as a precedent duplicate: `AGENTS.md` claiming CI runs plain
   `go test ./...` (round 13).
+- 2026-08-06 — Bug-hunt round 31: `CHANGELOG.md` gains the `[Unreleased]`
+  entry round 30's word-level `SafeText` filtering change should have
+  carried — `transcribe.mapSegments`'s per-word emptiness guard
+  (`transcribe.go:532`) is a real, user-visible change to what reaches
+  `transcript.jsonl`/`timeline.jsonl`, and the round's commit touched
+  `transcribe.go` and its test but not `CHANGELOG.md`, leaving only the
+  round-27 segment-level sibling documented. Same precedent as round 27's
+  own back-fill of round 26's evidence-anchor fallback. Refuted:
+  `session-directory.md`'s `words` row omitting the same drop cause from
+  its omission-cause list (one refuter killed it as pre-existing — the
+  empty-word drop predates round 30 by 30 rounds, so round 30 introduced no
+  fresh doc staleness — the other found it survives on the row's own
+  precedent of documenting the equivalent `text`-row cause; discarded on
+  the split verdict); `session-directory.md`'s `quote` row's "no
+  normalisation" claim read against `validate.go`'s SafeText-based
+  comparison (both refuters: `SafeText` is a rune-local, substring-preserving
+  map — no case-folding, no whitespace-collapsing, no Unicode NFC/NFD — so
+  it is not "normalisation" in the sense the row rules out, and the row's
+  own 2026-07-17 decision-log origin coordinates "no normalisation" with
+  "not corpus-joined" as a matching-leniency claim, not a byte-purity one);
+  `analyze.go`'s duplicate-finding-id error message printing the raw id
+  instead of the `SafeText`-compared form, unlike three claimed siblings
+  (both refuters: the claim inverts on inspection — `%q` already escapes
+  every character `SafeText` would strip, so the raw form is the more
+  diagnostic one, and the "three consistent siblings" premise doesn't
+  hold — `timeline.go:514` prints neither form's first occurrence either,
+  and `validate.go:155` prints raw like `analyze.go` does).
