@@ -739,3 +739,40 @@ Architecture-shaping decisions graduate to an ADR under
   drafts (round 20); the intents-README "always they/them"
   persona-quote rule read against `03-personas.md`'s gendered narrative
   pronouns (round 24).
+- 2026-08-06 — Bug-hunt round 30: `transcribe.mapSegments`'s word-level
+  emptiness check now decides presence on `session.SafeText`'s rendered form,
+  matching the segment-level guard five lines above it — a word that is
+  entirely invisible-only Unicode (e.g. ZWSP U+200B) was non-empty raw and
+  survived `strings.TrimSpace`, so it reached `transcript.jsonl`,
+  `timeline.jsonl`, and the analysis request as a timestamped word with no
+  visible content. `install.sh`'s `install_ffmpeg_local` error-handling
+  comment no longer claims the EXIT trap "covers only `install_binary`'s
+  `$tmp`" — that trap has swept `$tmp2` since round 21's fix; the comment was
+  stale from the moment it landed in the same commit that widened the trap.
+  Refuted: an `analyze.indexTimeline` map write keying `idx.uttText` under an
+  unguarded raw id (the read path is gated behind `idx.ids`, which is itself
+  gated, so the empty key is write-only dead data with no observable effect);
+  `session.WriteFileAtomicNoFollow` refusing only symlinks, not other
+  non-regular files, at its target path (the function never opens the
+  pre-existing file — it renames a temp file into place, and `rename(2)`
+  neither opens, blocks on, nor writes through a FIFO/device/socket, so the
+  hazard the sibling `openNoFollow`'s stricter check exists to prevent is
+  absent by construction); `cli.md`'s `-offset` table cell compressing the
+  "external audio vs the session's own `audio.wav`" split as "with/without
+  `-audio`" (the surrounding prose states the exception twice within ten
+  lines, and the table already compresses two other branches the same way);
+  `ci.yml`'s cross-compile step comment ("linux/amd64 already covered by
+  Build above") read as a claim about `CGO_ENABLED`, which it never makes —
+  the `CGO_ENABLED=0` clause and the coverage clause are two independent
+  statements joined by a semicolon, and the coverage claim holds regardless;
+  `analyse-a-session.md`'s "four steps" intro read against its five numbered
+  headings (the fifth, re-rendering the report, is grammatically set off by
+  an em dash as a follow-on outside the enumerated list, and invokes a
+  different pipeline command, `report`, from the four analysis-layer steps
+  proper); `session-directory.md`'s abbreviated `utt-003` example text read
+  against the fuller fixture sentence (the page's other examples are
+  established as illustrative reductions too — the manifest example already
+  drops three fixture fields — and no `findings.jsonl` quote cites `utt-003`,
+  so nothing depends on the byte-exact form). Also excluded before
+  verification, as a precedent duplicate: `AGENTS.md` claiming CI runs plain
+  `go test ./...` (round 13).

@@ -525,7 +525,11 @@ func mapSegments(segs []segment, offset float64) ([]timeline.Utterance, error) {
 		}
 		for _, w := range s.words {
 			word := strings.TrimSpace(w.W)
-			if word == "" {
+			// Presence is decided on the rendered form, matching the segment
+			// guard above: an invisible-only word (Cf) is non-empty raw and
+			// survives TrimSpace, so it would otherwise reach transcript.jsonl
+			// and the analysis request as a timestamped word with no content.
+			if strings.TrimSpace(session.SafeText(word)) == "" {
 				continue
 			}
 			// An implausible word time is dropped, not refused: the same policy

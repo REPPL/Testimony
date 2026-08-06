@@ -279,10 +279,11 @@ install_ffmpeg_local() {
             # available, and refuse on a bad or wrong-key signature.
             # Every fetch/unpack below is guarded with the err-skip-return
             # convention the parse failure already uses: ffmpeg is an OPTIONAL
-            # dependency, and under `set -eu` an unguarded failure aborted the
-            # whole installer with the child's raw exit code — skipping the ASR
-            # step and the closing guidance, and leaking $tmp2 (the EXIT trap
-            # covers only install_binary's $tmp).
+            # dependency, and under `set -eu` an unguarded failure would abort
+            # the whole installer with the child's raw exit code, skipping the
+            # ASR step and the closing guidance (install_binary's EXIT trap
+            # still sweeps $tmp2, so nothing leaks — but the abort itself is
+            # still the wrong outcome for an optional dependency).
             say "Fetching static ffmpeg build (evermeet.cx) ..."
             fetch "https://evermeet.cx/ffmpeg/info/ffmpeg/release" "$tmp2/info.json" \
                 || { err "could not reach evermeet.cx; skipping ffmpeg"; rm -rf "$tmp2"; return; }
