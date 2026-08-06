@@ -331,6 +331,36 @@ func TestMapSegmentsDropsInvisibleOnlyText(t *testing.T) {
 	}
 }
 
+// TestMapSegmentsDropsInvisibleOnlyWord mirrors
+// TestMapSegmentsDropsInvisibleOnlyText at word level: the word-level
+// emptiness check tested only strings.TrimSpace(w.W), the raw form, unlike
+// the segment-level guard immediately above it, which decides presence on
+// session.SafeText's rendered form. A word that is entirely invisible-only
+// Unicode (ZWSP U+200B) is non-empty raw and survives TrimSpace, so it
+// reached transcript.jsonl, timeline.jsonl, and the analysis request as a
+// timestamped word with no visible content. An ordinary whitespace-only word
+// must still be dropped the same way.
+func TestMapSegmentsDropsInvisibleOnlyWord(t *testing.T) {
+	zeroWidthSpace := string(rune(0x200B))
+	utts, err := mapSegments([]segment{
+		{start: 0, end: 1, text: "real words", words: []timeline.Word{
+			{W: "real", T: 0},
+			{W: zeroWidthSpace, T: 0.5},
+			{W: "   ", T: 0.7},
+			{W: "words", T: 1},
+		}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("mapSegments: %v", err)
+	}
+	if len(utts) != 1 {
+		t.Fatalf("want 1 utterance, got %d", len(utts))
+	}
+	if len(utts[0].Words) != 2 || utts[0].Words[0].W != "real" || utts[0].Words[1].W != "words" {
+		t.Fatalf("want only the two visible words kept, got %+v", utts[0].Words)
+	}
+}
+
 // TestCheckOffset pins the explicit-flag bound: the derived and sidecar paths
 // refuse a non-finite or over-magnitude offset where the bad value enters, and
 // the flag path must apply the same rule. Every genuine offset (including the
