@@ -131,13 +131,13 @@ func (m Manifest) T0() (int64, error) {
 // maxManifestBytes caps LoadManifest's read of manifest.json. A genuine manifest
 // is a few hundred bytes; 1 MiB is generous for one carrying long notes or a big
 // task list. The cap matters because manifest.json in an exchanged session is
-// attacker-controllable (see Manifest.T0's threat note), and it is the last
-// untrusted read on the session surface that was still unbounded: an attacker
-// ships a multi-gigabyte manifest (a few KB once zipped) and any command that
-// loads it — merge, report, analyze, transcribe — would otherwise buffer the
-// whole file into memory before parsing and drive the process into OOM. Every
-// sibling reader of untrusted session files is already bounded (ReadJSONL caps a
-// line at MaxJSONLLine, analyze.Ingest at maxAnswerBytes, the demo body caps).
+// attacker-controllable (see Manifest.T0's threat note), and an attacker ships
+// a multi-gigabyte manifest (a few KB once zipped) that any command loading it
+// — merge, report, analyze, transcribe — would otherwise buffer into memory
+// before parsing and drive the process into OOM. Every sibling reader of
+// untrusted session files is bounded the same way: ReadJSONL caps both a line
+// (MaxJSONLLine) and the whole file (maxJSONLBytes), analyze.Ingest caps at
+// maxAnswerBytes, the demo body caps.
 const maxManifestBytes = 1 << 20 // 1 MiB
 
 // LoadManifest reads manifest.json from dir.
@@ -414,6 +414,18 @@ func SafeTextLines(s string) string {
 // accept a line no reader can take back.
 const MaxJSONLLine = 4 << 20 // 4 MiB
 
+// maxJSONLBytes caps ReadJSONL's total read across every line in a file, the
+// counterpart to MaxJSONLLine bounding a single one. A per-line cap alone
+// leaves total file size unbounded: a session's JSONL artefacts are
+// attacker-controllable when exchanged (see ReadJSONL's no-follow comment),
+// and a file built from many small, well-formed lines defeats MaxJSONLLine
+// while still driving json.Unmarshal's per-line allocation into hundreds of
+// megabytes for a file only tens of megabytes on disk. 16 MiB matches the cap
+// analyze.Ingest already applies to untrusted input at the same scale; a
+// genuine session's merged timeline or findings file is a small fraction of
+// that.
+const maxJSONLBytes = 16 << 20 // 16 MiB
+
 // jsonlEncoder returns a json.Encoder configured exactly as WriteJSONL's own
 // encoders are, so a size measured against it predicts what WriteJSONL will
 // later check and write. HTML escaping is disabled: JSONL artefacts are never
@@ -455,12 +467,19 @@ func ReadJSONL[T any](path string) ([]T, error) {
 	defer f.Close()
 
 	var out []T
+	var total int64
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), MaxJSONLLine)
 	line := 0
 	for sc.Scan() {
 		line++
 		raw := sc.Bytes()
+		// Counted before the blank-line skip so a file padded with blank lines
+		// past the cap is refused rather than scanned past forever.
+		total += int64(len(raw)) + 1
+		if total > maxJSONLBytes {
+			return nil, fmt.Errorf("%s: exceeds %d bytes across %d lines; refusing to read", path, maxJSONLBytes, line)
+		}
 		// Skip blank lines, including whitespace-only ones (as may appear in a
 		// hand-edited or exchanged session), matching analyze.Load so the two
 		// JSONL readers agree on what counts as blank.
@@ -499,6 +518,7 @@ func WriteJSONL[T any](path string, values []T) error {
 	// record, not the whole file, in memory.
 	var buf bytes.Buffer
 	check := jsonlEncoder(&buf)
+	var total int64
 	for i, v := range values {
 		buf.Reset()
 		if err := check.Encode(v); err != nil {
@@ -520,6 +540,14 @@ func WriteJSONL[T any](path string, values []T) error {
 			// pointed the operator at nothing they could count to — "record 0" is
 			// no line of any file, and no line of the source transcript either.
 			return fmt.Errorf("%s: line %d of the output encodes to %d bytes, over the %d-byte JSONL line limit", path, i+1, buf.Len(), MaxJSONLLine)
+		}
+		total += int64(buf.Len())
+		if total > maxJSONLBytes {
+			// Same write-before-read stance as MaxJSONLLine's check above and
+			// SaveManifest's own cap: refuse before opening the file rather than
+			// persist a timeline.jsonl or findings.jsonl that ReadJSONL's matching
+			// total-size cap would then refuse to read back.
+			return fmt.Errorf("%s: output would be %d bytes across %d lines, over the %d-byte JSONL file limit ReadJSONL enforces; refusing to write a session no command could read back", path, total, i+1, maxJSONLBytes)
 		}
 	}
 
