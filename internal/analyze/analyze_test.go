@@ -919,8 +919,8 @@ func TestIngestOversizedFindingLeavesPriorFileIntact(t *testing.T) {
 // TestWriteFindingsRollsBackOnWriteError tests writeFindings), not through
 // Ingest: Ingest's own maxAnswerBytes read cap equals MaxJSONLBytes, so an
 // answer large enough to make the file exceed it would already be refused at
-// the read stage rather than exercising this check. Six findings, each ~3.5
-// MiB (under the 4 MiB line cap) via 64 citations of one long id, sum to ~21
+// the read stage rather than exercising this check. Six findings, each ~3.4
+// MiB (under the 4 MiB line cap) via 64 citations of one long id, sum to ~20
 // MiB (over the 16 MiB file cap).
 func TestOversizedFindingsRejectsOversizedTotal(t *testing.T) {
 	longID := "utt-" + strings.Repeat("x", 55000)

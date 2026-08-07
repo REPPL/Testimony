@@ -475,6 +475,13 @@ Invocation contract:
   newline-terminated input line: typing `x` used to print `unrecognised
   choice "x\n"`, a value visibly different from the trimmed form the switch
   compared it to.
+- **Behaviour:** `analyze -ingest` refuses an answer whose findings would
+  together exceed `findings.jsonl`'s 16 MiB total-size limit, the same limit
+  `WriteJSONL`'s callers are already held to: nothing previously bounded the
+  sum across an answer's findings, only the length of one finding's line, so
+  a set of individually valid findings could still serialise to a file
+  `report`, `review`, and `analyze`'s own re-ingest recovery path all refuse
+  to read back. It used to report success and write the unreadable file.
 
 Capture integrity:
 
@@ -549,13 +556,6 @@ Capture integrity:
   had already exited and captured nothing, or — for a recorder that left a
   partial artefact — exiting 0 with no word that capture had ended early,
   presenting a truncated recording as a clean session.
-- **Behaviour:** `analyze -ingest` refuses an answer whose findings would
-  together exceed `findings.jsonl`'s 16 MiB total-size limit, the same limit
-  `WriteJSONL`'s callers are already held to: nothing previously bounded the
-  sum across an answer's findings, only the length of one finding's line, so
-  a set of individually valid findings could still serialise to a file
-  `report`, `review`, and `analyze`'s own re-ingest recovery path all refuse
-  to read back. It used to report success and write the unreadable file.
 
 ## [0.4.0] - 2026-07-24
 

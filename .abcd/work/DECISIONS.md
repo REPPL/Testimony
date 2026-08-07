@@ -957,13 +957,13 @@ Architecture-shaping decisions graduate to an ADR under
   set; the `WriteJSONL` doc comment, which had documented findings.jsonl as
   lacking this write-side pre-flight, is corrected to name where it now
   lives. Nitpicks fixed: `session-directory.md`'s `report.md` `MM:SS`
-  description didn't note the leading `-` a time preceding `sessionStart`
-  renders with; `install.sh`'s trap-roster comment (already widened once, in
+  description didn't note the leading `-` a time preceding `t0` renders
+  with; `install.sh`'s trap-roster comment (already widened once, in
   round 30, from naming only `$tmp`) still didn't name `$staged`, the binary
   staged into `INSTALL_DIR` ahead of the atomic rename, the one cleanup
   target that touches the user's install directory rather than a temp dir;
   `analyse-a-session.md` said "the CLI ... reaches no network", the sole
-  outlier of the repo's five other "adds no network dependency" instances
+  outlier of the repo's four other "adds no network dependency" instances
   and, read literally as unscoped, contradicted by `demo`'s CDN-loaded rrweb
   recorder and the ASR engine's model fetch — reworded to name `analyze` and
   match the canonical phrasing, as rounds 26 and 27 did for the same
