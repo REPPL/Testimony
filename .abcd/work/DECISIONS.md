@@ -850,27 +850,39 @@ Architecture-shaping decisions graduate to an ADR under
   new regression test. Both reviewers' verdicts were BLOCK, so per the
   loop's merge gate the PR (#48) stays open for the human rather than
   auto-merging, even with the fix pushed and CI green.
-- 2026-08-07 — Bug-hunt round 33: one confirmed defect, three nitpicks.
-  `session.ReadJSONL` capped a single line at `MaxJSONLLine` but never the
-  whole file, contradicting the comment on `maxManifestBytes` that lists it
-  as an already-bounded sibling reader; a file built from many small,
-  individually-legal lines defeated the per-line cap and OOM'd `merge`,
-  `report`, and `analyze`. New `maxJSONLBytes` (16 MiB, matching
-  `analyze.Ingest`'s existing cap) bounds the running total in `ReadJSONL`,
-  with a matching `WriteJSONL` pre-flight check preserving the
-  write-before-read invariant. Nitpicks fixed: `report.eventLine`'s
-  `orDash` wrapper was unreachable (its input always starts with
-  `mdOrDash`'s own "—" fallback) and had no other call site, so it was
-  removed; `AGENTS.md` claimed CI runs both the plain and race-enabled
-  `go test` lines, but CI only runs the race-enabled one (no test differs
-  between them); two 2026-07-18 `DECISIONS.md` entries had been spliced
-  ahead of a run of 2026-07-17 entries they were committed after, breaking
-  the file's own "newest last" rule by both date and commit order, and were
-  moved back. Refuted: unbounded error-accumulation in
-  `analyze.Ingest`/`errors.Join` "defeating" `maxAnswerBytes` (one refuter
-  showed the same OOM reproduces from `json.Unmarshal` alone before a
-  single error accumulates, and a realistic degenerate answer stays around
-  255 MB, well within bounds — split verdict, discarded); a dangling-link
-  nitpick in `AGENTS.md`'s abcd-managed fence (split verdict on whether
-  `.abcd/rules.json` gives an indirect fix path; discarded as out of
-  scope).
+- 2026-08-07 — Bug-hunt round 33: one confirmed defect (two readers), two
+  nitpicks. `session.ReadJSONL` capped a single line at `MaxJSONLLine` but
+  never the whole file, contradicting the comment on `maxManifestBytes` that
+  listed it as an already-bounded sibling reader; a file built from many
+  small, individually-legal lines defeated the per-line cap and OOM'd
+  `merge`, `report`, and `analyze`. New `session.MaxJSONLBytes` (16 MiB,
+  matching `analyze.Ingest`'s existing cap) bounds the running total in
+  `ReadJSONL`, with a matching `WriteJSONL` pre-flight check for its two
+  actual callers (transcript.jsonl, timeline.jsonl). Post-hoc adversarial
+  review of the round's own PR (correctness; docs accuracy) independently
+  caught that `analyze.ParseRecords` — findings.jsonl's own scanner, never
+  routed through `ReadJSONL` — carried the identical gap and was missed by
+  the round's own comment claiming every sibling reader was already bounded;
+  `ParseRecords` now enforces `MaxJSONLBytes` too, and the comments on
+  `maxManifestBytes`/`WriteJSONL` were corrected to name the readers and
+  writers accurately (`WriteJSONL` never writes findings.jsonl;
+  `analyze.commitFindings`/`review.AppendVerdict` do, through their own
+  locked descriptors). Nitpicks fixed: `AGENTS.md` claimed CI runs both the
+  plain and race-enabled `go test` lines, but CI only runs the race-enabled
+  one (no test differs between them); two 2026-07-18 `DECISIONS.md` entries
+  had been spliced ahead of a run of 2026-07-17 entries they were committed
+  after, breaking the file's own "newest last" rule by both date and commit
+  order, and were moved back. Reverted before merge: `report.eventLine`'s
+  `orDash` wrapper was initially removed as unreachable dead code, but round
+  28 (2026-08-05, above) had already considered and explicitly rejected this
+  exact claim as a deliberate locally-redundant guard against a future
+  caller invariant change — the same rationale `review.go`'s `checkTargets`
+  states for its own SafeText calls. An adversarial PR reviewer caught the
+  reintroduction before merge; the wrapper stays. Refuted: unbounded
+  error-accumulation in `analyze.Ingest`/`errors.Join` "defeating"
+  `maxAnswerBytes` (one refuter showed the same OOM reproduces from
+  `json.Unmarshal` alone before a single error accumulates, and a realistic
+  degenerate answer stays around 255 MB, well within bounds — split verdict,
+  discarded); a dangling-link nitpick in `AGENTS.md`'s abcd-managed fence
+  (split verdict on whether `.abcd/rules.json` gives an indirect fix path;
+  discarded as out of scope).
