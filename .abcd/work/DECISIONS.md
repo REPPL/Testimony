@@ -1065,3 +1065,40 @@ Architecture-shaping decisions graduate to an ADR under
   were fixed — corrected here too. It also caught that round 2's "six"
   recount of `adds no network dependency` instances double-counted
   `CLAUDE.md`, a symlink to `AGENTS.md`; the distinct-file count is five.
+- 2026-08-07 — Bug-hunt round 36: two confirmed substantive defects, two
+  nitpicks, zero refuted. `review.AppendVerdict` held its verdict record to
+  `MaxJSONLLine` (round 25) but never checked the running total against
+  `MaxJSONLBytes` (round 33) — the last of `findings.jsonl`'s three writers
+  left uncovered after round 35 closed the same gap for `analyze -ingest`.
+  A `findings.jsonl` built at or right up to the cap is a legal ingest
+  output; recording a verdict against it durably bricked every finding and
+  verdict already on file (every later `analyze.Load`, `review`, and
+  `report` refused or silently dropped the findings; re-ingesting to repair
+  it was itself refused once a verdict existed, since `holdsVerdicts` also
+  bounds only a line, not the total). Fixed with a stat-then-append check
+  under `AppendVerdict`'s existing lock, mirroring `WriteJSONL`'s and
+  `oversizedFindings`' pre-flight pattern. Separately, `demo`'s capture
+  endpoint checked each interaction record against `MaxJSONLLine` but never
+  tracked `interactions.jsonl`'s running total against `MaxJSONLBytes` (the
+  bound `merge`'s reader enforces): a sequence of individually valid
+  captures, each answered `204`, could accumulate past the cap and leave a
+  session durably unmergeable, discovered only after capture ended — as
+  little as ~2,000 ordinary-sized interactions through the documented
+  instrument-your-own-app path, not the contrived multi-megabyte records the
+  hunting round first reproduced with. Fixed the same way, using the file
+  offset `appendRecords` already obtains via `Seek` before every write;
+  `events.rrweb.jsonl` is deliberately exempt, matching `MaxJSONLBytes`' own
+  documented archival carve-out. Both fixes carry regression tests watched
+  to fail pre-fix and pass post-fix, and both survived two independent
+  adversarial refuters apiece, including live end-to-end reproductions
+  against a built binary rather than re-reading the same source the hunt
+  round had. Nitpicks fixed: `README.md`'s "the CLI never calls a model or
+  the network" was the one absolute network claim rounds 26, 27, and 35's
+  otherwise-identical corrections missed — round 35's "sole outlier" framing
+  covered only the canonical `adds no network dependency` phrase, which
+  cannot match README's differently-worded instance; reworded to the
+  canonical, `analyze`-scoped form. `docs/reference/session-directory.md`'s
+  `findings.jsonl` schema table named `mode`'s `A`/`B` values without
+  defining what distinguishes them anywhere user-facing (the only definition
+  lived in internal, non-shipped brief documents) — one clause now points
+  the reader at README's own "Reference capture" bullet.
