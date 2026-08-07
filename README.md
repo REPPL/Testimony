@@ -112,9 +112,9 @@ stamps the session), `demo` (instrumented capture), `transcribe` (local WhisperX
 or whisper.cpp), `merge`, `report`, and the first-pass analysis layer — `analyze`
 (emit an analysis request, then validate the answer into findings) and `review`
 (record human verdicts). `record` captures the microphone by default; screen
-video is opt-in with `-video`. Analysis is host-delegated — the CLI never calls a
-model or the network — and every finding is *unverified* by default until you
-confirm or reject it.
+video is opt-in with `-video`. Analysis is host-delegated — `analyze` never calls
+a model, holds no keys, and adds no network dependency — and every finding is
+*unverified* by default until you confirm or reject it.
 
 Coming next, in user terms:
 
