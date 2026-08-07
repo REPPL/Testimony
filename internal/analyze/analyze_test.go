@@ -907,6 +907,89 @@ func TestIngestOversizedFindingLeavesPriorFileIntact(t *testing.T) {
 	}
 }
 
+// TestOversizedFindingsRejectsOversizedTotal is the whole-file counterpart to
+// TestIngestRejectsOversizedFindingLine: session.MaxJSONLLine bounds one
+// finding's line, but nothing bounded the sum across an answer's findings, so
+// a set of individually valid findings could still serialise to a
+// findings.jsonl over session.MaxJSONLBytes — the same total WriteJSONL's two
+// callers are held to, but findings.jsonl's own locked-descriptor writer was
+// not. Pre-fix commitFindings wrote it and Ingest reported success, leaving
+// report and review unable to read the file back (holdsVerdicts, the
+// re-ingest recovery path, bounds only a single line, not the total it
+// scans, so it could still probe and overwrite such a file). Tested against
+// oversizedFindings directly (as
+// TestWriteFindingsRollsBackOnWriteError tests writeFindings), not through
+// Ingest, for a small and exactly predictable byte count: see
+// TestIngestRejectsOversizedFindingsTotal for the equivalent reachable
+// through the public API at a fraction of maxAnswerBytes. Six findings, each
+// ~3.4 MiB (under the 4 MiB line cap) via 64 citations of one long id, sum to
+// ~20 MiB (over the 16 MiB file cap).
+func TestOversizedFindingsRejectsOversizedTotal(t *testing.T) {
+	longID := "utt-" + strings.Repeat("x", 55000)
+	var findings []Finding
+	var decoded []positioned
+	for i := 1; i <= 6; i++ {
+		ev := make([]string, 64)
+		for j := range ev {
+			ev[j] = longID
+		}
+		f := Finding{
+			ID: fmt.Sprintf("F-%03d", i), T: 22, Type: "bug", Severity: 3,
+			Quote: "I clicked save and nothing happened", Evidence: ev, Status: "unverified",
+		}
+		findings = append(findings, f)
+		decoded = append(decoded, positioned{finding: f, at: i})
+	}
+
+	errs := oversizedFindings(findings, decoded)
+	joined := errors.Join(errs...)
+	if joined == nil || !strings.Contains(joined.Error(), "file limit") {
+		t.Fatalf("expected a total-size refusal naming the file limit, got %v", joined)
+	}
+	for _, err := range errs {
+		if strings.Contains(err.Error(), "F-001:") {
+			t.Fatalf("the total-size refusal was attributed to one finding rather than the file: %v", err)
+		}
+	}
+}
+
+// TestIngestRejectsOversizedFindingsTotal is the total-size regression
+// reached through the public API, at a fraction of maxAnswerBytes rather than
+// near it: writeFindings and oversizedFindings both encode with Go's default
+// HTML-escaping JSON encoder (deliberately not session.jsonlEncoder, so the
+// two agree with each other, but they disagree with the answer an operator's
+// assistant writes), so a quote or evidence id containing '<', '>', or '&'
+// inflates roughly sixfold — one raw byte in the answer becomes a six-byte
+// \uXXXX escape in the line oversizedFindings measures and writeFindings
+// would persist. Five findings each quoting a ~600,000-byte run of '<' encode
+// to ~17 MiB once written, comfortably over the 16 MiB MaxJSONLBytes total,
+// from a ~3 MiB answer — under a fifth of maxAnswerBytes, so the read-side
+// cap cannot be relied on to keep this path from ever executing.
+func TestIngestRejectsOversizedFindingsTotal(t *testing.T) {
+	longText := strings.Repeat("<", 600000)
+	dir := writeSession(t, fmt.Sprintf(
+		`{"t":22,"src":"speech","id":"utt-004","payload":{"speaker":"P1","t1":30,"text":%q}}`+"\n", longText))
+
+	var findings []string
+	for i := 1; i <= 5; i++ {
+		findings = append(findings, fmt.Sprintf(
+			`{"id":"F-%03d","t":22,"type":"bug","severity":3,"quote":%q,"evidence":["utt-004"]}`,
+			i, longText))
+	}
+	answer := `{"findings":[` + strings.Join(findings, ",") + `]}`
+	if len(answer) >= maxAnswerBytes {
+		t.Fatalf("test setup: answer is %d bytes, at or over maxAnswerBytes (%d); the read-side cap would refuse it before this test's own check runs", len(answer), maxAnswerBytes)
+	}
+
+	_, err := Ingest(dir, strings.NewReader(answer))
+	if err == nil || !strings.Contains(err.Error(), "file limit") {
+		t.Fatalf("expected a total-size refusal naming the file limit, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, session.FindingsFile)); statErr == nil {
+		t.Fatalf("findings.jsonl was written despite the oversized total")
+	}
+}
+
 // TestIngestGuardAndWriteAreOneLockedStep is the TOCTOU regression for the
 // verdict guard. Pre-fix, Ingest probed for verdicts and then rewrote
 // findings.jsonl as two separate, lock-free opens, so a concurrent `testimony

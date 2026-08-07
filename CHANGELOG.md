@@ -174,6 +174,13 @@ Evidence integrity:
   and render a blank speaker with no attribution at all, or render a
   dangling, empty `()` after a finding's verdict instead of omitting the
   suffix as an absent `at` would.
+- **Behaviour:** `analyze -ingest` refuses an answer whose findings would
+  together exceed `findings.jsonl`'s 16 MiB total-size limit, the same limit
+  `WriteJSONL`'s callers are already held to: nothing previously bounded the
+  sum across an answer's findings, only the length of one finding's line, so
+  a set of individually valid findings could still serialise to a file
+  `report` and `review` both refuse to read back. It used to report success
+  and write the unreadable file.
 
 Capture and diagnostics:
 

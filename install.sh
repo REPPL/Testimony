@@ -126,11 +126,12 @@ install_binary() {
 
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/testimony-install.XXXXXX")
     # Both traps sweep every mktemp dir the script can hold ($tmp here; $tmp2,
-    # $gnupg, $uvd in the dependency stage — unset expansions vanish), so an
-    # interrupt mid-dependency leaks nothing. A caught INT/TERM must also STOP
-    # the script: a trap that only cleans up returns control after the handler,
-    # so Ctrl+C at a dependency prompt read was swallowed into the safe-default
-    # answer and the run carried on.
+    # $gnupg, $uvd in the dependency stage), plus $staged, the binary staged
+    # into INSTALL_DIR ahead of the atomic rename below (unset expansions
+    # vanish), so an interrupt mid-dependency or mid-install leaks nothing. A
+    # caught INT/TERM must also STOP the script: a trap that only cleans up
+    # returns control after the handler, so Ctrl+C at a dependency prompt read
+    # was swallowed into the safe-default answer and the run carried on.
     trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"} ${staged:+"$staged"}' EXIT
     trap 'rm -rf ${tmp:+"$tmp"} ${tmp2:+"$tmp2"} ${gnupg:+"$gnupg"} ${uvd:+"$uvd"} ${staged:+"$staged"}; trap - EXIT; exit 130' INT TERM
 

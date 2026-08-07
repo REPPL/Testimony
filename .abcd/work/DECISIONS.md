@@ -944,3 +944,124 @@ Architecture-shaping decisions graduate to an ADR under
   phrasing, and the `manifest.json` example's field trimming (all four on
   split or unanimous refuter verdicts, with no misleading or behavioural
   consequence found).
+- 2026-08-07 — Bug-hunt round 35: one confirmed substantive defect, three
+  nitpicks. `analyze.oversizedFindings` bounded a single finding's
+  `findings.jsonl` line against `session.MaxJSONLLine` but never the sum
+  across an answer's findings, unlike `WriteJSONL`'s two callers
+  (transcript.jsonl, timeline.jsonl): a set of individually valid findings
+  could still serialise to a file over `session.MaxJSONLBytes` that `report`
+  and `review` both refuse to read back (`holdsVerdicts`, the re-ingest
+  recovery path, bounds only a line, not the total, so it can still probe
+  and overwrite such a file), with `Ingest` reporting success at the moment
+  it wrote the unreadable file. `oversizedFindings` now also accumulates
+  and refuses an over-total set before any write, joining the existing
+  transactional error set; the `WriteJSONL` doc comment, which had
+  documented findings.jsonl as lacking this write-side pre-flight, is
+  corrected to name where it now lives. Nitpicks fixed:
+  `session-directory.md`'s `report.md` `MM:SS`
+  description didn't note the leading `-` a time preceding `t0` renders
+  with; `install.sh`'s trap-roster comment has named `$tmp`, `$tmp2`,
+  `$gnupg`, and `$uvd` since round 9 introduced it, and round 10 added
+  `$staged` to the traps themselves without updating the comment to match
+  — the one cleanup target that touches the user's install directory rather
+  than a temp dir, now named;
+  `analyse-a-session.md` said "the CLI ... reaches no network", the sole
+  outlier of the repo's five other "adds no network dependency" instances
+  (`CLAUDE.md` is a symlink to `AGENTS.md`, not a distinct sixth) and, read
+  literally as unscoped, contradicted by `demo`'s CDN-loaded rrweb
+  recorder and the ASR engine's model fetch — reworded to name `analyze` and
+  match the canonical phrasing, as rounds 26 and 27 did for the same
+  overreach on other pages. Caught before verification: a fresh hunt for
+  `report.eventLine`'s `orDash` fallback resurfaced the identical
+  unreachable-branch claim round 28 explicitly rejected as a deliberate
+  locally-redundant guard and round 33 had to revert a reintroduced removal
+  of — checking round 33's own entry against the fix before verification
+  showed the precedent, and the removal was not repeated. Refuted (all on
+  unanimous or split adversarial verdicts): a claimed answer-vs-timeline
+  quote/selector mismatch from `EmitRequest`'s `json.Marshal` HTML-escaping
+  (re-raised independently of round 34's identical refutation of the same
+  claim — both refuters this round decoded the escape and reproduced a
+  validated ingest); `transcribe.checkEntriesFit` lacking a total-size
+  counterpart to its per-line check (transcribe cannot see interactions.jsonl,
+  so the total is `merge`'s invariant to hold, not transcribe's, and
+  `WriteJSONL` already caps transcript.jsonl's own total); `AGENTS.md`'s
+  "every push and pull request" omitting `merge_group` and tag pushes
+  (`ci.yml`'s own header uses the identical phrasing, and AGENTS.md never
+  discusses the release workflow tag pushes go through); and the
+  `manifest.json` example's field trimming, re-raised independently of round
+  34's identical refutation of the same claim.
+- 2026-08-07 — Round 35's own PR (#52) picked up two adversarial reviews
+  before merge. The docs-accuracy reviewer caught that the round's own
+  `MM:SS` fix said the leading `-` marks a time preceding `sessionStart`
+  (`sessionStart` is itself a minimum, so nothing can precede it — the sign
+  actually marks a time preceding `t0`) and pointed its cross-reference
+  "below" at a `t` note that is above; both corrected, and the note widened
+  to say it covers the header's duration `MM:SS` too, not only the Timeline
+  bullet's. It also caught `session.go`'s reworded `WriteJSONL` comment
+  overclaiming that `review.AppendVerdict` shares `oversizedFindings`'
+  total-size check — `AppendVerdict` still bounds only the one verdict
+  record it appends against `MaxJSONLLine`; rescoped. `CHANGELOG.md`'s new
+  entry was moved from the `Capture integrity` group into `Evidence
+  integrity`, where the other `findings.jsonl` integrity entries live. The
+  correctness reviewer then reproduced the round's own fix being reachable
+  through the public `Ingest` API at a fraction of `maxAnswerBytes`, not
+  only through direct unit testing as the new test's own comment had
+  claimed: `oversizedFindings` and `writeFindings` both encode with Go's
+  default HTML-escaping JSON encoder, so a quote or evidence id containing
+  `<`, `>`, or `&` inflates roughly sixfold between the answer's raw bytes
+  and the line actually measured/written — five findings quoting a
+  ~600,000-byte run of `<` encode to ~17 MiB written from a ~3 MiB answer,
+  under a fifth of the read-side cap. Added `TestIngestRejectsOversizedFindingsTotal`
+  to exercise that path end-to-end and corrected the unit test's comment.
+  Also fixed two nitpicks the same review raised: the total-size error
+  message counted all findings in its denominator while `total` itself
+  excludes any already flagged as over-long, so the two numbers disagreed
+  whenever both errors fired in the same answer; and `total` was `int`
+  where its sibling `WriteJSONL` uses `int64` (unreachable overflow given
+  `maxAnswerBytes`, but inconsistent). A second pair of post-fix reviews
+  caught that the `CHANGELOG.md` move landed one group short —
+  `Invocation contract`, the group directly before `Capture integrity`, not
+  `Evidence integrity` four groups earlier, which both reviewers had to
+  re-derive from the file's actual headings rather than trust the first
+  round's own description of its fix; moved to the right group this time.
+  Also fixed: the "four other" `adds no network dependency` count was
+  itself wrong (a naive single-line grep misses instances the phrase wraps
+  across; round 4 found this round's own recount of six was also off by
+  one — `CLAUDE.md` is a symlink to `AGENTS.md`, not a distinct file — so
+  the real count is five); two `~18 MiB` figures
+  (the new test's comment and this file's own entry) were decimal-MB
+  numbers under a MiB label, corrected to `~17 MiB`; `session.go`'s
+  `AppendVerdict` description called the verdict record it appends
+  "already-small", contradicted by `review.go`'s own comment on why that
+  record's size is checked at all; and the `MM:SS` sign note didn't say a
+  time that rounds to zero renders unsigned, or that "this page" meant
+  `report.md` rather than the reference page carrying the note. A third
+  pair of reviews, re-deriving every prior fix from the files themselves
+  rather than trusting either round's own description, confirmed the
+  `CHANGELOG.md` group placement was finally correct but caught two more
+  defects: `oversizedFindings`'s own doc comment, the CHANGELOG entry, the
+  new test's comment, and this file's first-round entry all claimed an
+  over-total `findings.jsonl` is unreadable to "report, review, and the
+  re-ingest recovery path" alike — false for the total case, where
+  `holdsVerdicts` (the recovery path) still scans and can overwrite the
+  file, because its scanner bounds only a line, not the total; only report
+  and review (via `ParseRecords`) actually refuse it. Reworded in
+  `oversizedFindings`'s doc comment, the CHANGELOG entry, and the new
+  test's comment, and `commitFindings`'s own doc comment (which only named
+  the per-line bound as pre-checked) now names both. Separately, this
+  file's claim that `install.sh`'s trap-roster comment was "already widened
+  once, in round 30, from naming only `$tmp`" was itself wrong: that
+  comment has named `$tmp`/`$tmp2`/`$gnupg`/`$uvd` since round 9 introduced
+  it; round 30 fixed a different comment entirely (`install_ffmpeg_local`'s
+  error-handling note); corrected to say `$staged` was added to the traps
+  in round 10 without a matching comment update. Also softened this file's
+  "where every other `findings.jsonl` entry lives" to "the other
+  `findings.jsonl` integrity entries live" (`CHANGELOG.md`'s `Invocation
+  contract` group holds `findings.jsonl` entries too). A fourth pair of
+  reviews found the third round's own "reworded everywhere the claim
+  appeared" was itself not quite true: this file's first-round entry
+  (above) still carried the old "report, review, and analyze's own
+  re-ingest recovery path all refuse" wording after the other three sites
+  were fixed — corrected here too. It also caught that round 2's "six"
+  recount of `adds no network dependency` instances double-counted
+  `CLAUDE.md`, a symlink to `AGENTS.md`; the distinct-file count is five.
