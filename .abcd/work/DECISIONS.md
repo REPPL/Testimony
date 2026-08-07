@@ -841,3 +841,12 @@ Architecture-shaping decisions graduate to an ADR under
   the fuller per-step comments 200 lines below). Not re-raised:
   `session-directory.md`'s `words` row omission-cause gap, already
   adjudicated and discarded on a split refuter verdict in round 31.
+  Post-hoc adversarial review of the round's own PR (correctness; docs
+  accuracy) independently caught a regression the second finding's fix
+  introduced: the sibling early-exited child's `atStartup` was sampled
+  after `stopAll`/`stopDemo`, reopening the exact slow-stop-poisons-
+  classification bug `dead`'s own pre-`stopAll` sampling exists to avoid.
+  Fixed by moving that sampling into the same pre-`stopAll` loop, with a
+  new regression test. Both reviewers' verdicts were BLOCK, so per the
+  loop's merge gate the PR (#48) stays open for the human rather than
+  auto-merging, even with the fix pushed and CI green.
