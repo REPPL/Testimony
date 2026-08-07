@@ -1,7 +1,6 @@
 package analyze
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -241,17 +240,6 @@ func validate(findings []positioned, idx timelineIndex) []error {
 		}
 	}
 	return errs
-}
-
-// Validate reports all schema violations across the findings as one joined
-// error (nil when clean). The findings are validated against the merged
-// timeline in dir.
-func Validate(dir string, findings []Finding) error {
-	entries, err := loadTimeline(dir)
-	if err != nil {
-		return err
-	}
-	return errors.Join(validate(atPositions(findings), indexTimeline(entries))...)
 }
 
 func containsAny(texts []string, sub string) bool {
