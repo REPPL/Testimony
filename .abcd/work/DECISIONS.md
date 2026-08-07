@@ -900,25 +900,47 @@ Architecture-shaping decisions graduate to an ADR under
   narrative when it captured nothing, or silently exited 0 with a
   truncated recording presented as a clean session when it left partial
   data. Fixed by factoring the pre-`stopAll` sampling both branches need
-  into a shared `sampleEarlyExits` helper, with two new regression tests.
-  Nitpicks: `session-directory.md`'s `words` row omitted that
-  empty/whitespace/invisible-only text is also dropped (re-examined for
-  present-day accuracy independent of origin — round 31 split-discarded a
-  similarly framed finding on whether round 30 introduced fresh staleness, a
-  different question, and this round's two refuters both confirmed the row
-  itself is incomplete regardless); the same page's `timeline.jsonl` table
-  had no `Required` column and did not state `t`'s (or a speech payload's
-  `t1`'s) ±1e9-second bound; and its `utt-003` example trimmed the
-  utterance text to start mid-sentence while keeping the untrimmed
-  fixture's `t0` and word times, leaving the first shown word 1.6s after
-  its own `t0` — restored the opening words so they agree again. Also
-  removed `analyze.Validate`, an exported function with zero callers
-  anywhere in the module. Refuted: a claimed round-32 regression
-  desynchronising `timeline.jsonl` from `analyze`'s emitted request via
-  HTML-escaping (one refuter proved `EmitRequest`'s output byte-identical
-  before and after round 32 — it re-decodes and re-marshals, so
-  `WriteJSONL`'s encoder choice never reaches it); an inverted
-  transcription segment span, a CI cross-compile comment's CGO-flag
-  mismatch, `cli.md`'s "ingest reads timeline.jsonl only" phrasing, and the
-  `manifest.json` example's field trimming (all four on split or unanimous
-  refuter verdicts, with no misleading or behavioural consequence found).
+  into a shared `sampleEarlyExits` helper, with two new regression tests;
+  `CHANGELOG.md` gains the matching `[Unreleased]` entry, the sibling of
+  round 32's for the recorder-exit path. A post-hoc adversarial review of
+  the round's own PR caught that one of the two new tests made both
+  `select` cases ready by construction, so it asserted on `opts.Log` alone
+  when Go's non-deterministic case choice can route the diagnosis to the
+  returned error instead — fixed to check both. The same review caught that
+  removing `analyze.Validate` (below) orphaned its sole caller-side helper,
+  `atPositions`; removed that too, along with its stale comment naming
+  `Validate`. Nitpicks: `session-directory.md`'s `words` row omitted that
+  empty/whitespace/invisible-only text is also dropped — round 31
+  split-discarded the identical finding (one refuter called the drop rule
+  pre-existing with no staleness fresh from round 30, the other found it
+  survives on the row's own precedent of documenting the equivalent
+  `text`-row cause); this round's two independent refuters, examining it
+  fresh, both reached the surviving refuter's conclusion. The same page's
+  `timeline.jsonl` table had no `Required` column and did not state `t`'s
+  (or a speech payload's `t1`'s) ±1e9-second bound — corrected using
+  `report`/`analyze`'s user-facing names rather than the internal
+  `ReadEntries` that first enforces it, matching the rest of the page. Its
+  `utt-003` example trimmed the utterance text to start mid-sentence while
+  keeping the untrimmed fixture's `t0` and word times, leaving the first
+  shown word 1.6s after its own `t0`: round 30 refuted a claim about this
+  same example's abbreviated text against the fuller fixture sentence (the
+  page's examples are established illustrative reductions, and no
+  `findings.jsonl` quote cites `utt-003`), but that reasoning doesn't reach
+  this narrower defect — the abbreviation itself is fine, the self-
+  contradiction between the shown `t0` and the shown first word's time is
+  the actual gap — so restored the opening words to agree with `t0` again,
+  matching real `merge` output's integer formatting (`"t":16`, not
+  `"t":16.0`) rather than transcript.jsonl's rounded literal. Also removed
+  `analyze.Validate`, an exported function with zero callers anywhere in
+  the module. Refuted: a claimed round-32 regression desynchronising
+  `timeline.jsonl` from `analyze`'s emitted request via HTML-escaping (one
+  refuter proved `EmitRequest`'s output byte-identical before and after
+  round 32 — it re-decodes the timeline and re-marshals, so `WriteJSONL`'s
+  encoder choice, round 32's actual change, never reaches the request an
+  operator or model is shown, even though round 32 did newly desynchronise
+  the two artefacts' own on-disk/in-source encoding on this axis); an
+  inverted transcription segment span, a CI cross-compile comment's
+  CGO-flag mismatch, `cli.md`'s "ingest reads timeline.jsonl only"
+  phrasing, and the `manifest.json` example's field trimming (all four on
+  split or unanimous refuter verdicts, with no misleading or behavioural
+  consequence found).
