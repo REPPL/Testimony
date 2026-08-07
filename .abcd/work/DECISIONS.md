@@ -886,3 +886,39 @@ Architecture-shaping decisions graduate to an ADR under
   discarded); a dangling-link nitpick in `AGENTS.md`'s abcd-managed fence
   (split verdict on whether `.abcd/rules.json` gives an indirect fix path;
   discarded as out of scope).
+- 2026-08-07 — Bug-hunt round 34: one confirmed substantive defect and four
+  confirmed nitpicks. This round's hunt ran concurrently with another
+  session's round 33 (above, PR #49) and picked the same next number before
+  either merged; renumbered to 34 on rebase, and its independent AGENTS.md
+  finding (below) dropped as a duplicate of round 33's own fix once that
+  overlap became visible. `record`'s `<-ctx.Done()` shutdown branch sampled
+  no early-exit state before `stopAll`, unlike the sibling `anyExit` branch
+  (round 32's fix): a recorder whose `done` channel closed in the
+  sub-millisecond window before the interrupt reached the select fell
+  through to `finaliseOutputs` unconditionally, either misdiagnosed via
+  `classifyMissingOutput`'s "stayed blocked on the permission prompt"
+  narrative when it captured nothing, or silently exited 0 with a
+  truncated recording presented as a clean session when it left partial
+  data. Fixed by factoring the pre-`stopAll` sampling both branches need
+  into a shared `sampleEarlyExits` helper, with two new regression tests.
+  Nitpicks: `session-directory.md`'s `words` row omitted that
+  empty/whitespace/invisible-only text is also dropped (re-examined for
+  present-day accuracy independent of origin — round 31 split-discarded a
+  similarly framed finding on whether round 30 introduced fresh staleness, a
+  different question, and this round's two refuters both confirmed the row
+  itself is incomplete regardless); the same page's `timeline.jsonl` table
+  had no `Required` column and did not state `t`'s (or a speech payload's
+  `t1`'s) ±1e9-second bound; and its `utt-003` example trimmed the
+  utterance text to start mid-sentence while keeping the untrimmed
+  fixture's `t0` and word times, leaving the first shown word 1.6s after
+  its own `t0` — restored the opening words so they agree again. Also
+  removed `analyze.Validate`, an exported function with zero callers
+  anywhere in the module. Refuted: a claimed round-32 regression
+  desynchronising `timeline.jsonl` from `analyze`'s emitted request via
+  HTML-escaping (one refuter proved `EmitRequest`'s output byte-identical
+  before and after round 32 — it re-decodes and re-marshals, so
+  `WriteJSONL`'s encoder choice never reaches it); an inverted
+  transcription segment span, a CI cross-compile comment's CGO-flag
+  mismatch, `cli.md`'s "ingest reads timeline.jsonl only" phrasing, and the
+  `manifest.json` example's field trimming (all four on split or unanimous
+  refuter verdicts, with no misleading or behavioural consequence found).
