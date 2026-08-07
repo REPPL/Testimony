@@ -1,7 +1,6 @@
 package analyze
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -111,17 +110,6 @@ func indexTimeline(entries []timeline.Entry) timelineIndex {
 type positioned struct {
 	finding Finding
 	at      int
-}
-
-// atPositions pairs each finding with its own ordinal, for callers (Validate)
-// whose findings did not come from a partially-decoded answer and so are
-// already in answer order.
-func atPositions(findings []Finding) []positioned {
-	out := make([]positioned, len(findings))
-	for i, f := range findings {
-		out[i] = positioned{finding: f, at: i + 1}
-	}
-	return out
 }
 
 // findingLabel names a finding in an error message: its own id when that id is
@@ -241,17 +229,6 @@ func validate(findings []positioned, idx timelineIndex) []error {
 		}
 	}
 	return errs
-}
-
-// Validate reports all schema violations across the findings as one joined
-// error (nil when clean). The findings are validated against the merged
-// timeline in dir.
-func Validate(dir string, findings []Finding) error {
-	entries, err := loadTimeline(dir)
-	if err != nil {
-		return err
-	}
-	return errors.Join(validate(atPositions(findings), indexTimeline(entries))...)
 }
 
 func containsAny(texts []string, sub string) bool {

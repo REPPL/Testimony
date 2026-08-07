@@ -540,6 +540,15 @@ Capture integrity:
   through `classifyMissingOutput`'s "stayed blocked on the permission
   prompt" narrative — disproved by its own exit — with its real exit status
   never surfaced.
+- **Behaviour:** `record`'s Ctrl+C shutdown path now diagnoses a recorder
+  that exited on its own moments before the interrupt arrived, the sibling
+  case to the one above for the interrupt path rather than the recorder-exit
+  path: it used to fall through to the same missing-output sweep as a
+  normally-stopped recorder, either printing `classifyMissingOutput`'s
+  "stayed blocked on the permission prompt" narrative for a recorder that
+  had already exited and captured nothing, or — for a recorder that left a
+  partial artefact — exiting 0 with no word that capture had ended early,
+  presenting a truncated recording as a clean session.
 
 ## [0.4.0] - 2026-07-24
 

@@ -592,6 +592,104 @@ func TestEarlyRecorderExitDoesNotDoubleDiagnoseWithTwoRecorders(t *testing.T) {
 	}
 }
 
+// TestCtrlCDiagnosesRecorderThatSelfExitedWithNoOutput is the ctx.Done()
+// sibling of TestEarlyRecorderExitDoesNotDoubleDiagnose: a recorder that
+// exits on its own an instant before the interrupt signal arrives must get
+// the same classifyRecorderExit diagnosis a self-exit gets when anyExit's
+// select observes it directly, not classifyMissingOutput's "stayed blocked
+// on the permission prompt" narrative — disproved by the very exit that left
+// no output — and Run must still exit non-zero. Pre-fix, the ctx.Done()
+// branch sampled no early-exit state at all, so a recorder already reaped by
+// the time the interrupt arrived fell straight through to finaliseOutputs and
+// was misdiagnosed exactly as if it had stayed blocked on the prompt for the
+// whole session.
+func TestCtrlCDiagnosesRecorderThatSelfExitedWithNoOutput(t *testing.T) {
+	origNotify, origStart := notifyContext, startRecordersFn
+	t.Cleanup(func() { notifyContext, startRecordersFn = origNotify, origStart })
+
+	var cancel context.CancelFunc
+	notifyContext = func() (context.Context, context.CancelFunc) {
+		ctx, c := context.WithCancel(context.Background())
+		cancel = c
+		return ctx, c
+	}
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
+		// The recorder dies on its own having captured nothing — a TCC denial —
+		// and is fully reaped before the interrupt arrives.
+		mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+		_ = mic.p.Signal(syscall.SIGINT)
+		<-mic.done
+		// The interrupt fires only once the recorder has already exited, so
+		// Run's select sees both cases ready — the scenario under test.
+		cancel()
+		return []*liveChild{mic}, nil
+	}
+
+	var log bytes.Buffer
+	err := Run(Options{Out: t.TempDir(), GOOS: "darwin", Log: &log})
+	if err == nil {
+		t.Fatal("a recorder that self-exited before the interrupt must still make Run exit non-zero")
+	}
+	out := log.String()
+	if strings.Contains(out, "stayed blocked on the permission prompt") {
+		t.Fatalf("the self-exited recorder was diagnosed through classifyMissingOutput, contradicting its own exit: %q", out)
+	}
+	if !strings.Contains(out, "Next:") {
+		t.Fatalf("the next-command block must still print: %q", out)
+	}
+}
+
+// TestCtrlCDiagnosesRecorderThatSelfExitedWithPartialOutput is the ctx.Done()
+// sibling of TestEarlyRecorderExitStillFinalisesAndPrintsNext: a recorder that
+// self-exits leaving a usable partial audio.wav (a mid-session device loss)
+// an instant before the interrupt arrives must still make Run exit non-zero
+// and print the recorder's own diagnosis, offering the partial audio for
+// transcription. Pre-fix, the ctx.Done() branch's finaliseOutputs saw the
+// file, set audioReady, appended no problem, and Run returned nil — a
+// truncated recording presented as a clean session with no word that capture
+// ended early.
+func TestCtrlCDiagnosesRecorderThatSelfExitedWithPartialOutput(t *testing.T) {
+	origNotify, origStart := notifyContext, startRecordersFn
+	t.Cleanup(func() { notifyContext, startRecordersFn = origNotify, origStart })
+
+	var cancel context.CancelFunc
+	notifyContext = func() (context.Context, context.CancelFunc) {
+		ctx, c := context.WithCancel(context.Background())
+		cancel = c
+		return ctx, c
+	}
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
+		if err := os.WriteFile(filepath.Join(dir, session.AudioFile), []byte("RIFF...."), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+		_ = mic.p.Signal(syscall.SIGINT)
+		<-mic.done
+		cancel()
+		return []*liveChild{mic}, nil
+	}
+
+	var log bytes.Buffer
+	err := Run(Options{Out: t.TempDir(), GOOS: "darwin", Log: &log})
+	if err == nil {
+		t.Fatal("a recorder that self-exited mid-session before the interrupt must still make Run exit non-zero, not present a truncated recording as a clean session")
+	}
+	out := log.String()
+	// Cancelling inside startRecordersFn, after the child is already reaped,
+	// makes both select cases ready at once: Go's select picks between them
+	// uniformly at random, not deterministically. When anyExit wins, dead's
+	// diagnosis is returned as the error rather than written to opts.Log (the
+	// ctxEarly loop that would print it never runs), so the diagnosis must be
+	// looked for in whichever of the two actually carries it.
+	combined := out + "\n" + err.Error()
+	if !strings.Contains(combined, "capture stopped unexpectedly") && !strings.Contains(combined, "capture failed to start") {
+		t.Fatalf("the operator was never told the recorder exited on its own: log=%q err=%q", out, err)
+	}
+	if !strings.Contains(out, "testimony transcribe") {
+		t.Fatalf("the partial audio.wav was not offered for transcription: %q", out)
+	}
+}
+
 // TestEarlyRecorderExitTwoRecordersClassifiesStartupExitDespiteSlowDemoStop is
 // the two-recorder sibling of TestRunClassifiesStartupExitDespiteSlowStop:
 // dead's own start-up classification is sampled before stopAll/stopDemo run
