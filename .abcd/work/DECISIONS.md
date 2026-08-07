@@ -944,3 +944,45 @@ Architecture-shaping decisions graduate to an ADR under
   phrasing, and the `manifest.json` example's field trimming (all four on
   split or unanimous refuter verdicts, with no misleading or behavioural
   consequence found).
+- 2026-08-07 — Bug-hunt round 35: one confirmed substantive defect, three
+  nitpicks. `analyze.oversizedFindings` bounded a single finding's
+  `findings.jsonl` line against `session.MaxJSONLLine` but never the sum
+  across an answer's findings, unlike `WriteJSONL`'s two callers
+  (transcript.jsonl, timeline.jsonl): a set of individually valid findings
+  could still serialise to a file over `session.MaxJSONLBytes` that
+  `report`, `review`, and `analyze`'s own re-ingest recovery path all refuse
+  to read back, with `Ingest` reporting success at the moment it wrote the
+  unreadable file. `oversizedFindings` now also accumulates and refuses an
+  over-total set before any write, joining the existing transactional error
+  set; the `WriteJSONL` doc comment, which had documented findings.jsonl as
+  lacking this write-side pre-flight, is corrected to name where it now
+  lives. Nitpicks fixed: `session-directory.md`'s `report.md` `MM:SS`
+  description didn't note the leading `-` a time preceding `sessionStart`
+  renders with; `install.sh`'s trap-roster comment (already widened once, in
+  round 30, from naming only `$tmp`) still didn't name `$staged`, the binary
+  staged into `INSTALL_DIR` ahead of the atomic rename, the one cleanup
+  target that touches the user's install directory rather than a temp dir;
+  `analyse-a-session.md` said "the CLI ... reaches no network", the sole
+  outlier of the repo's five other "adds no network dependency" instances
+  and, read literally as unscoped, contradicted by `demo`'s CDN-loaded rrweb
+  recorder and the ASR engine's model fetch — reworded to name `analyze` and
+  match the canonical phrasing, as rounds 26 and 27 did for the same
+  overreach on other pages. Caught before verification: a fresh hunt for
+  `report.eventLine`'s `orDash` fallback resurfaced the identical
+  unreachable-branch claim round 28 explicitly rejected as a deliberate
+  locally-redundant guard and round 33 had to revert a reintroduced removal
+  of — checking round 33's own entry against the fix before verification
+  showed the precedent, and the removal was not repeated. Refuted (all on
+  unanimous or split adversarial verdicts): a claimed answer-vs-timeline
+  quote/selector mismatch from `EmitRequest`'s `json.Marshal` HTML-escaping
+  (re-raised independently of round 34's identical refutation of the same
+  claim — both refuters this round decoded the escape and reproduced a
+  validated ingest); `transcribe.checkEntriesFit` lacking a total-size
+  counterpart to its per-line check (transcribe cannot see interactions.jsonl,
+  so the total is `merge`'s invariant to hold, not transcribe's, and
+  `WriteJSONL` already caps transcript.jsonl's own total); `AGENTS.md`'s
+  "every push and pull request" omitting `merge_group` and tag pushes
+  (`ci.yml`'s own header uses the identical phrasing, and AGENTS.md never
+  discusses the release workflow tag pushes go through); and the
+  `manifest.json` example's field trimming, re-raised independently of round
+  34's identical refutation of the same claim.
