@@ -528,8 +528,8 @@ func ReadJSONL[T any](path string) ([]T, error) {
 // review.AppendVerdict write it through their own locked descriptors instead,
 // so neither can share this pre-flight. analyze.oversizedFindings gives the
 // commitFindings write path the matching MaxJSONLLine/MaxJSONLBytes checks
-// ParseRecords (its read side) enforces; AppendVerdict, which only appends one
-// already-small verdict record, still holds just the per-line bound.
+// ParseRecords (its read side) enforces; AppendVerdict, which appends one
+// verdict record at a time, still holds just the per-line bound.
 func WriteJSONL[T any](path string, values []T) error {
 	// Encode into one reusable buffer so the pre-flight pass holds a single
 	// record, not the whole file, in memory.

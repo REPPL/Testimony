@@ -963,7 +963,7 @@ Architecture-shaping decisions graduate to an ADR under
   staged into `INSTALL_DIR` ahead of the atomic rename, the one cleanup
   target that touches the user's install directory rather than a temp dir;
   `analyse-a-session.md` said "the CLI ... reaches no network", the sole
-  outlier of the repo's four other "adds no network dependency" instances
+  outlier of the repo's six other "adds no network dependency" instances
   and, read literally as unscoped, contradicted by `demo`'s CDN-loaded rrweb
   recorder and the ASR engine's model fetch — reworded to name `analyze` and
   match the canonical phrasing, as rounds 26 and 27 did for the same
@@ -1006,7 +1006,7 @@ Architecture-shaping decisions graduate to an ADR under
   default HTML-escaping JSON encoder, so a quote or evidence id containing
   `<`, `>`, or `&` inflates roughly sixfold between the answer's raw bytes
   and the line actually measured/written — five findings quoting a
-  ~600,000-byte run of `<` encode to ~18 MiB written from a ~3 MiB answer,
+  ~600,000-byte run of `<` encode to ~17 MiB written from a ~3 MiB answer,
   under a fifth of the read-side cap. Added `TestIngestRejectsOversizedFindingsTotal`
   to exercise that path end-to-end and corrected the unit test's comment.
   Also fixed two nitpicks the same review raised: the total-size error
@@ -1014,4 +1014,19 @@ Architecture-shaping decisions graduate to an ADR under
   excludes any already flagged as over-long, so the two numbers disagreed
   whenever both errors fired in the same answer; and `total` was `int`
   where its sibling `WriteJSONL` uses `int64` (unreachable overflow given
-  `maxAnswerBytes`, but inconsistent).
+  `maxAnswerBytes`, but inconsistent). A second pair of post-fix reviews
+  caught that the `CHANGELOG.md` move landed one group short —
+  `Invocation contract`, the group directly before `Capture integrity`, not
+  `Evidence integrity` four groups earlier, which both reviewers had to
+  re-derive from the file's actual headings rather than trust the first
+  round's own description of its fix; moved to the right group this time.
+  Also fixed: the "four other" `adds no network dependency` count was
+  itself wrong (a naive single-line grep misses instances the phrase wraps
+  across; the real count, checked by hand, is six); two `~18 MiB` figures
+  (the new test's comment and this file's own entry) were decimal-MB
+  numbers under a MiB label, corrected to `~17 MiB`; `session.go`'s
+  `AppendVerdict` description called the verdict record it appends
+  "already-small", contradicted by `review.go`'s own comment on why that
+  record's size is checked at all; and the `MM:SS` sign note didn't say a
+  time that rounds to zero renders unsigned, or that "this page" meant
+  `report.md` rather than the reference page carrying the note.

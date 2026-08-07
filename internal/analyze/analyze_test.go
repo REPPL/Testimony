@@ -960,7 +960,7 @@ func TestOversizedFindingsRejectsOversizedTotal(t *testing.T) {
 // inflates roughly sixfold — one raw byte in the answer becomes a six-byte
 // \uXXXX escape in the line oversizedFindings measures and writeFindings
 // would persist. Five findings each quoting a ~600,000-byte run of '<' encode
-// to ~18 MiB once written, comfortably over the 16 MiB MaxJSONLBytes total,
+// to ~17 MiB once written, comfortably over the 16 MiB MaxJSONLBytes total,
 // from a ~3 MiB answer — under a fifth of maxAnswerBytes, so the read-side
 // cap cannot be relied on to keep this path from ever executing.
 func TestIngestRejectsOversizedFindingsTotal(t *testing.T) {
