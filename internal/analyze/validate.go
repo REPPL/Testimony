@@ -112,17 +112,6 @@ type positioned struct {
 	at      int
 }
 
-// atPositions pairs each finding with its own ordinal, for callers (Validate)
-// whose findings did not come from a partially-decoded answer and so are
-// already in answer order.
-func atPositions(findings []Finding) []positioned {
-	out := make([]positioned, len(findings))
-	for i, f := range findings {
-		out[i] = positioned{finding: f, at: i + 1}
-	}
-	return out
-}
-
 // findingLabel names a finding in an error message: its own id when that id is
 // well-formed, and otherwise its position in the answer, which is the only
 // handle the operator has on a finding whose id is unusable. Both the schema
