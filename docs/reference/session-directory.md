@@ -95,7 +95,7 @@ The merged record — one entry per line, speech and interface events on the sha
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `t` | number | yes | entry time, session-relative seconds; must not exceed 1e9 seconds in magnitude (`ReadEntries` refuses otherwise; `merge` never writes past this bound) |
+| `t` | number | yes | entry time, session-relative seconds; must not exceed 1e9 seconds in magnitude (`report` and `analyze` refuse otherwise; `merge` never writes past this bound) |
 | `src` | string | yes | `"speech"` or `"event"` (a closed set: `report` and `analyze` refuse any other value); entry ids must be unique for `analyze`, which resolves cited evidence by id |
 | `id` | string | yes | `utt-NNN` (from the transcript) or `ev-NNN` (assigned at merge, in input order) |
 | `payload` | object | yes | source-dependent, see below |
@@ -105,7 +105,7 @@ Speech payload (`src: "speech"`; `t` is the utterance's `t0`): `t1` (also bounde
 Event payload (`src: "event"`): `kind`, plus `selector`, `text`, `value`, and `route` — each only when non-empty in the interaction.
 
 ```json
-{"t":16,"src":"speech","id":"utt-003","payload":{"speaker":"P1","t1":21,"text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16.0},{"w":"feels","t":16.42}]}}
+{"t":16,"src":"speech","id":"utt-003","payload":{"speaker":"P1","t1":21,"text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16},{"w":"feels","t":16.42}]}}
 {"t":19.2,"src":"event","id":"ev-003","payload":{"kind":"click","route":"#general","selector":"[data-testid=save-btn]","text":"Save"}}
 ```
 
