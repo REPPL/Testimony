@@ -70,10 +70,10 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 | `t1` | number | yes | utterance end, session-relative seconds; defaults to `t0` when absent or earlier than `t0`, and otherwise must not exceed 1e9 seconds in magnitude (`merge` refuses) |
 | `speaker` | string | no | speaker label; `"P1"` when the engine supplies no diarisation |
 | `text` | string | yes | utterance text, whitespace-trimmed (segments that are empty, whitespace-only, or invisible-only Unicode are dropped) |
-| `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — words the aligner could not time, or whose time is implausible (non-finite, or beyond ±1e9 seconds) either as engine-reported (before the session offset is added) or after adding the offset, are omitted |
+| `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — a word is omitted if the aligner could not time it, if its time is implausible (non-finite, or beyond ±1e9 seconds) either as engine-reported (before the session offset is added) or after adding the offset, or if its text is empty, whitespace-only, or invisible-only Unicode |
 
 ```json
-{"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Now I expect this save button to confirm somehow.","words":[{"w":"Now","t":17.6},{"w":"I","t":17.92}]}
+{"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16.0},{"w":"feels","t":16.42}]}
 ```
 
 ## `audio.offset.json`
@@ -93,19 +93,19 @@ One raw [rrweb](https://github.com/rrweb-io/rrweb) event per line, exactly as em
 
 The merged record — one entry per line, speech and interface events on the shared session-relative clock, stably sorted by `t`. This is the single artefact the report (and any later analysis) consumes.
 
-| Field | Type | Meaning |
-|---|---|---|
-| `t` | number | entry time, session-relative seconds |
-| `src` | string | `"speech"` or `"event"` (a closed set: `report` and `analyze` refuse any other value); entry ids must be unique for `analyze`, which resolves cited evidence by id |
-| `id` | string | `utt-NNN` (from the transcript) or `ev-NNN` (assigned at merge, in input order) |
-| `payload` | object | source-dependent, see below |
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `t` | number | yes | entry time, session-relative seconds; must not exceed 1e9 seconds in magnitude (`ReadEntries` refuses otherwise; `merge` never writes past this bound) |
+| `src` | string | yes | `"speech"` or `"event"` (a closed set: `report` and `analyze` refuse any other value); entry ids must be unique for `analyze`, which resolves cited evidence by id |
+| `id` | string | yes | `utt-NNN` (from the transcript) or `ev-NNN` (assigned at merge, in input order) |
+| `payload` | object | yes | source-dependent, see below |
 
-Speech payload (`src: "speech"`; `t` is the utterance's `t0`): `t1`, `speaker`, `text`, and `words` when present in the transcript.
+Speech payload (`src: "speech"`; `t` is the utterance's `t0`): `t1` (also bounded to ±1e9 seconds in magnitude), `speaker`, `text`, and `words` when present in the transcript.
 
 Event payload (`src: "event"`): `kind`, plus `selector`, `text`, `value`, and `route` — each only when non-empty in the interaction.
 
 ```json
-{"t":16,"src":"speech","id":"utt-003","payload":{"speaker":"P1","t1":21,"text":"Now I expect this save button to confirm somehow.","words":[{"w":"Now","t":17.6},{"w":"I","t":17.92}]}}
+{"t":16,"src":"speech","id":"utt-003","payload":{"speaker":"P1","t1":21,"text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16.0},{"w":"feels","t":16.42}]}}
 {"t":19.2,"src":"event","id":"ev-003","payload":{"kind":"click","route":"#general","selector":"[data-testid=save-btn]","text":"Save"}}
 ```
 
