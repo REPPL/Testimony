@@ -907,6 +907,50 @@ func TestIngestOversizedFindingLeavesPriorFileIntact(t *testing.T) {
 	}
 }
 
+// TestOversizedFindingsRejectsOversizedTotal is the whole-file counterpart to
+// TestIngestRejectsOversizedFindingLine: session.MaxJSONLLine bounds one
+// finding's line, but nothing bounded the sum across an answer's findings, so
+// a set of individually valid findings could still serialise to a
+// findings.jsonl over session.MaxJSONLBytes — the same total WriteJSONL's two
+// callers are held to, but findings.jsonl's own locked-descriptor writer was
+// not. Pre-fix commitFindings wrote it and Ingest reported success, leaving
+// report, review, and the re-ingest recovery path unable to read the file
+// back. Tested against oversizedFindings directly (as
+// TestWriteFindingsRollsBackOnWriteError tests writeFindings), not through
+// Ingest: Ingest's own maxAnswerBytes read cap equals MaxJSONLBytes, so an
+// answer large enough to make the file exceed it would already be refused at
+// the read stage rather than exercising this check. Six findings, each ~3.5
+// MiB (under the 4 MiB line cap) via 64 citations of one long id, sum to ~21
+// MiB (over the 16 MiB file cap).
+func TestOversizedFindingsRejectsOversizedTotal(t *testing.T) {
+	longID := "utt-" + strings.Repeat("x", 55000)
+	var findings []Finding
+	var decoded []positioned
+	for i := 1; i <= 6; i++ {
+		ev := make([]string, 64)
+		for j := range ev {
+			ev[j] = longID
+		}
+		f := Finding{
+			ID: fmt.Sprintf("F-%03d", i), T: 22, Type: "bug", Severity: 3,
+			Quote: "I clicked save and nothing happened", Evidence: ev, Status: "unverified",
+		}
+		findings = append(findings, f)
+		decoded = append(decoded, positioned{finding: f, at: i})
+	}
+
+	errs := oversizedFindings(findings, decoded)
+	joined := errors.Join(errs...)
+	if joined == nil || !strings.Contains(joined.Error(), "file limit") {
+		t.Fatalf("expected a total-size refusal naming the file limit, got %v", joined)
+	}
+	for _, err := range errs {
+		if strings.Contains(err.Error(), "F-001:") {
+			t.Fatalf("the total-size refusal was attributed to one finding rather than the file: %v", err)
+		}
+	}
+}
+
 // TestIngestGuardAndWriteAreOneLockedStep is the TOCTOU regression for the
 // verdict guard. Pre-fix, Ingest probed for verdicts and then rewrote
 // findings.jsonl as two separate, lock-free opens, so a concurrent `testimony

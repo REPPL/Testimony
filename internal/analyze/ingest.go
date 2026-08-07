@@ -241,17 +241,25 @@ func writeFindings(f findingsFile, findings []Finding) error {
 
 // oversizedFindings reports any finding whose findings.jsonl line — its JSON
 // encoding plus the newline WriteJSONL appends — would exceed
-// session.MaxJSONLLine, the shared invariant every reader scans to. maxEvidence
-// bounds how many ids a finding may cite, but nothing bounds the length of a
-// verbatim quote, so a finding with a perfectly valid evidence array and an
-// enormous quote still serialises to a line no reader can take back: report,
-// review, and the re-ingest recovery path would all fail on the file Ingest had
-// just reported writing successfully. The check therefore runs before any write
-// and joins the transactional error set, so an over-long finding leaves the
-// previous findings.jsonl untouched rather than bricking it. Labels come from
-// each finding's answer position for the same reason validate's do.
+// session.MaxJSONLLine, the shared invariant every reader scans to, and also
+// refuses an answer whose findings would together exceed session.MaxJSONLBytes
+// once written. maxEvidence bounds how many ids a finding may cite, but
+// nothing bounds the length of a verbatim quote or the number of findings in
+// an answer, so a set of individually valid findings can still serialise to a
+// findings.jsonl no reader can take back: report, review, and the re-ingest
+// recovery path would all fail on the file Ingest had just reported writing
+// successfully. Both checks run before any write and join the transactional
+// error set, so an oversized answer leaves the previous findings.jsonl
+// untouched rather than bricking it — the write-side pre-flight WriteJSONL's
+// two callers get, which findings.jsonl otherwise lacks because
+// commitFindings writes it through its own locked descriptor rather than
+// WriteJSONL. Labels come from each finding's answer position for the same
+// reason validate's do; a line already flagged as over-long is excluded from
+// the total so one oversized finding cannot also trigger a redundant
+// total-size error.
 func oversizedFindings(findings []Finding, decoded []positioned) []error {
 	var errs []error
+	var total int
 	for i, f := range findings {
 		label := findingLabel(f, decoded[i].at)
 		line, err := json.Marshal(f)
@@ -259,9 +267,15 @@ func oversizedFindings(findings []Finding, decoded []positioned) []error {
 			errs = append(errs, fmt.Errorf("%s: cannot encode as JSON: %w", label, err))
 			continue
 		}
-		if len(line)+1 > session.MaxJSONLLine {
-			errs = append(errs, fmt.Errorf("%s: encodes to %d bytes, exceeding the %d-byte %s line limit", label, len(line)+1, session.MaxJSONLLine, session.FindingsFile))
+		lineLen := len(line) + 1
+		if lineLen > session.MaxJSONLLine {
+			errs = append(errs, fmt.Errorf("%s: encodes to %d bytes, exceeding the %d-byte %s line limit", label, lineLen, session.MaxJSONLLine, session.FindingsFile))
+			continue
 		}
+		total += lineLen
+	}
+	if total > session.MaxJSONLBytes {
+		errs = append(errs, fmt.Errorf("findings encode to %d bytes across %d findings, exceeding the %d-byte %s file limit ReadJSONL/ParseRecords enforce; refusing to write a session no command could read back", total, len(findings), session.MaxJSONLBytes, session.FindingsFile))
 	}
 	return errs
 }

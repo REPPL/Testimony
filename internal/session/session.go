@@ -525,9 +525,10 @@ func ReadJSONL[T any](path string) ([]T, error) {
 // small structs; a durably unreadable session is the worse trade.
 //
 // findings.jsonl never passes through here: analyze.commitFindings and
-// review.AppendVerdict write it through their own locked descriptors, so
-// ParseRecords (its read side) enforces MaxJSONLLine/MaxJSONLBytes without a
-// matching write-side pre-flight check.
+// review.AppendVerdict write it through their own locked descriptors instead,
+// so it cannot share this pre-flight; analyze.oversizedFindings gives it the
+// matching MaxJSONLLine/MaxJSONLBytes checks ParseRecords (its read side)
+// enforces.
 func WriteJSONL[T any](path string, values []T) error {
 	// Encode into one reusable buffer so the pre-flight pass holds a single
 	// record, not the whole file, in memory.
