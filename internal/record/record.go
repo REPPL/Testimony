@@ -243,6 +243,30 @@ func Run(opts Options) error {
 		// unexpected mid-session stop and the operator was sent looking for a
 		// device fault instead of the permission they had never granted.
 		atStartup := time.Since(dead.started) < startupWindow
+		// Other children may have exited on their own at the same moment as
+		// dead: anyExit's channel is buffered to len(children), so a second
+		// self-exit sent before this select fired is already sitting there,
+		// unread, the instant this case runs. Both the exit itself and its
+		// start-up-window classification are sampled now, before stopAll's
+		// SIGINT reaches them: after that, a live recorder's own clean
+		// shutdown becomes indistinguishable from a dead one's self-exit, and
+		// stopAll's own wait — up to stopGrace per remaining child, which
+		// alone equals startupWindow — would charge the shutdown against a
+		// second early exit's classification exactly as it would have
+		// against dead's, the mistake atStartup above exists to avoid.
+		early := map[*liveChild]bool{dead: true}
+		atStartupOf := map[*liveChild]bool{dead: atStartup}
+		for _, c := range children {
+			if c == dead {
+				continue
+			}
+			select {
+			case <-c.done:
+				early[c] = true
+				atStartupOf[c] = time.Since(c.started) < startupWindow
+			default:
+			}
+		}
 		stopAll(children)
 		stopDemo(srv)
 		// An early exit is reported the same way as a recorder that produced
@@ -253,26 +277,44 @@ func Run(opts Options) error {
 		// this the operator got the classification but no word on whether the
 		// artefacts are usable or what to run next.
 		//
-		// The dead recorder is excluded from the artefact sweep: its story is
-		// the classification returned below, and classifyMissingOutput's
-		// stayed-blocked-on-the-prompt narrative is disproved by the very exit
-		// that brought us here — running both printed two mutually exclusive
-		// diagnoses (and the stderr tail twice) in one run. Its artefact still
-		// counts towards the Next block.
+		// Every early-exited child is excluded from the artefact sweep: each
+		// one's story is a classifyRecorderExit call below, and
+		// classifyMissingOutput's stayed-blocked-on-the-prompt narrative is
+		// disproved by the very exit that brought it here — running both
+		// printed mutually exclusive diagnoses (and the stderr tail twice) for
+		// the same recorder. Excluding only the single child anyExit's select
+		// happened to pick left a second, equally self-exited child routed
+		// through classifyMissingOutput regardless — misdiagnosed as still
+		// blocked on a permission prompt it had already failed past, with its
+		// own exit status never surfaced at all. Their artefacts still count
+		// towards the Next block.
 		others := make([]*liveChild, 0, len(children))
 		for _, c := range children {
-			if c != dead {
+			if !early[c] {
 				others = append(others, c)
 			}
 		}
 		audioReady, problems := finaliseOutputs(dir, others)
-		if dead.stream == streamMicrophone {
-			if fi, err := os.Stat(expectedOutput(dir, dead.stream)); err == nil && fi.Size() > 0 {
-				audioReady = true
+		for c := range early {
+			if c.stream == streamMicrophone {
+				if fi, err := os.Stat(expectedOutput(dir, c.stream)); err == nil && fi.Size() > 0 {
+					audioReady = true
+				}
 			}
 		}
 		for _, p := range problems {
 			fmt.Fprintf(opts.Log, "\n%s\n", p)
+		}
+		// dead's own diagnosis is the error Run returns below; every other
+		// early-exited child gets the same honest diagnosis here instead,
+		// since only one classification can be the command's single exit
+		// error. atStartupOf[c] carries each child's pre-stopAll sampling, so
+		// this diagnosis is exactly as accurate as dead's own.
+		for _, c := range children {
+			if c == dead || !early[c] {
+				continue
+			}
+			fmt.Fprintf(opts.Log, "\n%s\n", classifyRecorderExit(c.stream, c.err, c.stderr.tail(), atStartupOf[c]))
 		}
 		fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioReady, capturePossible))
 		return errors.New(classifyRecorderExit(dead.stream, dead.err, dead.stderr.tail(), atStartup))

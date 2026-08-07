@@ -414,6 +414,33 @@ func SafeTextLines(s string) string {
 // accept a line no reader can take back.
 const MaxJSONLLine = 4 << 20 // 4 MiB
 
+// jsonlEncoder returns a json.Encoder configured exactly as WriteJSONL's own
+// encoders are, so a size measured against it predicts what WriteJSONL will
+// later check and write. HTML escaping is disabled: JSONL artefacts are never
+// embedded in HTML, and escaping turns a literal <, >, or & into a six-byte
+// \uXXXX sequence — inflation compactLine (the capture-side line canonicaliser)
+// never applies, so a record sized against an escaping encoder could pass a
+// capture-time guard and still be rejected once WriteJSONL re-encodes it.
+func jsonlEncoder(w io.Writer) *json.Encoder {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	return enc
+}
+
+// EncodedLen returns the byte length WriteJSONL would give v as one JSONL
+// line, including its terminating newline. It exists so a capture-time guard
+// can check a value it is about to hand to a later WriteJSONL call — such as
+// the timeline entry a captured interaction or utterance will become at merge
+// — against the same measurement WriteJSONL's own pre-flight pass makes,
+// rather than against the differently-shaped record it received.
+func EncodedLen(v any) (int, error) {
+	var buf bytes.Buffer
+	if err := jsonlEncoder(&buf).Encode(v); err != nil {
+		return 0, err
+	}
+	return buf.Len(), nil
+}
+
 // ReadJSONL decodes a JSON-Lines file into a slice of T. Blank lines are
 // skipped. A missing file is an error; an empty file yields an empty slice.
 func ReadJSONL[T any](path string) ([]T, error) {
@@ -471,7 +498,7 @@ func WriteJSONL[T any](path string, values []T) error {
 	// Encode into one reusable buffer so the pre-flight pass holds a single
 	// record, not the whole file, in memory.
 	var buf bytes.Buffer
-	check := json.NewEncoder(&buf)
+	check := jsonlEncoder(&buf)
 	for i, v := range values {
 		buf.Reset()
 		if err := check.Encode(v); err != nil {
@@ -482,8 +509,11 @@ func WriteJSONL[T any](path string, values []T) error {
 		// hold the record *and* its terminator to find the line end, so a record
 		// is readable when its bytes including the newline fit within the limit —
 		// one byte less payload than the constant's face value. demo's
-		// tooLongForJSONL draws the boundary on the same side, so the capture and
-		// artefact writers accept exactly the same set of records.
+		// tooLongForJSONL draws the boundary on the same side for the record it
+		// receives, but merge later re-frames that record into a timeline entry
+		// (see timeline.EventEntry / SpeechEntry) that this same check applies to
+		// again — the capture guards call those builders and EncodedLen so a
+		// record accepted at capture time is guaranteed to still fit once wrapped.
 		if buf.Len() > MaxJSONLLine {
 			// 1-based, and named as a line of the file being written: the caller's
 			// slice is already merged and time-sorted, so a 0-based slice index
@@ -499,7 +529,7 @@ func WriteJSONL[T any](path string, values []T) error {
 	}
 
 	w := bufio.NewWriter(f)
-	enc := json.NewEncoder(w)
+	enc := jsonlEncoder(w)
 	for _, v := range values {
 		if err := enc.Encode(v); err != nil {
 			f.Close()

@@ -281,6 +281,51 @@ func TestMapSegmentsRefusesOversizedSum(t *testing.T) {
 	}
 }
 
+// TestCheckEntriesFitRefusesUnmergeableEntry is the speech-path regression for
+// the same invariant demo's interaction endpoint enforces: an utterance small
+// enough for transcript.jsonl's own line limit can still have a timeline entry
+// that overflows it, because merge's src/id/payload envelope adds bytes the
+// utterance's own encoding never carries. Pre-fix, transcribe wrote such a
+// transcript.jsonl at exit 0 and merge refused it, unrecoverably, one command
+// later. The padding is sized from the production encoder rather than a
+// hardcoded byte count, so the test keeps meaning if the struct or envelope
+// shape ever changes.
+func TestCheckEntriesFitRefusesUnmergeableEntry(t *testing.T) {
+	base := timeline.Utterance{ID: "utt-1", T0: 0, T1: 1}
+	baseLen, err := session.EncodedLen(base)
+	if err != nil {
+		t.Fatalf("EncodedLen: %v", err)
+	}
+	baseWrapped, err := session.EncodedLen(timeline.SpeechEntry(base))
+	if err != nil {
+		t.Fatalf("EncodedLen: %v", err)
+	}
+	overhead := baseWrapped - baseLen
+	if overhead <= 0 {
+		t.Fatalf("wrapping an utterance into a timeline entry must add bytes, got a %d-byte delta", overhead)
+	}
+
+	// Grow Text so the utterance's own encoding lands exactly at the line
+	// limit — still accepted on its own — leaving no room for the envelope
+	// SpeechEntry adds on top.
+	u := base
+	u.Text = strings.Repeat("a", session.MaxJSONLLine-baseLen)
+	ownLen, err := session.EncodedLen(u)
+	if err != nil || ownLen != session.MaxJSONLLine {
+		t.Fatalf("test setup: want the utterance itself to land at exactly %d bytes, got %d, err %v", session.MaxJSONLLine, ownLen, err)
+	}
+	if err := checkEntriesFit([]timeline.Utterance{u}); err == nil {
+		t.Fatalf("an utterance whose timeline entry overflows the line limit once wrapped must be refused")
+	}
+
+	// Shrunk by the envelope's own overhead, the wrapped entry lands exactly
+	// at the line limit again: accepted.
+	u.Text = strings.Repeat("a", session.MaxJSONLLine-baseLen-overhead)
+	if err := checkEntriesFit([]timeline.Utterance{u}); err != nil {
+		t.Fatalf("an utterance whose timeline entry fits the line limit must be accepted, got %v", err)
+	}
+}
+
 // TestMapSegmentsDropsOversizedWordKeepsSegment is the word-level sibling of
 // the sum-bound test above, pinning the DROP-not-refuse policy: an implausible
 // word time costs only word-level detail, matching the policy

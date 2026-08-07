@@ -549,6 +549,117 @@ func TestEarlyRecorderExitDoesNotDoubleDiagnose(t *testing.T) {
 	}
 }
 
+// TestEarlyRecorderExitDoesNotDoubleDiagnoseWithTwoRecorders is the
+// two-recorder sibling of TestEarlyRecorderExitDoesNotDoubleDiagnose above:
+// when BOTH recorders exit on their own before Run ever asks either to stop —
+// a TCC-denied microphone alongside a screen recorder whose ffmpeg build
+// lacks a needed codec, say — only one can be the child anyExit's select
+// happens to pick as dead. Pre-fix the other was excluded from nothing,
+// fell through to finaliseOutputs, and was diagnosed by classifyMissingOutput
+// as still blocked on a permission prompt it had already exited past, with
+// its own exit status never surfaced at all. mic and scr are both fully
+// reaped (their done channels closed) before Run is even called, so which one
+// anyExit's select picks as dead is the only nondeterminism left, and the
+// assertions below hold either way.
+func TestEarlyRecorderExitDoesNotDoubleDiagnoseWithTwoRecorders(t *testing.T) {
+	origNotify, origStart := notifyContext, startRecordersFn
+	t.Cleanup(func() { notifyContext, startRecordersFn = origNotify, origStart })
+
+	notifyContext = func() (context.Context, context.CancelFunc) {
+		return context.WithCancel(context.Background())
+	}
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
+		mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+		scr := newLiveChild(streamScreen, newFakeProc(syscall.SIGINT), &lockedBuffer{})
+		_ = mic.p.Signal(syscall.SIGINT)
+		_ = scr.p.Signal(syscall.SIGINT)
+		<-mic.done
+		<-scr.done
+		return []*liveChild{mic, scr}, nil
+	}
+
+	var log bytes.Buffer
+	err := Run(Options{Out: t.TempDir(), Video: true, GOOS: "darwin", Log: &log})
+	if err == nil {
+		t.Fatal("two recorders exiting on their own must make Run exit non-zero")
+	}
+	out := log.String()
+	if strings.Contains(out, "stayed blocked on the permission prompt") {
+		t.Fatalf("a self-exited recorder was reported through classifyMissingOutput, contradicting its own exit: %q", out)
+	}
+	if !strings.Contains(out, "Next:") {
+		t.Fatalf("the next-command block must still print: %q", out)
+	}
+}
+
+// TestEarlyRecorderExitTwoRecordersClassifiesStartupExitDespiteSlowDemoStop is
+// the two-recorder sibling of TestRunClassifiesStartupExitDespiteSlowStop:
+// dead's own start-up classification is sampled before stopAll/stopDemo run
+// (record.go), for exactly the reason that test pins, but the second
+// early-exited child's classification used to be sampled afterwards — inside
+// the loop that prints each sibling's diagnosis. A slow stopDemo (here) or a
+// slow stopAll (there) then charged the wait against the sibling's elapsed
+// time, so a genuine start-up TCC denial on the child anyExit's select did
+// NOT pick was reported as an unexpected mid-session device fault instead of
+// a permissions issue. Both recorders exit with an avfoundation open-failure
+// signature well inside startupWindow, so whichever one anyExit picks as dead,
+// the other must still be diagnosed as a permissions issue, not a mid-session
+// stop, once shutdownDemoFn's mocked delay has run.
+func TestEarlyRecorderExitTwoRecordersClassifiesStartupExitDespiteSlowDemoStop(t *testing.T) {
+	origNotify, origStart := notifyContext, startRecordersFn
+	origBind, origServe, origShutdown := bindDemoFn, serveDemoFn, shutdownDemoFn
+	origWindow := startupWindow
+	t.Cleanup(func() {
+		notifyContext, startRecordersFn = origNotify, origStart
+		bindDemoFn, serveDemoFn, shutdownDemoFn = origBind, origServe, origShutdown
+		startupWindow = origWindow
+	})
+
+	startupWindow = 20 * time.Millisecond
+
+	notifyContext = func() (context.Context, context.CancelFunc) {
+		return context.WithCancel(context.Background())
+	}
+	bindDemoFn = func(addr string) (net.Listener, error) { return nil, nil }
+	stub := &http.Server{}
+	serveDemoFn = func(ln net.Listener, addr, dir string) (*http.Server, error) { return stub, nil }
+	// Outlasts startupWindow, the delay that used to be charged against the
+	// sibling early child's own elapsed time.
+	shutdownDemoFn = func(srv *http.Server) error {
+		time.Sleep(200 * time.Millisecond)
+		return nil
+	}
+
+	startRecordersFn = func(dir string, streams []string, _ io.Writer) ([]*liveChild, error) {
+		mkBuf := func() *lockedBuffer {
+			b := &lockedBuffer{}
+			_, _ = b.Write([]byte("[AVFoundation indev @ 0x0] Failed to open device\nInput/output error"))
+			return b
+		}
+		mic := newLiveChild(streamMicrophone, newFakeProc(syscall.SIGINT), mkBuf())
+		scr := newLiveChild(streamScreen, newFakeProc(syscall.SIGINT), mkBuf())
+		_ = mic.p.Signal(syscall.SIGINT)
+		_ = scr.p.Signal(syscall.SIGINT)
+		<-mic.done
+		<-scr.done
+		return []*liveChild{mic, scr}, nil
+	}
+
+	var log bytes.Buffer
+	err := Run(Options{Out: t.TempDir(), Video: true, Demo: true, Addr: ":0", GOOS: "darwin", Log: &log})
+	if err == nil {
+		t.Fatal("two recorders exiting on their own must make Run exit non-zero")
+	}
+
+	combined := err.Error() + "\n" + log.String()
+	if strings.Contains(combined, "stopped unexpectedly") || strings.Contains(combined, "device may have been disconnected") {
+		t.Fatalf("a start-up TCC denial was reported as a mid-session device fault after a slow demo shutdown: %q", combined)
+	}
+	if strings.Count(combined, "Privacy & Security") != 2 {
+		t.Fatalf("both recorders' start-up denials must point at the settings pane: %q", combined)
+	}
+}
+
 // TestRunClassifiesStartupExitDespiteSlowStop proves that a recorder which dies
 // inside the start-up window is still diagnosed as a permissions denial even
 // when the stop path that follows outlasts that window. The pre-fix code

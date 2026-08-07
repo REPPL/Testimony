@@ -146,6 +146,28 @@ func BuildEntries(t0EpochMS int64, utts []Utterance, ints []Interaction) []Entry
 	return entries
 }
 
+// EventEntry returns the timeline entry BuildEntries would give rec on its
+// own. It exists so a capture-time size guard can measure the record demo is
+// about to persist by the same shape merge later writes to timeline.jsonl:
+// the wrapped entry (t rebased to session-relative seconds, a src/id/payload
+// envelope added) is not the same byte string as rec, and can be larger, so a
+// guard that only measures rec can accept a record merge will later refuse.
+// The id this assigns ("ev-001") is a placeholder — the real ordinal depends
+// on rec's position among every interaction in the merged session, which a
+// capture-time guard cannot know — so a caller sizing this entry should treat
+// the result as a lower bound and leave headroom for the ordinal to grow.
+func EventEntry(rec Interaction, t0EpochMS int64) Entry {
+	return BuildEntries(t0EpochMS, nil, []Interaction{rec})[0]
+}
+
+// SpeechEntry is EventEntry's utterance counterpart: the timeline entry
+// BuildEntries would give u on its own, with u's own id carried through
+// unchanged (BuildEntries never regenerates a speech entry's id, unlike an
+// event's).
+func SpeechEntry(u Utterance) Entry {
+	return BuildEntries(0, []Utterance{u}, nil)[0]
+}
+
 // CheckSrc refuses a timeline whose entries carry a src outside the
 // documented "speech" | "event" set. Merge only ever writes those two, so
 // this bites solely on a hand-edited or exchanged timeline.jsonl — where an

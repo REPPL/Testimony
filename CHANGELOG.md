@@ -523,6 +523,23 @@ Capture integrity:
   ordinary first-run whisper.cpp failure, since it never auto-downloads one —
   used to destroy the record-origin capture for a refusal `-model` alone
   already made knowable in advance.
+- **Behaviour:** `POST /api/interactions` and `transcribe` refuse a record
+  whose *timeline entry* — not the record itself — would exceed the JSONL
+  line limit, and `WriteJSONL`'s encoder no longer HTML-escapes `<`, `>`,
+  and `&` into six-byte `\uXXXX` sequences. `merge` wraps an accepted record
+  into a larger entry (a `src`/`id`/`payload` envelope, and — because of the
+  escaping — up to sixfold inflation for any of those three characters), so
+  a record within the raw line limit could still be durably persisted at
+  204/exit 0 and then permanently unmergeable: `merge` refused to write its
+  timeline entry on every re-run, leaving `report` and `analyze` with no
+  timeline to read, with no CLI-level repair.
+- `record -video` no longer misdiagnoses a second recorder that also exits
+  on its own before being asked to stop: only the recorder `anyExit`'s
+  select happened to observe was excluded from the missing-output sweep, so
+  any other recorder that self-exited at the same moment was still routed
+  through `classifyMissingOutput`'s "stayed blocked on the permission
+  prompt" narrative — disproved by its own exit — with its real exit status
+  never surfaced.
 
 ## [0.4.0] - 2026-07-24
 

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -343,6 +344,59 @@ func TestWriteJSONLRefusalLeavesNoPartialFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("refused write created %s (err=%v); want no file at all", FindingsFile, err)
+	}
+}
+
+// TestWriteJSONLDoesNotEscapeHTML pins WriteJSONL's encoder to the same
+// non-escaping behaviour compactLine (demo's capture-side line canonicaliser)
+// already has: JSONL artefacts are never embedded in HTML, so escaping <, >,
+// and & into six-byte \uXXXX sequences only inflates a persisted record —
+// against no benefit, since the escaped and literal forms decode identically —
+// and let a capture-time size guard sized against a non-escaping encoder
+// silently drift out of sync with WriteJSONL's own, escaping one. A record
+// whose only size headroom was spent on characters an escaping encoder would
+// have inflated up to sixfold used to be accepted at capture time and then
+// permanently refused once WriteJSONL re-encoded it.
+func TestWriteJSONLDoesNotEscapeHTML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	if err := WriteJSONL(path, []map[string]string{{"v": "<script>&tags</script>"}}); err != nil {
+		t.Fatalf("WriteJSONL: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	escaped := []byte{'\\', 'u', '0', '0', '3', 'c'} // the six bytes an escaping encoder writes for '<'
+	if bytes.Contains(raw, escaped) {
+		t.Errorf("WriteJSONL HTML-escaped its output: %s", raw)
+	}
+	if !bytes.Contains(raw, []byte("<script>&tags</script>")) {
+		t.Errorf("literal characters did not survive encoding: %s", raw)
+	}
+}
+
+// TestEncodedLenMatchesWriteJSONL pins EncodedLen to WriteJSONL's own
+// pre-flight measurement: a capture-time guard that sizes a value with
+// EncodedLen before handing it to a later WriteJSONL call must see the same
+// byte count WriteJSONL's own check will make, or the guard could accept a
+// record WriteJSONL then refuses.
+func TestEncodedLenMatchesWriteJSONL(t *testing.T) {
+	v := map[string]string{"v": "<script>&tags</script>"}
+	got, err := EncodedLen(v)
+	if err != nil {
+		t.Fatalf("EncodedLen: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	if err := WriteJSONL(path, []map[string]string{v}); err != nil {
+		t.Fatalf("WriteJSONL: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if got != len(raw) {
+		t.Errorf("EncodedLen = %d, WriteJSONL wrote %d bytes for the same value", got, len(raw))
 	}
 }
 

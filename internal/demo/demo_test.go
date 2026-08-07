@@ -582,6 +582,13 @@ func TestOversizedInteractionIsRefusedNotPersisted(t *testing.T) {
 		// Exactly the line limit: the terminating newline pushes the physical line
 		// one byte past what the readers can scan back, so it too must be refused.
 		"line limit plus newline": jsonRecordOfSize(t, session.MaxJSONLLine),
+		// Just inside the line limit as received, so this record alone would pass
+		// tooLongForJSONL — but merge's src/id/payload envelope pushes its timeline
+		// entry back over the limit, and that entry is what session.WriteJSONL
+		// checks when merge writes timeline.jsonl. Pre-fix this was accepted (204)
+		// and durably persisted, then permanently unreadable from the first merge
+		// onward with no CLI-level repair.
+		"record fits alone but not once wrapped": jsonRecordOfSize(t, session.MaxJSONLLine-1),
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -603,13 +610,15 @@ func TestOversizedInteractionIsRefusedNotPersisted(t *testing.T) {
 }
 
 // TestAcceptedInteractionStaysReadable pins the other side of the limit: a
-// record just inside it is still accepted and can be read straight back by the
-// same reader merge uses, so the refusal above is not simply refusing
-// everything large.
+// large record is still accepted and can be read straight back by the same
+// reader merge uses, so the refusal above is not simply refusing everything
+// large. It stays well clear of the line limit itself — a record that close
+// also has to leave room for its timeline entry's src/id/payload envelope,
+// which "record fits alone but not once wrapped" above exercises instead.
 func TestAcceptedInteractionStaysReadable(t *testing.T) {
 	s, dir := newTestServer(t)
 	w := httptest.NewRecorder()
-	s.handleInteraction(w, jsonPost("/api/interactions", jsonRecordOfSize(t, session.MaxJSONLLine-1), nil))
+	s.handleInteraction(w, jsonPost("/api/interactions", jsonRecordOfSize(t, session.MaxJSONLLine-4096), nil))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", w.Code)
 	}

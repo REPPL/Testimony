@@ -356,6 +356,26 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 			refuseWrite(w, r, msg, msg, http.StatusBadRequest)
 			return
 		}
+		// Fitting the JSONL line limit as received is not enough: merge re-frames
+		// this record into a timeline entry (rebased t, a src/id/payload envelope)
+		// that session.WriteJSONL checks against the same limit, and that entry can
+		// be larger than the record itself — so check the entry a record accepted
+		// here will become, not just the record, or a record this endpoint answers
+		// 204 to could still be one merge permanently refuses.
+		var rec timeline.Interaction
+		if err := json.Unmarshal(line, &rec); err != nil {
+			refuseWrite(w, r, "invalid JSON", "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		entryLen, err := session.EncodedLen(timeline.EventEntry(rec, s.t0))
+		if err != nil {
+			refuseWrite(w, r, "invalid JSON", "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if tooLongOnceWrapped(entryLen) {
+			refuseWrite(w, r, "interaction's timeline entry over the JSONL line limit", "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
+			return
+		}
 		lines = append(lines, line)
 	}
 
@@ -426,6 +446,24 @@ func compactLine(b []byte) ([]byte, error) {
 // a line no reader can reach past.
 func tooLongForJSONL(line []byte) bool {
 	return len(line)+1 > session.MaxJSONLLine
+}
+
+// eventIDGrowthMargin bounds tooLongOnceWrapped's blind spot: timeline.EventEntry
+// sizes an interaction's entry with the placeholder id "ev-001" (6 bytes), but
+// the id a merged session actually assigns grows with the interaction's
+// position among every interaction in the session, which this single record
+// does not know. 32 spare bytes cover an "ev-%03d" ordinal up to 32 digits —
+// past 10^32 interactions — headroom no real session comes remotely close to
+// needing.
+const eventIDGrowthMargin = 32
+
+// tooLongOnceWrapped reports whether an interaction's timeline entry, sized at
+// entryLen by session.EncodedLen(timeline.EventEntry(...)), could exceed the
+// JSONL line limit once merge assigns its real id — the entry this record
+// becomes, not the record itself, is what session.WriteJSONL checks when merge
+// writes timeline.jsonl.
+func tooLongOnceWrapped(entryLen int) bool {
+	return entryLen+eventIDGrowthMargin > session.MaxJSONLLine
 }
 
 // allowWrite guards the capture write endpoints against cross-origin forgery
