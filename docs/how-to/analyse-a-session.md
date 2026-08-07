@@ -2,9 +2,9 @@
 
 This guide covers the first-pass analysis layer: turning a merged
 `timeline.jsonl` into structured findings, then confirming or rejecting each one
-by hand. Testimony delegates the model work to an assistant of your choice — the
-CLI never calls a model, holds no keys, and reaches no network. It emits a
-request, you run it, and it validates the answer.
+by hand. Testimony delegates the model work to an assistant of your choice —
+`analyze` never calls a model, holds no keys, and adds no network dependency. It
+emits a request, you run it, and it validates the answer.
 
 Prerequisite: a session with a merged timeline. If you have only a transcript and
 interactions, run `testimony merge -session sessions/<dir>` first.
