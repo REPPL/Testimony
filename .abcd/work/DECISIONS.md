@@ -1067,38 +1067,88 @@ Architecture-shaping decisions graduate to an ADR under
   `CLAUDE.md`, a symlink to `AGENTS.md`; the distinct-file count is five.
 - 2026-08-07 — Bug-hunt round 36: two confirmed substantive defects, two
   nitpicks, zero refuted. `review.AppendVerdict` held its verdict record to
-  `MaxJSONLLine` (round 25) but never checked the running total against
-  `MaxJSONLBytes` (round 33) — the last of `findings.jsonl`'s three writers
+  `MaxJSONLLine` (round 7) but never checked the running total against
+  `MaxJSONLBytes` (round 33) — the last of `findings.jsonl`'s two writers
   left uncovered after round 35 closed the same gap for `analyze -ingest`.
   A `findings.jsonl` built at or right up to the cap is a legal ingest
   output; recording a verdict against it durably bricked every finding and
-  verdict already on file (every later `analyze.Load`, `review`, and
-  `report` refused or silently dropped the findings; re-ingesting to repair
-  it was itself refused once a verdict existed, since `holdsVerdicts` also
-  bounds only a line, not the total). Fixed with a stat-then-append check
-  under `AppendVerdict`'s existing lock, mirroring `WriteJSONL`'s and
+  verdict already on file (every later `analyze.Load` and `review` call
+  refused it outright; `report` exited 0 but rendered an explicit "Findings
+  unavailable" notice in place of the session's findings; re-ingesting to
+  repair it was itself refused once a verdict existed, since `holdsVerdicts`
+  bounds only a line, not the total, so it still detects the verdict and
+  blocks the overwrite). Fixed with a stat-then-append check under
+  `AppendVerdict`'s existing lock, mirroring `WriteJSONL`'s and
   `oversizedFindings`' pre-flight pattern. Separately, `demo`'s capture
   endpoint checked each interaction record against `MaxJSONLLine` but never
   tracked `interactions.jsonl`'s running total against `MaxJSONLBytes` (the
   bound `merge`'s reader enforces): a sequence of individually valid
   captures, each answered `204`, could accumulate past the cap and leave a
-  session durably unmergeable, discovered only after capture ended — as
-  little as ~2,000 ordinary-sized interactions through the documented
-  instrument-your-own-app path, not the contrived multi-megabyte records the
-  hunting round first reproduced with. Fixed the same way, using the file
-  offset `appendRecords` already obtains via `Seek` before every write;
-  `events.rrweb.jsonl` is deliberately exempt, matching `MaxJSONLBytes`' own
-  documented archival carve-out. Both fixes carry regression tests watched
-  to fail pre-fix and pass post-fix, and both survived two independent
-  adversarial refuters apiece, including live end-to-end reproductions
-  against a built binary rather than re-reading the same source the hunt
-  round had. Nitpicks fixed: `README.md`'s "the CLI never calls a model or
-  the network" was the one absolute network claim rounds 26, 27, and 35's
-  otherwise-identical corrections missed — round 35's "sole outlier" framing
-  covered only the canonical `adds no network dependency` phrase, which
-  cannot match README's differently-worded instance; reworded to the
-  canonical, `analyze`-scoped form. `docs/reference/session-directory.md`'s
-  `findings.jsonl` schema table named `mode`'s `A`/`B` values without
-  defining what distinguishes them anywhere user-facing (the only definition
-  lived in internal, non-shipped brief documents) — one clause now points
-  the reader at README's own "Reference capture" bullet.
+  session's `interactions.jsonl` durably unmergeable — `merge` then refuses
+  it outright, so `timeline.jsonl` is never produced and `report`/`analyze`
+  fail for lack of it — discovered only after capture ended. Reachable well
+  within an ordinary session once records carry realistic per-interaction
+  context (ordinary bare-field captures using only the four documented
+  fields need tens of thousands to cross the cap; a session whose records
+  also carry the kind of extra per-element context
+  `instrument-your-own-app.md` explicitly permits as harmless reaches it in
+  the low thousands), not the contrived multi-megabyte records the hunting
+  round first reproduced with. Fixed the same way, with its own `Seek` to
+  the file's current end before every write; `events.rrweb.jsonl` is
+  deliberately exempt, matching `MaxJSONLBytes`' own documented archival
+  carve-out. Both fixes carry regression tests watched to fail pre-fix and
+  pass post-fix, and both survived two independent adversarial refuters
+  apiece, including live end-to-end reproductions against a built binary
+  rather than re-reading the same source the hunt round had. Nitpicks
+  fixed: `README.md`'s "the CLI never calls a model or the network" was the
+  one absolute network claim rounds 26, 27, and 35's otherwise-identical
+  corrections missed — round 35's "sole outlier" framing covered only the
+  canonical `adds no network dependency` phrase, which cannot match
+  README's differently-worded instance; reworded to the canonical,
+  `analyze`-scoped form (four developer-facing files — `AGENTS.md`,
+  `.abcd/work/CONTEXT.md`, and two `.abcd/development/` specs — still carry
+  the scoped `adds no network dependency` claim, which this round's finding
+  never targeted, so they are left as-is; README is now a sixth file
+  carrying that phrase, one past round 35's count of five).
+  `docs/reference/session-directory.md`'s `findings.jsonl` schema table
+  named `mode`'s `A`/`B` values without defining what distinguishes them
+  anywhere user-facing (the only definition lived in internal, non-shipped
+  brief documents) — one clause now points the reader at README's "Coming
+  next" section, which names the Mode B feature ("Reference capture —
+  narrated sessions over third-party apps") without using the letter B.
+- 2026-08-07 — Round 36's own PR (#53) picked up two adversarial reviews
+  before merge. The correctness reviewer caught a real off-by-one in the
+  round's own `AppendVerdict` total-size check: `writeVerdict` is called
+  with `len(b)+1` bytes but itself prepends a second leading newline when
+  the file is non-empty and its last byte is not already `\n` (a real,
+  supported state — an exchanged or hand-edited `findings.jsonl` can end
+  unterminated), so the true worst case is `len(b)+2`; the check as first
+  written budgeted only `+1`, reproducibly letting a file at exactly
+  `cap-(len(b)+1)` pass and still land one byte over `MaxJSONLBytes` —
+  precisely the brick the check exists to prevent. Fixed to budget `+2`,
+  with a new regression test seeding an unterminated file at the corrected
+  boundary, watched to fail against `+1` and pass against `+2`. The
+  docs-accuracy reviewer then caught, against that fixed code: the
+  `MaxJSONLLine` bound on `AppendVerdict` was misattributed to round 25 (it
+  was round 7); `findings.jsonl` was called out as having three writers
+  where it has two (`analyze.commitFindings` and `AppendVerdict` only —
+  restated correctly at `session.go:527-528` and this file's own round-33
+  entry); the CHANGELOG's "report … rendered it as no findings at all"
+  contradicted the actual behaviour (`report` renders an explicit "Findings
+  unavailable" notice, distinct from the empty-state one) and contradicted
+  its own neighbouring entry; a fresh comment on `AppendVerdict` reintroduced
+  the identical `holdsVerdicts`-refuses-oversized-files overclaim round 35
+  had already corrected in four places (`holdsVerdicts` bounds only a line,
+  not the total, so it does not refuse — it still detects the verdict and
+  blocks the re-ingest repair path on that basis); a fresh comment on
+  `demo`'s capture endpoint overstated that "merge, report, and analyze all
+  refuse the file outright" when only `merge` reads `interactions.jsonl`
+  directly (`report`/`analyze` fail downstream for lack of the
+  `timeline.jsonl` `merge` never produces); and the round's original
+  "~2,000 ordinary-sized interactions" reachability figure understated by
+  30-80x what the four bare documented interaction fields alone need to
+  cross the cap, conflating a reproduction that had padded records with an
+  extra, non-bare field with the "ordinary" case. All corrected in the
+  commits and this entry before merge; the code fixes themselves (both the
+  original two and the off-by-one correction) were independently confirmed
+  sound by both reviewers.

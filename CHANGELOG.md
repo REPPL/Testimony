@@ -183,14 +183,14 @@ Evidence integrity:
   and write the unreadable file.
 - **Behaviour:** `review` refuses to record a verdict that would push
   `findings.jsonl` past its 16 MiB total-size limit, the last of the file's
-  three writers left unguarded after the previous entry closed the same gap
+  two writers left unguarded after the previous entry closed the same gap
   for `analyze -ingest`. A `findings.jsonl` built at or near the cap could
   legally exist; recording a verdict against it used to succeed and silently
   brick every finding and verdict already on file — every later `analyze
-  -ingest`, `review`, and `report` call, including `report`'s own render,
-  either refused the file outright or (for `report`) rendered it as no
-  findings at all, with no in-tool repair (re-ingesting was itself refused
-  once a verdict record existed).
+  -ingest` and `review` call refused the file outright, and `report` exited
+  0 but rendered an explicit "Findings unavailable" notice in place of the
+  session's findings, with no in-tool repair (re-ingesting was itself
+  refused once a verdict record existed).
 - **Behaviour:** `demo`'s capture endpoint refuses a POST to `/api/interactions`
   that would push `interactions.jsonl` past its 16 MiB total-size limit,
   matching the cap `merge` already enforces on read. Each interaction record
