@@ -226,9 +226,20 @@ func Run(opts Options) error {
 		return nil
 	}
 
+	var ctxEarly, ctxAtStartupOf map[*liveChild]bool
 	select {
 	case <-ctx.Done():
 		fmt.Fprintln(opts.Log, "\nstopping — finalising capture files…")
+		// A recorder may have exited on its own in the instant before the
+		// signal arrived: sample that now, before stopAll's SIGINT reaches the
+		// survivors and makes a live recorder's own clean shutdown
+		// indistinguishable from a self-exit moments earlier — the same
+		// ordering constraint the other case observes below. Without this, an
+		// already-dead recorder fell through to finaliseOutputs exactly like a
+		// normally-stopped one: misdiagnosed as still blocked on its
+		// permission prompt when it produced nothing, or silently accepted as
+		// a clean session when it left a partial artefact.
+		ctxEarly, ctxAtStartupOf = sampleEarlyExits(children)
 	case dead := <-anyExit(children):
 		// A recorder exited before we asked it to stop. Within the startup
 		// window this is most often a TCC denial; a later exit is an unexpected
@@ -242,31 +253,18 @@ func Run(opts Options) error {
 		// genuine TCC denial that failed in the first second was reported as an
 		// unexpected mid-session stop and the operator was sent looking for a
 		// device fault instead of the permission they had never granted.
-		atStartup := time.Since(dead.started) < startupWindow
-		// Other children may have exited on their own at the same moment as
-		// dead: anyExit's channel is buffered to len(children), so a second
+		//
+		// Every child's exit state is sampled via sampleEarlyExits, not just
+		// dead's: anyExit's channel is buffered to len(children), so a second
 		// self-exit sent before this select fired is already sitting there,
 		// unread, the instant this case runs. Both the exit itself and its
-		// start-up-window classification are sampled now, before stopAll's
-		// SIGINT reaches them: after that, a live recorder's own clean
+		// start-up-window classification must be sampled now, before stopAll's
+		// SIGINT reaches the survivors: after that, a live recorder's own clean
 		// shutdown becomes indistinguishable from a dead one's self-exit, and
-		// stopAll's own wait — up to stopGrace per remaining child, which
-		// alone equals startupWindow — would charge the shutdown against a
-		// second early exit's classification exactly as it would have
-		// against dead's, the mistake atStartup above exists to avoid.
-		early := map[*liveChild]bool{dead: true}
-		atStartupOf := map[*liveChild]bool{dead: atStartup}
-		for _, c := range children {
-			if c == dead {
-				continue
-			}
-			select {
-			case <-c.done:
-				early[c] = true
-				atStartupOf[c] = time.Since(c.started) < startupWindow
-			default:
-			}
-		}
+		// stopAll's own wait — up to stopGrace per remaining child, which alone
+		// equals startupWindow — would charge the shutdown against a second
+		// early exit's classification exactly as it would have against dead's.
+		early, atStartupOf := sampleEarlyExits(children)
 		stopAll(children)
 		stopDemo(srv)
 		// An early exit is reported the same way as a recorder that produced
@@ -317,7 +315,7 @@ func Run(opts Options) error {
 			fmt.Fprintf(opts.Log, "\n%s\n", classifyRecorderExit(c.stream, c.err, c.stderr.tail(), atStartupOf[c]))
 		}
 		fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioReady, capturePossible))
-		return errors.New(classifyRecorderExit(dead.stream, dead.err, dead.stderr.tail(), atStartup))
+		return errors.New(classifyRecorderExit(dead.stream, dead.err, dead.stderr.tail(), atStartupOf[dead]))
 	}
 
 	stopAll(children)
@@ -327,7 +325,36 @@ func Run(opts Options) error {
 	// A recorder blocked on its TCC prompt for the whole session finalises no
 	// container on SIGINT — audio.wav (or screen.mp4) is absent or empty — and
 	// this is the only place that catches it, since it never exited on its own.
-	audioReady, problems := finaliseOutputs(dir, children)
+	//
+	// A recorder sampled as an early exit above (ctxEarly) is excluded here and
+	// diagnosed through classifyRecorderExit instead, the same treatment the
+	// anyExit case gives a self-exited recorder: classifyMissingOutput's
+	// stayed-blocked-on-the-prompt narrative would be disproved by the very
+	// exit that brought it here, and a partial artefact from an early exit
+	// would otherwise pass finaliseOutputs's size check and be presented as a
+	// clean stop rather than a capture that ended early.
+	others := children
+	if len(ctxEarly) > 0 {
+		others = make([]*liveChild, 0, len(children))
+		for _, c := range children {
+			if !ctxEarly[c] {
+				others = append(others, c)
+			}
+		}
+	}
+	audioReady, problems := finaliseOutputs(dir, others)
+	for c := range ctxEarly {
+		if c.stream == streamMicrophone {
+			if fi, err := os.Stat(expectedOutput(dir, c.stream)); err == nil && fi.Size() > 0 {
+				audioReady = true
+			}
+		}
+	}
+	for _, c := range children {
+		if ctxEarly[c] {
+			problems = append(problems, classifyRecorderExit(c.stream, c.err, c.stderr.tail(), ctxAtStartupOf[c]))
+		}
+	}
 	for _, p := range problems {
 		fmt.Fprintf(opts.Log, "\n%s\n", p)
 	}
@@ -492,6 +519,29 @@ func anyExit(children []*liveChild) <-chan *liveChild {
 		}(c)
 	}
 	return ch
+}
+
+// sampleEarlyExits reports which children have already exited — their done
+// channel already closed — at the moment this is called, and whether each
+// such exit fell inside startupWindow. It must run before stopAll signals the
+// survivors: once a live recorder receives SIGINT, its own clean shutdown
+// becomes indistinguishable from a self-exit that happened moments earlier,
+// so this is the last point at which the two can still be told apart. Both of
+// Run's select cases call this before stopAll for that reason — a recorder
+// that exits on its own gets the same diagnosis regardless of which case
+// happened to observe the exit.
+func sampleEarlyExits(children []*liveChild) (early map[*liveChild]bool, atStartupOf map[*liveChild]bool) {
+	early = map[*liveChild]bool{}
+	atStartupOf = map[*liveChild]bool{}
+	for _, c := range children {
+		select {
+		case <-c.done:
+			early[c] = true
+			atStartupOf[c] = time.Since(c.started) < startupWindow
+		default:
+		}
+	}
+	return early, atStartupOf
 }
 
 // onlyManifest reports whether dir contains nothing but manifest.json — i.e.
