@@ -1,6 +1,7 @@
 package demo
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net"
@@ -647,6 +648,111 @@ func TestOversizedBatchRecordIsRefusedWhole(t *testing.T) {
 	}
 	if lines := fileLines(t, filepath.Join(dir, session.RawEventsFile)); len(lines) != 0 {
 		t.Fatalf("refused batch persisted %d lines, want none", len(lines))
+	}
+}
+
+// newTestServerWithSeededInteractions is newTestServer, except
+// interactions.jsonl starts out pre-populated with seed rather than empty —
+// for exercising appendLines' total-size check, which only bites once the
+// file already carries most of its way to session.MaxJSONLBytes.
+func newTestServerWithSeededInteractions(t *testing.T, seed []byte) (*server, string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, session.InteractionsFile)
+	if err := os.WriteFile(path, seed, 0o644); err != nil {
+		t.Fatalf("seed %s: %v", session.InteractionsFile, err)
+	}
+	inter, err := session.OpenFileNoFollow(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open %s: %v", session.InteractionsFile, err)
+	}
+	raw, err := session.OpenFileNoFollow(filepath.Join(dir, session.RawEventsFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open %s: %v", session.RawEventsFile, err)
+	}
+	t.Cleanup(func() { inter.Close(); raw.Close() })
+	return &server{interactions: inter, rawEvents: raw, t0: 1}, dir
+}
+
+// TestInteractionRefusedOverTotalCap is the write-side twin of
+// session.ReadJSONL's total-size cap: merge reads interactions.jsonl through
+// ReadJSONL, which refuses a file over session.MaxJSONLBytes outright, but
+// appendLines' checks (maxBody, tooLongForJSONL, tooLongOnceWrapped) were all
+// per-record, so a sequence of individually-valid POSTs — each answered 204 —
+// could accumulate past the cap and leave the session durably unmergeable,
+// discovered only after capture ends. A single small record posted against a
+// file already near the cap must now be refused with 413 instead.
+func TestInteractionRefusedOverTotalCap(t *testing.T) {
+	seed := []byte(strings.Repeat("x", session.MaxJSONLBytes-10) + "\n")
+	s, dir := newTestServerWithSeededInteractions(t, seed)
+
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", `{"t":1,"kind":"click"}`, nil))
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", w.Code)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, session.InteractionsFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", session.InteractionsFile, err)
+	}
+	if !bytes.Equal(got, seed) {
+		t.Fatal("interactions.jsonl was modified despite the refusal")
+	}
+}
+
+// TestInteractionAcceptedUnderTotalCap is the positive control for
+// TestInteractionRefusedOverTotalCap: a file with enough headroom under
+// session.MaxJSONLBytes still accepts a record, and merge's own reader can
+// scan the result back.
+func TestInteractionAcceptedUnderTotalCap(t *testing.T) {
+	seed := []byte(strings.Repeat("x", session.MaxJSONLBytes-10000) + "\n")
+	s, dir := newTestServerWithSeededInteractions(t, seed)
+
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", `{"t":1,"kind":"click"}`, nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, session.InteractionsFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", session.InteractionsFile, err)
+	}
+	if !bytes.HasPrefix(got, seed) {
+		t.Fatal("accepted write lost the file's existing content")
+	}
+	if !bytes.Contains(got, []byte(`"kind":"click"`)) {
+		t.Fatal("accepted write did not append the new record")
+	}
+}
+
+// TestBatchEventsIgnoreTotalCap pins the deliberate asymmetry: events.rrweb.jsonl
+// is archival (session.MaxJSONLBytes' own doc comment exempts it — nothing reads
+// it back through a total-capped path), so a batch upload against a file already
+// past where interactions.jsonl would be refused must still succeed.
+func TestBatchEventsIgnoreTotalCap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, session.RawEventsFile)
+	seed := []byte(strings.Repeat("x", session.MaxJSONLBytes+10000) + "\n")
+	if err := os.WriteFile(path, seed, 0o644); err != nil {
+		t.Fatalf("seed %s: %v", session.RawEventsFile, err)
+	}
+	raw, err := session.OpenFileNoFollow(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open %s: %v", session.RawEventsFile, err)
+	}
+	inter, err := session.OpenFileNoFollow(filepath.Join(dir, session.InteractionsFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open %s: %v", session.InteractionsFile, err)
+	}
+	t.Cleanup(func() { inter.Close(); raw.Close() })
+	s := &server{interactions: inter, rawEvents: raw, t0: 1}
+
+	w := httptest.NewRecorder()
+	s.handleRawEvents(w, jsonPost("/api/events", `[{"a":1}]`, nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (events.rrweb.jsonl has no total cap)", w.Code)
 	}
 }
 

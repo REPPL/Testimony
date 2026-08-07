@@ -381,6 +381,35 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// interactions.jsonl is one of ReadJSONL's total-size-capped artefacts, unlike
+	// events.rrweb.jsonl, which session.MaxJSONLBytes' own doc comment exempts as
+	// archival — merge reads interactions.jsonl through session.ReadJSONL, which
+	// refuses a file over MaxJSONLBytes outright. Each record above already fits
+	// MaxJSONLLine on its own, but nothing bounded how many accumulate: a sequence
+	// of individually-valid captures could each answer 204 and still leave the
+	// session's interactions.jsonl durably unmergeable — discovered only after the
+	// participant is gone, with no in-tool repair (merge, report, and analyze all
+	// refuse the file outright; nothing here can retroactively split it back under
+	// the cap). Check the total this write would reach before committing it, the
+	// same write-before-read stance WriteJSONL and oversizedFindings take for
+	// their own artefacts. Batched raw-event uploads (events.rrweb.jsonl) skip
+	// this: they are archival and read by nothing that enforces a total.
+	if !batch {
+		size, err := f.Seek(0, io.SeekEnd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "testimony demo: capture write failed, event(s) dropped: %v\n", err)
+			http.Error(w, "capture write failed", http.StatusInternalServerError)
+			return
+		}
+		for _, l := range lines {
+			size += int64(len(l)) + 1
+		}
+		if size > session.MaxJSONLBytes {
+			refuseWrite(w, r, "capture would push interactions.jsonl over the session's JSONL file limit",
+				"session's captured interactions are at the file size limit; start a new session", http.StatusRequestEntityTooLarge)
+			return
+		}
+	}
 	if err := appendRecords(f, lines); err != nil {
 		// The capture was not persisted. Tell the client so it does not treat a
 		// dropped event as recorded (it answers the 500 rather than a 204), and log
