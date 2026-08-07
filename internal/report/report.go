@@ -426,9 +426,14 @@ func eventLine(e timeline.Entry) string {
 	if r := raw("route"); !inlineRendersEmpty(r) {
 		parts = append(parts, "("+mdInline(r)+")")
 	}
-	// parts always holds at least mdOrDash(raw("kind")), which is "—" at
-	// minimum, so the join is never empty and needs no further dash fallback.
-	return strings.Join(parts, " ")
+	return orDash(strings.Join(parts, " "))
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
 }
 
 // mdOrDash renders s inline, falling back to "—" when it is empty or renders
