@@ -831,6 +831,71 @@ func TestAppendVerdictRefusesOversizedLine(t *testing.T) {
 	}
 }
 
+// TestAppendVerdictRefusesOversizedTotal is the write-side twin of
+// TestReadJSONLRefusesOversizedTotal (session package) and
+// analyze.oversizedFindings' total-size check: a findings.jsonl built by
+// analyze -ingest can legally sit right at MaxJSONLBytes, and appending even one
+// small verdict record used to push it past the cap unchecked — durably
+// bricking every existing finding and verdict, since analyze.Load, review, and
+// report all refuse a findings.jsonl over the cap, and re-ingesting to repair it
+// is itself refused once a verdict record is present. Pre-fix, AppendVerdict
+// held only the per-line bound and let this through.
+func TestAppendVerdictRefusesOversizedTotal(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, session.FindingsFile)
+	// A single line just under MaxJSONLBytes: AppendVerdict's total-size check
+	// only measures the existing file's size, so its content need not itself be
+	// valid JSONL for this test (verifyTarget, which would parse it, only runs
+	// when expect is non-nil).
+	pad := []byte(strings.Repeat("x", session.MaxJSONLBytes-50) + "\n")
+	if err := os.WriteFile(path, pad, 0o644); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+
+	rec := analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"}
+	err := AppendVerdict(dir, rec, nil)
+	if err == nil || !strings.Contains(err.Error(), "JSONL file limit") {
+		t.Fatalf("expected an over-total refusal naming the JSONL file limit, got %v", err)
+	}
+
+	// The refusal is pre-write: the seeded file is byte-unchanged.
+	got, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatalf("read findings: %v", rerr)
+	}
+	if !bytes.Equal(got, pad) {
+		t.Fatalf("findings.jsonl was modified despite the refusal")
+	}
+}
+
+// TestAppendVerdictAcceptsFileUnderTotalCap is the positive control for
+// TestAppendVerdictRefusesOversizedTotal: a file with enough headroom under
+// MaxJSONLBytes still accepts a verdict, and the appended record reaches disk.
+func TestAppendVerdictAcceptsFileUnderTotalCap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, session.FindingsFile)
+	pad := []byte(strings.Repeat("x", session.MaxJSONLBytes-10000) + "\n")
+	if err := os.WriteFile(path, pad, 0o644); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+
+	rec := analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"}
+	if err := AppendVerdict(dir, rec, nil); err != nil {
+		t.Fatalf("AppendVerdict with headroom under the cap: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if !bytes.HasPrefix(got, pad) {
+		t.Fatal("appended file lost its original content")
+	}
+	if !bytes.Contains(got, []byte(`"finding":"F-001"`)) {
+		t.Fatal("appended file does not contain the new verdict")
+	}
+}
+
 // TestAppendVerdictRefusesReingestedFinding is the verdict-misattribution
 // regression. review.Run snapshots findings once and then blocks on the operator
 // for the whole interactive walk; a concurrent `analyze -ingest` may

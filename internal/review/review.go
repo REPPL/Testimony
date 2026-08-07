@@ -333,6 +333,28 @@ func AppendVerdict(dir string, v analyze.Verdict, expect *analyze.Finding) error
 		f.Close()
 		return err
 	}
+	// Hold the file to MaxJSONLBytes, the total-size invariant ParseRecords
+	// enforces and every other JSONL writer (session.WriteJSONL,
+	// analyze.oversizedFindings) already pre-flights before appending. A
+	// findings.jsonl built by analyze -ingest can legally sit right at the cap;
+	// without this check, the next verdict recorded against it would land findings
+	// past MaxJSONLBytes, and every later analyze.Load, review, report, and
+	// holdsVerdicts would refuse it — including the verdict just appended, and any
+	// recorded before it. Measured under the lock, after the file is open, so a
+	// concurrent append cannot land between this check and the write below. The
+	// +1 accounts for writeVerdict's leading newline, added when the file's last
+	// line is unterminated, so a file this accepts cannot be pushed over the cap
+	// by the write that follows.
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if info.Size()+int64(len(b))+1 > session.MaxJSONLBytes {
+		f.Close()
+		return fmt.Errorf("%s is %d bytes; appending this verdict would push it past the %d-byte JSONL file limit; refusing to write a session no command could read back",
+			session.FindingsFile, info.Size(), session.MaxJSONLBytes)
+	}
 	// Under the lock, confirm the verdict still targets the finding the analyst
 	// judged. review.Run snapshots findings once (analyze.Load) and then blocks on
 	// the operator for the whole interactive walk; a concurrent `analyze -ingest`
