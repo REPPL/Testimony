@@ -949,14 +949,16 @@ Architecture-shaping decisions graduate to an ADR under
   `findings.jsonl` line against `session.MaxJSONLLine` but never the sum
   across an answer's findings, unlike `WriteJSONL`'s two callers
   (transcript.jsonl, timeline.jsonl): a set of individually valid findings
-  could still serialise to a file over `session.MaxJSONLBytes` that
-  `report`, `review`, and `analyze`'s own re-ingest recovery path all refuse
-  to read back, with `Ingest` reporting success at the moment it wrote the
-  unreadable file. `oversizedFindings` now also accumulates and refuses an
-  over-total set before any write, joining the existing transactional error
-  set; the `WriteJSONL` doc comment, which had documented findings.jsonl as
-  lacking this write-side pre-flight, is corrected to name where it now
-  lives. Nitpicks fixed: `session-directory.md`'s `report.md` `MM:SS`
+  could still serialise to a file over `session.MaxJSONLBytes` that `report`
+  and `review` both refuse to read back (`holdsVerdicts`, the re-ingest
+  recovery path, bounds only a line, not the total, so it can still probe
+  and overwrite such a file), with `Ingest` reporting success at the moment
+  it wrote the unreadable file. `oversizedFindings` now also accumulates
+  and refuses an over-total set before any write, joining the existing
+  transactional error set; the `WriteJSONL` doc comment, which had
+  documented findings.jsonl as lacking this write-side pre-flight, is
+  corrected to name where it now lives. Nitpicks fixed:
+  `session-directory.md`'s `report.md` `MM:SS`
   description didn't note the leading `-` a time preceding `t0` renders
   with; `install.sh`'s trap-roster comment has named `$tmp`, `$tmp2`,
   `$gnupg`, and `$uvd` since round 9 introduced it, and round 10 added
@@ -964,8 +966,9 @@ Architecture-shaping decisions graduate to an ADR under
   — the one cleanup target that touches the user's install directory rather
   than a temp dir, now named;
   `analyse-a-session.md` said "the CLI ... reaches no network", the sole
-  outlier of the repo's six other "adds no network dependency" instances
-  and, read literally as unscoped, contradicted by `demo`'s CDN-loaded rrweb
+  outlier of the repo's five other "adds no network dependency" instances
+  (`CLAUDE.md` is a symlink to `AGENTS.md`, not a distinct sixth) and, read
+  literally as unscoped, contradicted by `demo`'s CDN-loaded rrweb
   recorder and the ASR engine's model fetch — reworded to name `analyze` and
   match the canonical phrasing, as rounds 26 and 27 did for the same
   overreach on other pages. Caught before verification: a fresh hunt for
@@ -1023,7 +1026,9 @@ Architecture-shaping decisions graduate to an ADR under
   round's own description of its fix; moved to the right group this time.
   Also fixed: the "four other" `adds no network dependency` count was
   itself wrong (a naive single-line grep misses instances the phrase wraps
-  across; the real count, checked by hand, is six); two `~18 MiB` figures
+  across; round 4 found this round's own recount of six was also off by
+  one — `CLAUDE.md` is a symlink to `AGENTS.md`, not a distinct file — so
+  the real count is five); two `~18 MiB` figures
   (the new test's comment and this file's own entry) were decimal-MB
   numbers under a MiB label, corrected to `~17 MiB`; `session.go`'s
   `AppendVerdict` description called the verdict record it appends
@@ -1040,9 +1045,10 @@ Architecture-shaping decisions graduate to an ADR under
   re-ingest recovery path" alike — false for the total case, where
   `holdsVerdicts` (the recovery path) still scans and can overwrite the
   file, because its scanner bounds only a line, not the total; only report
-  and review (via `ParseRecords`) actually refuse it. Reworded everywhere
-  the claim appeared, and `commitFindings`'s own doc comment (which only
-  named the per-line bound as pre-checked) now names both. Separately, this
+  and review (via `ParseRecords`) actually refuse it. Reworded in
+  `oversizedFindings`'s doc comment, the CHANGELOG entry, and the new
+  test's comment, and `commitFindings`'s own doc comment (which only named
+  the per-line bound as pre-checked) now names both. Separately, this
   file's claim that `install.sh`'s trap-roster comment was "already widened
   once, in round 30, from naming only `$tmp`" was itself wrong: that
   comment has named `$tmp`/`$tmp2`/`$gnupg`/`$uvd` since round 9 introduced
@@ -1051,4 +1057,11 @@ Architecture-shaping decisions graduate to an ADR under
   in round 10 without a matching comment update. Also softened this file's
   "where every other `findings.jsonl` entry lives" to "the other
   `findings.jsonl` integrity entries live" (`CHANGELOG.md`'s `Invocation
-  contract` group holds `findings.jsonl` entries too).
+  contract` group holds `findings.jsonl` entries too). A fourth pair of
+  reviews found the third round's own "reworded everywhere the claim
+  appeared" was itself not quite true: this file's first-round entry
+  (above) still carried the old "report, review, and analyze's own
+  re-ingest recovery path all refuse" wording after the other three sites
+  were fixed — corrected here too. It also caught that round 2's "six"
+  recount of `adds no network dependency` instances double-counted
+  `CLAUDE.md`, a symlink to `AGENTS.md`; the distinct-file count is five.
