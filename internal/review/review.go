@@ -338,9 +338,12 @@ func AppendVerdict(dir string, v analyze.Verdict, expect *analyze.Finding) error
 	// analyze.oversizedFindings) already pre-flights before appending. A
 	// findings.jsonl built by analyze -ingest can legally sit right at the cap;
 	// without this check, the next verdict recorded against it would land findings
-	// past MaxJSONLBytes, and every later analyze.Load, review, report, and
-	// holdsVerdicts would refuse it — including the verdict just appended, and any
-	// recorded before it. Measured under the lock, after the file is open, so a
+	// past MaxJSONLBytes, and every later analyze.Load, review, and report would
+	// refuse it — including the verdict just appended, and any recorded before it.
+	// holdsVerdicts (analyze.Ingest's re-ingest guard) is the one reader that does
+	// NOT refuse an over-total file: it bounds only a per-line scan, not the total,
+	// so it still finds the verdict and blocks re-ingest as a repair path.
+	// Measured under the lock, after the file is open, so a
 	// concurrent append cannot land between this check and the write below. writeVerdict
 	// is called with append(b, '\n') below — len(b)+1 bytes — but writeVerdict itself
 	// prepends a second leading newline when the file is non-empty and its last byte

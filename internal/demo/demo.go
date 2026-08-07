@@ -388,9 +388,10 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	// MaxJSONLLine on its own, but nothing bounded how many accumulate: a sequence
 	// of individually-valid captures could each answer 204 and still leave the
 	// session's interactions.jsonl durably unmergeable — discovered only after the
-	// participant is gone, with no in-tool repair (merge, report, and analyze all
-	// refuse the file outright; nothing here can retroactively split it back under
-	// the cap). Check the total this write would reach before committing it, the
+	// participant is gone, with no in-tool repair (merge refuses the file outright,
+	// so timeline.jsonl is never produced and report/analyze then fail for lack of
+	// it; nothing here can retroactively split interactions.jsonl back under the
+	// cap). Check the total this write would reach before committing it, the
 	// same write-before-read stance WriteJSONL and oversizedFindings take for
 	// their own artefacts. Batched raw-event uploads (events.rrweb.jsonl) skip
 	// this: they are archival and read by nothing that enforces a total.
