@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -369,6 +370,32 @@ func TestLoadRejectsNullLine(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), ":2:") {
 		t.Fatalf("refusal should name the offending line, got %v", err)
+	}
+}
+
+// TestLoadRejectsOversizedTotal covers the file-size hole a per-line cap alone
+// leaves open: ParseRecords scans findings.jsonl (attacker-controllable once a
+// session is exchanged) with a bufio.Scanner capped at session.MaxJSONLLine
+// per line, but nothing previously bounded how many lines the file may hold.
+// A file built from many small, individually-legal lines used to buffer
+// without limit into the findings/verdicts slices, mirroring the
+// amplification session.ReadJSONL guards against for its own callers.
+// ParseRecords now caps the running total at session.MaxJSONLBytes, matching
+// ReadJSONL's stance.
+func TestLoadRejectsOversizedTotal(t *testing.T) {
+	dir := t.TempDir()
+	// {"kind":"verdict"}\n is 19 bytes; comfortably over MaxJSONLBytes in total.
+	line := []byte(`{"kind":"verdict"}` + "\n")
+	var buf bytes.Buffer
+	for buf.Len() <= session.MaxJSONLBytes {
+		buf.Write(line)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	_, _, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected an oversize-total refusal, got %v", err)
 	}
 }
 

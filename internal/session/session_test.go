@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"os"
@@ -348,25 +349,29 @@ func TestWriteJSONLRefusalLeavesNoPartialFile(t *testing.T) {
 }
 
 // TestWriteJSONLRefusesOversizedTotal is the write-side half of
-// TestReadJSONLRefusesOversizedTotal: a set of individually-small records
-// whose total would exceed maxJSONLBytes must be refused before the file is
-// opened, matching SaveManifest's write-before-read stance — a session whose
-// timeline.jsonl or findings.jsonl exceeds ReadJSONL's total-size cap can
-// never be read back by merge, report, or analyze.
+// TestReadJSONLRefusesOversizedTotal: a set of records whose total would
+// exceed MaxJSONLBytes must be refused before the file is opened, matching
+// SaveManifest's write-before-read stance — a session whose timeline.jsonl or
+// transcript.jsonl exceeds ReadJSONL's total-size cap can never be read back
+// by merge, report, or analyze. Records are padded well under MaxJSONLLine
+// rather than minimal, so the set crosses the total-size cap in a few
+// thousand records instead of millions.
 func TestWriteJSONLRefusesOversizedTotal(t *testing.T) {
 	path := filepath.Join(t.TempDir(), TimelineFile)
 	if err := WriteJSONL(path, []map[string]string{{"actor": "Alice"}}); err != nil {
 		t.Fatalf("seed write: %v", err)
 	}
 
-	// {"n":0}\n is 8 bytes; enough records push the total past maxJSONLBytes.
-	values := make([]map[string]int, maxJSONLBytes/8+1000)
+	// {"v":"<4000 x's>"}\n is ~4010 bytes; enough records push the total past
+	// MaxJSONLBytes.
+	pad := strings.Repeat("x", 4000)
+	values := make([]map[string]string, MaxJSONLBytes/4010+10)
 	for i := range values {
-		values[i] = map[string]int{"n": 0}
+		values[i] = map[string]string{"v": pad}
 	}
 	err := WriteJSONL(path, values)
 	if err == nil {
-		t.Fatal("WriteJSONL persisted a set over maxJSONLBytes in total; want refusal")
+		t.Fatal("WriteJSONL persisted a set over MaxJSONLBytes in total; want refusal")
 	}
 	if !strings.Contains(err.Error(), "JSONL file limit") {
 		t.Errorf("error does not name the file-size limit: %v", err)
@@ -549,20 +554,26 @@ func TestReadJSONLPlainFileStillWorks(t *testing.T) {
 // so a file built from many small, individually-legal lines used to buffer
 // without limit into out, driving json.Unmarshal's per-line allocation well
 // past the bytes on disk. ReadJSONL now caps the running total at
-// maxJSONLBytes and refuses anything larger, matching LoadManifest's stance
-// on manifest.json.
+// MaxJSONLBytes and refuses anything larger, matching LoadManifest's stance
+// on manifest.json. Lines are padded well under MaxJSONLLine rather than
+// minimal, so the file crosses the total-size cap in a few thousand lines
+// instead of millions — the cap counts bytes, not lines, so this exercises
+// the same running-total check with far less test overhead.
 func TestReadJSONLRefusesOversizedTotal(t *testing.T) {
 	path := filepath.Join(t.TempDir(), TimelineFile)
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	// {"a":1}\n is 8 bytes; comfortably over maxJSONLBytes in total.
-	line := []byte("{\"a\":1}\n")
-	for total := 0; total <= maxJSONLBytes; total += len(line) {
-		if _, err := f.Write(line); err != nil {
+	w := bufio.NewWriter(f)
+	line := []byte(`{"a":"` + strings.Repeat("x", 4000) + `"}` + "\n")
+	for total := 0; total <= MaxJSONLBytes; total += len(line) {
+		if _, err := w.Write(line); err != nil {
 			t.Fatalf("write: %v", err)
 		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
 	}
 	if err := f.Close(); err != nil {
 		t.Fatalf("close: %v", err)

@@ -124,9 +124,20 @@ func ParseRecords(r io.Reader, name string) ([]Finding, []Verdict, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), session.MaxJSONLLine)
 	line := 0
+	var total int64
 	for sc.Scan() {
 		line++
 		raw := sc.Bytes()
+		// A per-line cap alone leaves the file's total size unbounded: a
+		// hand-edited or exchanged findings.jsonl built from many small,
+		// individually-legal lines would otherwise drive this loop's per-line
+		// allocation (findings and verdicts both accumulate into slices) well
+		// past the bytes on disk, mirroring the amplification session.ReadJSONL
+		// guards against for its own callers.
+		total += int64(len(raw)) + 1
+		if total > session.MaxJSONLBytes {
+			return nil, nil, fmt.Errorf("%s: exceeds %d bytes across %d lines; refusing to read", name, session.MaxJSONLBytes, line)
+		}
 		if len(bytes.TrimSpace(raw)) == 0 {
 			continue
 		}
