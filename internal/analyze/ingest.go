@@ -159,8 +159,9 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 // probe, truncate, and write forecloses the interleaving: AppendVerdict blocks
 // until the commit completes, so a verdict is either visible to the probe (and
 // the re-ingest refused) or appended after the new findings. The findings were
-// already held to session.MaxJSONLLine by oversizedFindings, so writing through
-// the locked descriptor keeps the read-side invariant WriteJSONL enforces.
+// already held to both session.MaxJSONLLine and session.MaxJSONLBytes by
+// oversizedFindings, so writing through the locked descriptor keeps the
+// read-side invariants WriteJSONL's two callers get.
 func commitFindings(dir string, findings []Finding) error {
 	path := filepath.Join(dir, session.FindingsFile)
 	f, err := session.OpenFileNoFollow(path, os.O_CREATE|os.O_RDWR, 0o644)
@@ -246,17 +247,21 @@ func writeFindings(f findingsFile, findings []Finding) error {
 // once written. maxEvidence bounds how many ids a finding may cite, but
 // nothing bounds the length of a verbatim quote or the number of findings in
 // an answer, so a set of individually valid findings can still serialise to a
-// findings.jsonl no reader can take back: report, review, and the re-ingest
-// recovery path would all fail on the file Ingest had just reported writing
-// successfully. Both checks run before any write and join the transactional
-// error set, so an oversized answer leaves the previous findings.jsonl
-// untouched rather than bricking it — the write-side pre-flight WriteJSONL's
-// two callers get, which findings.jsonl otherwise lacks because
-// commitFindings writes it through its own locked descriptor rather than
-// WriteJSONL. Labels come from each finding's answer position for the same
-// reason validate's do; a line already flagged as over-long is excluded from
-// the total so one oversized finding cannot also trigger a redundant
-// total-size error.
+// findings.jsonl report and review (both via analyze.Load, which routes
+// through ParseRecords) refuse to read back. The two checks are not
+// equivalent for holdsVerdicts' own re-ingest recovery scan: its scanner
+// buffer is capped at MaxJSONLLine too, so an over-long line still blocks
+// recovery the same way, but holdsVerdicts bounds only a single line, not the
+// total it scans, so an over-total file with no over-long line does not block
+// it — a further -ingest can still probe and overwrite such a file. Both
+// checks here run before any write and join the transactional error set, so
+// an oversized answer leaves the previous findings.jsonl untouched rather
+// than bricking it — the write-side pre-flight WriteJSONL's two callers get,
+// which findings.jsonl otherwise lacks because commitFindings writes it
+// through its own locked descriptor rather than WriteJSONL. Labels come from
+// each finding's answer position for the same reason validate's do; a line
+// already flagged as over-long is excluded from the total so one oversized
+// finding cannot also trigger a redundant total-size error.
 func oversizedFindings(findings []Finding, decoded []positioned) []error {
 	var errs []error
 	var total int64
@@ -277,7 +282,7 @@ func oversizedFindings(findings []Finding, decoded []positioned) []error {
 		counted++
 	}
 	if total > session.MaxJSONLBytes {
-		errs = append(errs, fmt.Errorf("findings encode to %d bytes across %d findings, exceeding the %d-byte %s file limit ReadJSONL/ParseRecords enforce; refusing to write a session no command could read back", total, counted, session.MaxJSONLBytes, session.FindingsFile))
+		errs = append(errs, fmt.Errorf("findings encode to %d bytes across %d findings, exceeding the %d-byte %s file limit ParseRecords enforces; refusing to write a file report and review could not read back", total, counted, session.MaxJSONLBytes, session.FindingsFile))
 	}
 	return errs
 }

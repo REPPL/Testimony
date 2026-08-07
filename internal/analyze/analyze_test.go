@@ -914,8 +914,10 @@ func TestIngestOversizedFindingLeavesPriorFileIntact(t *testing.T) {
 // findings.jsonl over session.MaxJSONLBytes — the same total WriteJSONL's two
 // callers are held to, but findings.jsonl's own locked-descriptor writer was
 // not. Pre-fix commitFindings wrote it and Ingest reported success, leaving
-// report, review, and the re-ingest recovery path unable to read the file
-// back. Tested against oversizedFindings directly (as
+// report and review unable to read the file back (holdsVerdicts, the
+// re-ingest recovery path, bounds only a single line, not the total it
+// scans, so it could still probe and overwrite such a file). Tested against
+// oversizedFindings directly (as
 // TestWriteFindingsRollsBackOnWriteError tests writeFindings), not through
 // Ingest, for a small and exactly predictable byte count: see
 // TestIngestRejectsOversizedFindingsTotal for the equivalent reachable

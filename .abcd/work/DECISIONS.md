@@ -958,10 +958,11 @@ Architecture-shaping decisions graduate to an ADR under
   lacking this write-side pre-flight, is corrected to name where it now
   lives. Nitpicks fixed: `session-directory.md`'s `report.md` `MM:SS`
   description didn't note the leading `-` a time preceding `t0` renders
-  with; `install.sh`'s trap-roster comment (already widened once, in
-  round 30, from naming only `$tmp`) still didn't name `$staged`, the binary
-  staged into `INSTALL_DIR` ahead of the atomic rename, the one cleanup
-  target that touches the user's install directory rather than a temp dir;
+  with; `install.sh`'s trap-roster comment has named `$tmp`, `$tmp2`,
+  `$gnupg`, and `$uvd` since round 9 introduced it, and round 10 added
+  `$staged` to the traps themselves without updating the comment to match
+  — the one cleanup target that touches the user's install directory rather
+  than a temp dir, now named;
   `analyse-a-session.md` said "the CLI ... reaches no network", the sole
   outlier of the repo's six other "adds no network dependency" instances
   and, read literally as unscoped, contradicted by `demo`'s CDN-loaded rrweb
@@ -998,7 +999,7 @@ Architecture-shaping decisions graduate to an ADR under
   total-size check — `AppendVerdict` still bounds only the one verdict
   record it appends against `MaxJSONLLine`; rescoped. `CHANGELOG.md`'s new
   entry was moved from the `Capture integrity` group into `Evidence
-  integrity`, where every other `findings.jsonl` entry lives. The
+  integrity`, where the other `findings.jsonl` integrity entries live. The
   correctness reviewer then reproduced the round's own fix being reachable
   through the public `Ingest` API at a fraction of `maxAnswerBytes`, not
   only through direct unit testing as the new test's own comment had
@@ -1029,4 +1030,25 @@ Architecture-shaping decisions graduate to an ADR under
   "already-small", contradicted by `review.go`'s own comment on why that
   record's size is checked at all; and the `MM:SS` sign note didn't say a
   time that rounds to zero renders unsigned, or that "this page" meant
-  `report.md` rather than the reference page carrying the note.
+  `report.md` rather than the reference page carrying the note. A third
+  pair of reviews, re-deriving every prior fix from the files themselves
+  rather than trusting either round's own description, confirmed the
+  `CHANGELOG.md` group placement was finally correct but caught two more
+  defects: `oversizedFindings`'s own doc comment, the CHANGELOG entry, the
+  new test's comment, and this file's first-round entry all claimed an
+  over-total `findings.jsonl` is unreadable to "report, review, and the
+  re-ingest recovery path" alike — false for the total case, where
+  `holdsVerdicts` (the recovery path) still scans and can overwrite the
+  file, because its scanner bounds only a line, not the total; only report
+  and review (via `ParseRecords`) actually refuse it. Reworded everywhere
+  the claim appeared, and `commitFindings`'s own doc comment (which only
+  named the per-line bound as pre-checked) now names both. Separately, this
+  file's claim that `install.sh`'s trap-roster comment was "already widened
+  once, in round 30, from naming only `$tmp`" was itself wrong: that
+  comment has named `$tmp`/`$tmp2`/`$gnupg`/`$uvd` since round 9 introduced
+  it; round 30 fixed a different comment entirely (`install_ffmpeg_local`'s
+  error-handling note); corrected to say `$staged` was added to the traps
+  in round 10 without a matching comment update. Also softened this file's
+  "where every other `findings.jsonl` entry lives" to "the other
+  `findings.jsonl` integrity entries live" (`CHANGELOG.md`'s `Invocation
+  contract` group holds `findings.jsonl` entries too).

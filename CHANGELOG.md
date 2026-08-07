@@ -179,8 +179,8 @@ Evidence integrity:
   `WriteJSONL`'s callers are already held to: nothing previously bounded the
   sum across an answer's findings, only the length of one finding's line, so
   a set of individually valid findings could still serialise to a file
-  `report`, `review`, and `analyze`'s own re-ingest recovery path all refuse
-  to read back. It used to report success and write the unreadable file.
+  `report` and `review` both refuse to read back. It used to report success
+  and write the unreadable file.
 
 Capture and diagnostics:
 
