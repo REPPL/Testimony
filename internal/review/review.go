@@ -341,16 +341,19 @@ func AppendVerdict(dir string, v analyze.Verdict, expect *analyze.Finding) error
 	// past MaxJSONLBytes, and every later analyze.Load, review, report, and
 	// holdsVerdicts would refuse it — including the verdict just appended, and any
 	// recorded before it. Measured under the lock, after the file is open, so a
-	// concurrent append cannot land between this check and the write below. The
-	// +1 accounts for writeVerdict's leading newline, added when the file's last
-	// line is unterminated, so a file this accepts cannot be pushed over the cap
-	// by the write that follows.
+	// concurrent append cannot land between this check and the write below. writeVerdict
+	// is called with append(b, '\n') below — len(b)+1 bytes — but writeVerdict itself
+	// prepends a second leading newline when the file is non-empty and its last byte
+	// is not already '\n' (an exchanged or hand-edited findings.jsonl can end
+	// unterminated), so the worst case it actually writes is len(b)+2, not len(b)+1;
+	// budgeting only +1 here let a file at exactly the cap minus (len(b)+1) pass this
+	// check and still land one byte over MaxJSONLBytes.
 	info, err := f.Stat()
 	if err != nil {
 		f.Close()
 		return err
 	}
-	if info.Size()+int64(len(b))+1 > session.MaxJSONLBytes {
+	if info.Size()+int64(len(b))+2 > session.MaxJSONLBytes {
 		f.Close()
 		return fmt.Errorf("%s is %d bytes; appending this verdict would push it past the %d-byte JSONL file limit; refusing to write a session no command could read back",
 			session.FindingsFile, info.Size(), session.MaxJSONLBytes)

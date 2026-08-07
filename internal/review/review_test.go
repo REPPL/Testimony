@@ -896,6 +896,46 @@ func TestAppendVerdictAcceptsFileUnderTotalCap(t *testing.T) {
 	}
 }
 
+// TestAppendVerdictRefusesOversizedTotalOnUnterminatedFile is the boundary
+// case TestAppendVerdictRefusesOversizedTotal cannot exercise: an unterminated
+// findings.jsonl (a real state — an exchanged or hand-edited file, or one left
+// short by a crash part-way through an earlier write; see the "unterminated
+// last line" comment on writeVerdict below). writeVerdict itself prepends a
+// leading newline in that case, on top of the trailing newline the caller
+// already appends, so the actual write is len(b)+2 bytes, not len(b)+1.
+// Budgeting only +1 (an earlier version of this check did) let a file sized
+// just under the cap by exactly len(b)+1 pass the pre-flight and still land
+// one byte over MaxJSONLBytes.
+func TestAppendVerdictRefusesOversizedTotalOnUnterminatedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, session.FindingsFile)
+
+	rec := analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	// No trailing newline: exactly session.MaxJSONLBytes - len(b) - 1 bytes, the
+	// size a +1-only budget would accept.
+	pad := []byte(strings.Repeat("x", session.MaxJSONLBytes-len(b)-1))
+	if err := os.WriteFile(path, pad, 0o644); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+
+	if err := AppendVerdict(dir, rec, nil); err == nil || !strings.Contains(err.Error(), "JSONL file limit") {
+		t.Fatalf("expected an over-total refusal naming the JSONL file limit, got %v", err)
+	}
+
+	got, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatalf("read findings: %v", rerr)
+	}
+	if !bytes.Equal(got, pad) {
+		t.Fatalf("findings.jsonl was modified despite the refusal")
+	}
+}
+
 // TestAppendVerdictRefusesReingestedFinding is the verdict-misattribution
 // regression. review.Run snapshots findings once and then blocks on the operator
 // for the whole interactive walk; a concurrent `analyze -ingest` may
