@@ -259,7 +259,8 @@ func writeFindings(f findingsFile, findings []Finding) error {
 // total-size error.
 func oversizedFindings(findings []Finding, decoded []positioned) []error {
 	var errs []error
-	var total int
+	var total int64
+	var counted int
 	for i, f := range findings {
 		label := findingLabel(f, decoded[i].at)
 		line, err := json.Marshal(f)
@@ -267,15 +268,16 @@ func oversizedFindings(findings []Finding, decoded []positioned) []error {
 			errs = append(errs, fmt.Errorf("%s: cannot encode as JSON: %w", label, err))
 			continue
 		}
-		lineLen := len(line) + 1
+		lineLen := int64(len(line) + 1)
 		if lineLen > session.MaxJSONLLine {
 			errs = append(errs, fmt.Errorf("%s: encodes to %d bytes, exceeding the %d-byte %s line limit", label, lineLen, session.MaxJSONLLine, session.FindingsFile))
 			continue
 		}
 		total += lineLen
+		counted++
 	}
 	if total > session.MaxJSONLBytes {
-		errs = append(errs, fmt.Errorf("findings encode to %d bytes across %d findings, exceeding the %d-byte %s file limit ReadJSONL/ParseRecords enforce; refusing to write a session no command could read back", total, len(findings), session.MaxJSONLBytes, session.FindingsFile))
+		errs = append(errs, fmt.Errorf("findings encode to %d bytes across %d findings, exceeding the %d-byte %s file limit ReadJSONL/ParseRecords enforce; refusing to write a session no command could read back", total, counted, session.MaxJSONLBytes, session.FindingsFile))
 	}
 	return errs
 }

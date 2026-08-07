@@ -986,3 +986,32 @@ Architecture-shaping decisions graduate to an ADR under
   discusses the release workflow tag pushes go through); and the
   `manifest.json` example's field trimming, re-raised independently of round
   34's identical refutation of the same claim.
+- 2026-08-07 — Round 35's own PR (#52) picked up two adversarial reviews
+  before merge. The docs-accuracy reviewer caught that the round's own
+  `MM:SS` fix said the leading `-` marks a time preceding `sessionStart`
+  (`sessionStart` is itself a minimum, so nothing can precede it — the sign
+  actually marks a time preceding `t0`) and pointed its cross-reference
+  "below" at a `t` note that is above; both corrected, and the note widened
+  to say it covers the header's duration `MM:SS` too, not only the Timeline
+  bullet's. It also caught `session.go`'s reworded `WriteJSONL` comment
+  overclaiming that `review.AppendVerdict` shares `oversizedFindings`'
+  total-size check — `AppendVerdict` still bounds only the one verdict
+  record it appends against `MaxJSONLLine`; rescoped. `CHANGELOG.md`'s new
+  entry was moved from the `Capture integrity` group into `Evidence
+  integrity`, where every other `findings.jsonl` entry lives. The
+  correctness reviewer then reproduced the round's own fix being reachable
+  through the public `Ingest` API at a fraction of `maxAnswerBytes`, not
+  only through direct unit testing as the new test's own comment had
+  claimed: `oversizedFindings` and `writeFindings` both encode with Go's
+  default HTML-escaping JSON encoder, so a quote or evidence id containing
+  `<`, `>`, or `&` inflates roughly sixfold between the answer's raw bytes
+  and the line actually measured/written — five findings quoting a
+  ~600,000-byte run of `<` encode to ~18 MiB written from a ~3 MiB answer,
+  under a fifth of the read-side cap. Added `TestIngestRejectsOversizedFindingsTotal`
+  to exercise that path end-to-end and corrected the unit test's comment.
+  Also fixed two nitpicks the same review raised: the total-size error
+  message counted all findings in its denominator while `total` itself
+  excludes any already flagged as over-long, so the two numbers disagreed
+  whenever both errors fired in the same answer; and `total` was `int`
+  where its sibling `WriteJSONL` uses `int64` (unreachable overflow given
+  `maxAnswerBytes`, but inconsistent).
