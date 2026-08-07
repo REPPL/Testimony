@@ -181,6 +181,24 @@ Evidence integrity:
   a set of individually valid findings could still serialise to a file
   `report` and `review` both refuse to read back. It used to report success
   and write the unreadable file.
+- **Behaviour:** `review` refuses to record a verdict that would push
+  `findings.jsonl` past its 16 MiB total-size limit, the last of the file's
+  three writers left unguarded after the previous entry closed the same gap
+  for `analyze -ingest`. A `findings.jsonl` built at or near the cap could
+  legally exist; recording a verdict against it used to succeed and silently
+  brick every finding and verdict already on file — every later `analyze
+  -ingest`, `review`, and `report` call, including `report`'s own render,
+  either refused the file outright or (for `report`) rendered it as no
+  findings at all, with no in-tool repair (re-ingesting was itself refused
+  once a verdict record existed).
+- **Behaviour:** `demo`'s capture endpoint refuses a POST to `/api/interactions`
+  that would push `interactions.jsonl` past its 16 MiB total-size limit,
+  matching the cap `merge` already enforces on read. Each interaction record
+  was checked only against the per-line limit, so a session with enough
+  individually valid captures — each answered `204` — could accumulate past
+  the total the file's own reader refuses, discovered only once capture
+  ended and `merge` could no longer read the session back. `events.rrweb.jsonl`
+  is unaffected: it is archival and carries no total-size cap.
 
 Capture and diagnostics:
 
