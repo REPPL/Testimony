@@ -675,8 +675,15 @@ func TestCtrlCDiagnosesRecorderThatSelfExitedWithPartialOutput(t *testing.T) {
 		t.Fatal("a recorder that self-exited mid-session before the interrupt must still make Run exit non-zero, not present a truncated recording as a clean session")
 	}
 	out := log.String()
-	if !strings.Contains(out, "capture stopped unexpectedly") && !strings.Contains(out, "capture failed to start") {
-		t.Fatalf("the operator was never told the recorder exited on its own: %q", out)
+	// Cancelling inside startRecordersFn, after the child is already reaped,
+	// makes both select cases ready at once: Go's select picks between them
+	// uniformly at random, not deterministically. When anyExit wins, dead's
+	// diagnosis is returned as the error rather than written to opts.Log (the
+	// ctxEarly loop that would print it never runs), so the diagnosis must be
+	// looked for in whichever of the two actually carries it.
+	combined := out + "\n" + err.Error()
+	if !strings.Contains(combined, "capture stopped unexpectedly") && !strings.Contains(combined, "capture failed to start") {
+		t.Fatalf("the operator was never told the recorder exited on its own: log=%q err=%q", out, err)
 	}
 	if !strings.Contains(out, "testimony transcribe") {
 		t.Fatalf("the partial audio.wav was not offered for transcription: %q", out)
