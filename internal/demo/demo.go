@@ -449,11 +449,12 @@ func tooLongForJSONL(line []byte) bool {
 }
 
 // eventIDGrowthMargin bounds tooLongOnceWrapped's blind spot: timeline.EventEntry
-// sizes an interaction's entry with the placeholder id "ev-001", but the id a
-// merged session actually assigns grows with the interaction's position among
-// every interaction in the session, which this single record does not know.
-// A session would need this many interactions before that ordinal's extra
-// digits alone could close a 32-byte gap, which none plausibly reach.
+// sizes an interaction's entry with the placeholder id "ev-001" (6 bytes), but
+// the id a merged session actually assigns grows with the interaction's
+// position among every interaction in the session, which this single record
+// does not know. 32 spare bytes cover an "ev-%03d" ordinal up to 32 digits —
+// past 10^32 interactions — headroom no real session comes remotely close to
+// needing.
 const eventIDGrowthMargin = 32
 
 // tooLongOnceWrapped reports whether an interaction's timeline entry, sized at

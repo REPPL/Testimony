@@ -246,12 +246,16 @@ func Run(opts Options) error {
 		// Other children may have exited on their own at the same moment as
 		// dead: anyExit's channel is buffered to len(children), so a second
 		// self-exit sent before this select fired is already sitting there,
-		// unread, the instant this case runs. Sampled now, before stopAll's
-		// SIGINT reaches them — after that, a live recorder's own clean
+		// unread, the instant this case runs. Both the exit itself and its
+		// start-up-window classification are sampled now, before stopAll's
+		// SIGINT reaches them: after that, a live recorder's own clean
 		// shutdown becomes indistinguishable from a dead one's self-exit, and
-		// treating it the same way here would misreport it as a crash it
-		// never had.
+		// stopAll's own wait — up to stopGrace per remaining child, which
+		// alone equals startupWindow — would charge the shutdown against a
+		// second early exit's classification exactly as it would have
+		// against dead's, the mistake atStartup above exists to avoid.
 		early := map[*liveChild]bool{dead: true}
+		atStartupOf := map[*liveChild]bool{dead: atStartup}
 		for _, c := range children {
 			if c == dead {
 				continue
@@ -259,6 +263,7 @@ func Run(opts Options) error {
 			select {
 			case <-c.done:
 				early[c] = true
+				atStartupOf[c] = time.Since(c.started) < startupWindow
 			default:
 			}
 		}
@@ -303,13 +308,13 @@ func Run(opts Options) error {
 		// dead's own diagnosis is the error Run returns below; every other
 		// early-exited child gets the same honest diagnosis here instead,
 		// since only one classification can be the command's single exit
-		// error.
+		// error. atStartupOf[c] carries each child's pre-stopAll sampling, so
+		// this diagnosis is exactly as accurate as dead's own.
 		for _, c := range children {
 			if c == dead || !early[c] {
 				continue
 			}
-			atStartupC := time.Since(c.started) < startupWindow
-			fmt.Fprintf(opts.Log, "\n%s\n", classifyRecorderExit(c.stream, c.err, c.stderr.tail(), atStartupC))
+			fmt.Fprintf(opts.Log, "\n%s\n", classifyRecorderExit(c.stream, c.err, c.stderr.tail(), atStartupOf[c]))
 		}
 		fmt.Fprintf(opts.Log, "\n%s\n", nextCommands(dir, audioReady, capturePossible))
 		return errors.New(classifyRecorderExit(dead.stream, dead.err, dead.stderr.tail(), atStartup))

@@ -530,8 +530,9 @@ Capture integrity:
   into a larger entry (a `src`/`id`/`payload` envelope, and — because of the
   escaping — up to sixfold inflation for any of those three characters), so
   a record within the raw line limit could still be durably persisted at
-  204/exit 0 and then permanently unreadable: `merge`, `report`, and
-  `analyze` all refused it, with no CLI-level repair.
+  204/exit 0 and then permanently unmergeable: `merge` refused to write its
+  timeline entry on every re-run, leaving `report` and `analyze` with no
+  timeline to read, with no CLI-level repair.
 - `record -video` no longer misdiagnoses a second recorder that also exits
   on its own before being asked to stop: only the recorder `anyExit`'s
   select happened to observe was excluded from the missing-output sweep, so

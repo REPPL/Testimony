@@ -810,8 +810,9 @@ Architecture-shaping decisions graduate to an ADR under
   itself: `merge`'s `src`/`id`/`payload` wrapping (`timeline.BuildEntries`)
   could push an entry over the limit that its source record, checked alone,
   passed, so a record was durably persisted at 204/exit 0 and then
-  permanently unreadable by `merge`, `report`, and `analyze`, with no
-  CLI-level repair. `session.WriteJSONL`'s encoder also stopped HTML-escaping
+  permanently unmergeable: `merge` refused to write its timeline entry on
+  every re-run, leaving `report` and `analyze` with no timeline to read, with
+  no CLI-level repair. `session.WriteJSONL`'s encoder also stopped HTML-escaping
   `<`, `>`, `&` into six-byte `\uXXXX` sequences (`SetEscapeHTML(false)`,
   matching `compactLine`'s existing non-escaping behaviour): the escaping
   alone could inflate an accepted record's wrapped entry up to sixfold,
