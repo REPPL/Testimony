@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"os"
@@ -347,6 +348,45 @@ func TestWriteJSONLRefusalLeavesNoPartialFile(t *testing.T) {
 	}
 }
 
+// TestWriteJSONLRefusesOversizedTotal is the write-side half of
+// TestReadJSONLRefusesOversizedTotal: a set of records whose total would
+// exceed MaxJSONLBytes must be refused before the file is opened, matching
+// SaveManifest's write-before-read stance — a session whose timeline.jsonl or
+// transcript.jsonl exceeds ReadJSONL's total-size cap can never be read back
+// by merge, report, or analyze. Records are padded well under MaxJSONLLine
+// rather than minimal, so the set crosses the total-size cap in a few
+// thousand records instead of millions.
+func TestWriteJSONLRefusesOversizedTotal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	if err := WriteJSONL(path, []map[string]string{{"actor": "Alice"}}); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+
+	// {"v":"<4000 x's>"}\n is ~4010 bytes; enough records push the total past
+	// MaxJSONLBytes.
+	pad := strings.Repeat("x", 4000)
+	values := make([]map[string]string, MaxJSONLBytes/4010+10)
+	for i := range values {
+		values[i] = map[string]string{"v": pad}
+	}
+	err := WriteJSONL(path, values)
+	if err == nil {
+		t.Fatal("WriteJSONL persisted a set over MaxJSONLBytes in total; want refusal")
+	}
+	if !strings.Contains(err.Error(), "JSONL file limit") {
+		t.Errorf("error does not name the file-size limit: %v", err)
+	}
+
+	// The earlier artefact is intact: the refused write never opened the file.
+	got, err := ReadJSONL[map[string]string](path)
+	if err != nil {
+		t.Fatalf("ReadJSONL after refusal: %v", err)
+	}
+	if len(got) != 1 || got[0]["actor"] != "Alice" {
+		t.Fatalf("refused write disturbed the existing artefact: %v", got)
+	}
+}
+
 // TestWriteJSONLDoesNotEscapeHTML pins WriteJSONL's encoder to the same
 // non-escaping behaviour compactLine (demo's capture-side line canonicaliser)
 // already has: JSONL artefacts are never embedded in HTML, so escaping <, >,
@@ -505,6 +545,64 @@ func TestReadJSONLPlainFileStillWorks(t *testing.T) {
 	}
 	if len(got) != 1 || got[0]["actor"] != "Carol" {
 		t.Fatalf("plain-file read disturbed by the guard: %v", got)
+	}
+}
+
+// TestReadJSONLRefusesOversizedTotal covers the file-size hole MaxJSONLLine
+// left open: a per-line cap bounds one record but not how many a file may
+// hold. A session's JSONL artefacts are attacker-controllable when exchanged,
+// so a file built from many small, individually-legal lines used to buffer
+// without limit into out, driving json.Unmarshal's per-line allocation well
+// past the bytes on disk. ReadJSONL now caps the running total at
+// MaxJSONLBytes and refuses anything larger, matching LoadManifest's stance
+// on manifest.json. Lines are padded well under MaxJSONLLine rather than
+// minimal, so the file crosses the total-size cap in a few thousand lines
+// instead of millions — the cap counts bytes, not lines, so this exercises
+// the same running-total check with far less test overhead.
+func TestReadJSONLRefusesOversizedTotal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	w := bufio.NewWriter(f)
+	line := []byte(`{"a":"` + strings.Repeat("x", 4000) + `"}` + "\n")
+	for total := 0; total <= MaxJSONLBytes; total += len(line) {
+		if _, err := w.Write(line); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	_, err = ReadJSONL[map[string]any](path)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected an oversize-total refusal, got %v", err)
+	}
+}
+
+// TestReadJSONLAcceptsOrdinaryTotal guards the ordinary case
+// TestReadJSONLRefusesOversizedTotal's cap must not break: a normal,
+// many-but-small-line file still reads back in full.
+func TestReadJSONLAcceptsOrdinaryTotal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), TimelineFile)
+	values := make([]map[string]int, 1000)
+	for i := range values {
+		values[i] = map[string]int{"n": i}
+	}
+	if err := WriteJSONL(path, values); err != nil {
+		t.Fatalf("WriteJSONL: %v", err)
+	}
+	got, err := ReadJSONL[map[string]int](path)
+	if err != nil {
+		t.Fatalf("ReadJSONL: %v", err)
+	}
+	if len(got) != len(values) {
+		t.Fatalf("got %d entries, want %d", len(got), len(values))
 	}
 }
 
