@@ -334,9 +334,9 @@ Assert the append-only property (finding lines byte-unchanged after review).
 **Effective-status unit tests:** last-verdict-wins, including a
 confirmed-then-rejected sequence.
 
-**Sample smoke:** `merge → analyze -ingest (bundled) → report` on
-`examples/sample-session`; grep `report.md` for the confirmed save-feedback
-finding (extends the existing CI smoke test).
+**Sample smoke:** `merge → report` on `examples/sample-session`; grep
+`report.md` for the confirmed save-feedback finding shipped in the bundled
+`findings.jsonl` (the existing CI smoke test).
 
 **Live verification (part of done, not CI):** run the emitted prompt against the
 slice-1 captured session in the maintainer's own host, ingest the answer, review
