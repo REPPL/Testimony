@@ -239,8 +239,9 @@ read only derived text; it never touches media.
 
 ### Package layout & session constants
 
-- `internal/analyze` — the `Finding` and `Verdict` types, `Validate` (the ingest
-  rules), `EffectiveStatus`, the prompt emitter (`EmitRequest`), and `Ingest`.
+- `internal/analyze` — the `Finding` and `Verdict` types, `validate` (the
+  unexported ingest rules), `EffectiveStatus`, the prompt emitter
+  (`EmitRequest`), and `Ingest`.
 - `internal/review` — the interactive walk and the verdict-append helper
   (`AppendVerdict`), calling `internal/analyze` for load/validate.
 - `internal/report` imports `internal/analyze` for the types and status helper.
@@ -346,7 +347,7 @@ two findings, and read the final report; fix what it exposes before the PR.
 
 - **AC1** (merged timeline → `findings.jsonl`, every finding typed from the
   five-value set, with `t`, quote, evidence, and `status: unverified`) — the
-  schema table + `Validate` require exactly these fields with those rules, and
+  schema table + `validate` require exactly these fields with those rules, and
   ingest forces `unverified`.
 - **AC2** (Alice records a verdict → status becomes
   `confirmed|rejected|duplicate` and persists) — `review` (interactive and
