@@ -727,6 +727,60 @@ func TestInteractionAcceptedUnderTotalCap(t *testing.T) {
 	}
 }
 
+// TestInteractionRefusedWhenWrappedTotalExceedsCap is the wrapped-total twin of
+// TestInteractionRefusedOverTotalCap: session.WriteJSONL's cap on timeline.jsonl
+// binds on each interaction's *wrapped* timeline-entry size, not its raw
+// interactions.jsonl bytes, and the wrapped form runs larger (the src/id/payload
+// envelope and rebased t). Tracking only the raw running total let a sequence of
+// individually-valid, 204-accepted records cross the wrapped cap long before the
+// raw total did, durably bricking merge without ever refusing a single request
+// (empirically: tens of thousands of accepted records past the point merge could
+// still write timeline.jsonl). A record posted once entryBytes — the running
+// wrapped total — is close to the cap must be refused, even though
+// interactions.jsonl's own raw bytes are nowhere near it.
+func TestInteractionRefusedWhenWrappedTotalExceedsCap(t *testing.T) {
+	s, dir := newTestServer(t)
+	// As if prior records already wrapped to just under the cap; the raw file
+	// itself is still empty, so the pre-existing raw-size check alone would
+	// let this record through.
+	s.entryBytes = session.MaxJSONLBytes - 10
+
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", `{"t":1,"kind":"click"}`, nil))
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", w.Code)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, session.InteractionsFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", session.InteractionsFile, err)
+	}
+	if len(got) != 0 {
+		t.Fatal("refused write was persisted")
+	}
+}
+
+// TestInteractionAcceptedWhenWrappedTotalUnderCap is the positive control for
+// TestInteractionRefusedWhenWrappedTotalExceedsCap: a record posted while
+// entryBytes has enough headroom under session.MaxJSONLBytes is still accepted,
+// and entryBytes grows to reflect it.
+func TestInteractionAcceptedWhenWrappedTotalUnderCap(t *testing.T) {
+	s, dir := newTestServer(t)
+	s.entryBytes = session.MaxJSONLBytes - 10000
+
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", `{"t":1,"kind":"click"}`, nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	if s.entryBytes <= session.MaxJSONLBytes-10000 {
+		t.Fatal("accepted write did not grow entryBytes")
+	}
+	if lines := fileLines(t, filepath.Join(dir, session.InteractionsFile)); len(lines) != 1 {
+		t.Fatalf("wrote %d lines, want 1", len(lines))
+	}
+}
+
 // TestBatchEventsIgnoreTotalCap pins the deliberate asymmetry: events.rrweb.jsonl
 // is archival (session.MaxJSONLBytes' own doc comment exempts it — nothing reads
 // it back through a total-capped path), so a batch upload against a file already
