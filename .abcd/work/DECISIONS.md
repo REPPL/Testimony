@@ -1312,3 +1312,44 @@ Architecture-shaping decisions graduate to an ADR under
   `analyse-a-session.md` omitting the 16 MiB limit round 37 added to three
   sibling pages (both refuters found the how-to omits every file-state
   refusal uniformly by design, not selectively).
+- 2026-08-08 — Bug-hunt round 39: zero substantive defects, three nitpicks,
+  four refuted. `cli.md`'s ingest section claimed to check an answer
+  against "every schema rule" but omitted the `mode` A|B enum
+  `validate.go:164-166` enforces, the one rule missing from an otherwise
+  complete, source-ordered list. `docs/reference/session-directory.md` and
+  the internal schema brief (`02-schemas.md`) both showed a `findings.jsonl`
+  example as `"t":22.0`, a form the CLI never writes — `findings.jsonl` is
+  written output, and Go's `encoding/json` marshals `float64(22)` as `22`,
+  matching the bundled fixture; corrected both. `spc-2-analysis-findings.md`
+  named `Validate` as a live `internal/analyze` export in two places; round
+  34 deleted it as a zero-caller export, leaving only the unexported
+  `validate` — the spec had been amended for accuracy several times since
+  (rounds 19/20/21/37/38) but missed this one. Refuted: `record
+  -participant ""` silently defaulting to `P1` instead of refusing, unlike
+  the empty-flag-guard family (rounds 18/19/21/22/23 closed that family
+  against required-path/closed-enum flags only; `-participant` is neither,
+  and round 23 already refuted the identical shape for `transcribe
+  -model`/`-language`); `cli.md`'s `-window` row omitting the same
+  finiteness usage-error `-offset`'s row documents (the generic exit-2 row
+  already covers it, and `-offset`'s inline clause exists for its
+  non-obvious ±10⁹s bound, not for finiteness symmetry); `demo`'s printed
+  instructions never saying to *save* an external QuickTime recording
+  before referencing it as `<your-recording.m4a>` (split refuter verdict —
+  discarded per the loop's tie-breaking rule; the same phrasing is the
+  repo-wide convention, matching `record`'s identical fallback text, and
+  the failure mode is a self-diagnosing "no such file"); and
+  `01-packages.md` reading as claiming all nine subcommands get their own
+  `flag.FlagSet`, when `version`/`help` parse none (both refuters read the
+  parenthetical as a subcommand roster, not an allocation claim, matching
+  `CLAUDE.md`'s own "seven pipeline commands ... plus version and help").
+  Separately, live manual testing of a fresh v0.4.0 install surfaced two
+  usability observations outside this round's scope (no misleading doc
+  claim, no wrong behaviour): `transcribe` gives no progress feedback
+  during a whisperx run — `runWhisperX` (`internal/transcribe/whisperx.go:68`)
+  buffers the subprocess's entire output via `cmd.CombinedOutput()`, so
+  nothing reaches the terminal between the offset line and completion,
+  which can plausibly take minutes on CPU-only hardware; and `record`/
+  `demo`'s default `-out sessions` is relative to the current working
+  directory rather than a fixed, discoverable location, prompting a new
+  draft intent, `itd-10-fixed-session-location`, for the maintainer to
+  weigh in on. Neither was actioned as a code fix this round.
