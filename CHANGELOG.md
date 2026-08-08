@@ -391,8 +391,8 @@ Documentation:
   still making the unqualified claim.
 - `spc-2-analysis-findings.md` carried two absolute network claims. The
   Summary's "No LLM and no network anywhere in the CLI" is removed outright
-  — the correctly scoped form already sits two sentences earlier in the
-  same paragraph, so it was a redundant restatement, not new information.
+  — the correctly scoped form already appears earlier in the same
+  paragraph, so it was a redundant restatement, not new information.
   The Decisions section's separate "the CLI never calls a model or the
   network" is reworded to the same scoped form used everywhere else in the
   repo. `record`'s live capture, the demo page's CDN-loaded rrweb recorder,

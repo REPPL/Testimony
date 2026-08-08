@@ -1214,8 +1214,8 @@ Architecture-shaping decisions graduate to an ADR under
   by factoring the print into a new, unit-tested `formatAudioRoster`.
   `spc-2-analysis-findings.md:25`'s untouched, unscoped "No LLM and no
   network anywhere in the CLI" claim, flagged in round 36's own entry
-  above, is removed outright — a correctly scoped form of it already sits
-  two sentences earlier in the same paragraph, so it was a redundant
+  above, is removed outright — a correctly scoped form of it already
+  appears earlier in the same paragraph, so it was a redundant
   restatement. Its previously-unnoticed sibling in the same file's
   Decisions section ("the CLI never calls a model or the network") is
   reworded to that same scoped form used everywhere else in the repo —
