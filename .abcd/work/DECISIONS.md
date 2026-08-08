@@ -1087,29 +1087,34 @@ Architecture-shaping decisions graduate to an ADR under
   session's `interactions.jsonl` durably unmergeable — `merge` then refuses
   it outright, so `timeline.jsonl` is never produced and `report`/`analyze`
   fail for lack of it — discovered only after capture ended. Reachable well
-  within an ordinary session once records carry realistic per-interaction
-  context (ordinary bare-field captures using only the four documented
-  fields need tens of thousands to cross the cap; a session whose records
-  also carry the kind of extra per-element context
-  `instrument-your-own-app.md` explicitly permits as harmless reaches it in
-  the low thousands), not the contrived multi-megabyte records the hunting
-  round first reproduced with. Fixed the same way, with its own `Seek` to
+  within an ordinary session, not just the contrived multi-megabyte records
+  the hunting round first reproduced with: the bundled
+  `examples/sample-session/interactions.jsonl` fixture averages ~130 bytes
+  per record across its six documented fields (`t`, `kind`, `selector`,
+  `text`, `value`, `route` — two required, four optional), and a session of
+  ordinary records at that size crosses the 16 MiB cap at roughly 130,000
+  interactions. Fixed the same way, with its own `Seek` to
   the file's current end before every write; `events.rrweb.jsonl` is
   deliberately exempt, matching `MaxJSONLBytes`' own documented archival
   carve-out. Both fixes carry regression tests watched to fail pre-fix and
   pass post-fix, and both survived two independent adversarial refuters
   apiece, including live end-to-end reproductions against a built binary
   rather than re-reading the same source the hunt round had. Nitpicks
-  fixed: `README.md`'s "the CLI never calls a model or the network" was the
-  one absolute network claim rounds 26, 27, and 35's otherwise-identical
+  fixed: `README.md`'s "the CLI never calls a model or the network" was an
+  absolute network claim rounds 26, 27, and 35's otherwise-identical
   corrections missed — round 35's "sole outlier" framing covered only the
   canonical `adds no network dependency` phrase, which cannot match
   README's differently-worded instance; reworded to the canonical,
-  `analyze`-scoped form (four developer-facing files — `AGENTS.md`,
-  `.abcd/work/CONTEXT.md`, and two `.abcd/development/` specs — still carry
-  the scoped `adds no network dependency` claim, which this round's finding
-  never targeted, so they are left as-is; README is now a sixth file
-  carrying that phrase, one past round 35's count of five).
+  `analyze`-scoped form. Six other files already carried the correctly-scoped
+  `adds no network dependency` phrase untouched by this round's finding —
+  `AGENTS.md`, `docs/reference/cli.md`, `docs/how-to/analyse-a-session.md`
+  (round 35's fix), `internal/analyze/analyze.go`'s doc comment, and two
+  `.abcd/development/` files (a spec and a brief) — so README is the
+  seventh, not the sixth this file first said. A related absolute claim
+  survives untouched at `spc-2-analysis-findings.md:25`
+  (`.abcd/development/specs/open/`) — "No LLM and no network anywhere in
+  the CLI" — same defect class, internal-doc scope; out of this round's
+  confirmed findings, left for a future round.
   `docs/reference/session-directory.md`'s `findings.jsonl` schema table
   named `mode`'s `A`/`B` values without defining what distinguishes them
   anywhere user-facing (the only definition lived in internal, non-shipped
@@ -1145,10 +1150,37 @@ Architecture-shaping decisions graduate to an ADR under
   refuse the file outright" when only `merge` reads `interactions.jsonl`
   directly (`report`/`analyze` fail downstream for lack of the
   `timeline.jsonl` `merge` never produces); and the round's original
-  "~2,000 ordinary-sized interactions" reachability figure understated by
-  30-80x what the four bare documented interaction fields alone need to
-  cross the cap, conflating a reproduction that had padded records with an
-  extra, non-bare field with the "ordinary" case. All corrected in the
-  commits and this entry before merge; the code fixes themselves (both the
-  original two and the off-by-one correction) were independently confirmed
-  sound by both reviewers.
+  "~2,000 ordinary-sized interactions" reachability figure understated what
+  ordinary records need to cross the cap, conflating a reproduction that
+  had padded records with an extra, non-bare field with the ordinary case.
+  All corrected before merge; the code fixes themselves (both the original
+  two and the off-by-one correction) were independently confirmed sound by
+  both reviewers. A second pair of adversarial reviews then re-verified the
+  corrected HEAD from scratch. The correctness reviewer independently
+  re-derived the `+2` arithmetic, ran its own boundary-condition sweep
+  against a built binary (terminated/unterminated files at cap-1/cap/cap+1,
+  empty, and already-over-cap), and confirmed every accepted write lands at
+  or under the cap with no false acceptance and only a single, deliberate,
+  safe-direction false refusal at one exact file size (a terminated file
+  whose append would land exactly at the cap, refused anyway because the
+  pre-flight budgets the unterminated worst case rather than probing the
+  file's last byte) — verdict MERGE. The docs-accuracy reviewer caught that
+  the first round's own corrections had introduced fresh errors: the
+  "~2,000" reachability figure's replacement still named "four documented
+  fields" when the schema documents six (`t`, `kind`, `selector`, `text`,
+  `value`, `route`; two required, four optional) and still said "tens of
+  thousands" when the bundled sample session's own ~130-byte average record
+  size crosses the cap at roughly 130,000 — both corrected here to name the
+  real field count and the fixture-derived figure directly, dropping the
+  now-unnecessary "30-80x" framing above; a `CHANGELOG.md` entry for the
+  `demo` capture-endpoint fix was misplaced in `Evidence integrity`
+  (`findings.jsonl` entries) rather than `Capture integrity`
+  (`interactions.jsonl` entries, where its nearest siblings live) — moved,
+  the same class of group-placement miss round 35's own post-fix reviews
+  also caught; and this file's own recount of files carrying the
+  correctly-scoped `adds no network dependency` phrase was still wrong by
+  one (README is the seventh carrier, not the sixth) and mischaracterised
+  the round's finding as "the one absolute network claim" when
+  `spc-2-analysis-findings.md:25` carries an untouched, unscoped "No LLM
+  and no network anywhere in the CLI" of the identical class — both
+  corrected above. Verdict MERGE once fixed.
