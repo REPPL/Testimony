@@ -228,10 +228,10 @@ Capture and diagnostics:
 - `record`'s detected audio-device roster is passed through the same
   invisible-Unicode/bidi-reordering sanitiser as the device-probe and
   recorder-stderr tails printed alongside it — a device name that reached
-  the terminal unsanitised was the one class this package's earlier
-  hardening still missed, and it is precisely the string the roster exists
-  to make readable, so a crafted device name could hide its own entry from
-  the operator it was meant to warn.
+  the terminal unsanitised had gone unnoticed by this package's earlier
+  hardening, and it is precisely the string the roster exists to make
+  readable, so a crafted device name could hide its own entry from the
+  operator it was meant to warn.
 
 Checks and installer:
 
@@ -397,17 +397,18 @@ Documentation:
   was false the moment it left `analyze`'s own boundary.
 - `cli.md`, the instrument-your-own-app how-to, and the session-directory
   reference now name the 16 MiB total-size limit on `timeline.jsonl`,
-  `transcript.jsonl`, `interactions.jsonl`, and `findings.jsonl`: every
-  reader/writer for these four files has enforced it since round 33, but no
-  user-facing doc named it, so a capture or ingest refused for reaching it
-  had no documented cause or remedy.
+  `transcript.jsonl`, `interactions.jsonl`, and `findings.jsonl`: the
+  readers have enforced it since round 33 and the last writers since round
+  36, but no user-facing doc named it, so a capture or ingest refused for
+  reaching it had no documented cause or remedy.
 - `release.yml`'s installer-flag-handling comment now says "six" invocations,
   matching the count both it and `ci.yml` actually run (`ci.yml`'s comment
   already did); `install.sh`'s version-stamp comment no longer claims v0.1.0
   is refused there — it was hand-built and hand-stamped before the release
   workflow existed, so it reports its own tag like every later release and
-  passes that gate; it is refused later, correctly, for lacking a build
-  attestation the workflow did not yet exist to create.
+  passes that gate; it is refused earlier, correctly, at the preceding
+  attestation check, for lacking a build attestation the workflow did not
+  yet exist to create.
 
 Invocation contract:
 

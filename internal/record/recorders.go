@@ -144,8 +144,10 @@ func selectDevices(video, audio []avDevice, wantScreen bool) (screenIndex int, m
 // status log. Device names come straight from ffmpeg's avfoundation listing —
 // OS-supplied strings a crafted USB/virtual-audio device can set — so they pass
 // through session.SafeText before reaching the operator's terminal, the same
-// guard applied to every other ffmpeg-derived string printed in this package
-// (outputTail, lockedBuffer.tail). Pure and unit-testable.
+// per-line guard every other ffmpeg-derived string printed in this package
+// applies via SafeTextLines (outputTail, lockedBuffer.tail); this roster is a
+// single formatted line, so the plain SafeText form suffices. Pure and
+// unit-testable.
 func formatAudioRoster(mics []string) string {
 	return fmt.Sprintf("  audio inputs: %s\n  microphone  : system default (avfoundation :default)\n", session.SafeText(strings.Join(mics, ", ")))
 }

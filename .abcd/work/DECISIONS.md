@@ -1219,16 +1219,17 @@ Architecture-shaping decisions graduate to an ADR under
   in `record`, the demo page's CDN-loaded rrweb recorder, and the ASR
   model fetch each independently falsified the absolute version. The 16
   MiB total-size limit on `timeline.jsonl`/`transcript.jsonl`/
-  `interactions.jsonl`/`findings.jsonl` (enforced since round 33) had
-  never been named in any user-facing doc; `cli.md`, the
-  instrument-your-own-app how-to, and `session-directory.md` now state it.
-  Nitpicks: `release.yml`'s installer-flag-handling comment said "four"
-  early-return paths where both it and `ci.yml` actually run six
-  invocations (`ci.yml`'s comment already said six); `install.sh`'s
-  version-stamp comment wrongly claimed v0.1.0 is refused there as an
-  unstamped "testimony dev" build — it is hand-stamped and passes that
-  gate, and is refused later, correctly, by the attestation check for
-  predating the release workflow that creates attestations.
+  `interactions.jsonl`/`findings.jsonl` (readers enforcing it since round
+  33, the last writers since round 36) had never been named in any
+  user-facing doc; `cli.md`, the instrument-your-own-app how-to, and
+  `session-directory.md` now state it. Nitpicks: `release.yml`'s
+  installer-flag-handling comment said "four" early-return paths where
+  both it and `ci.yml` actually run six invocations (`ci.yml`'s comment
+  already said six); `install.sh`'s version-stamp comment wrongly claimed
+  v0.1.0 is refused there as an unstamped "testimony dev" build — it is
+  hand-stamped and passes that gate, and is refused earlier, correctly, at
+  the preceding attestation check, for predating the release workflow
+  that creates attestations.
 
   Refuted: a doc claim that `transcript.jsonl`/`timeline.jsonl`'s `id`
   field is enforced-required, contradicted by `merge`'s deliberate,
