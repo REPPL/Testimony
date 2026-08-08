@@ -401,6 +401,13 @@ Documentation:
   reader/writer for these four files has enforced it since round 33, but no
   user-facing doc named it, so a capture or ingest refused for reaching it
   had no documented cause or remedy.
+- `release.yml`'s installer-flag-handling comment now says "six" invocations,
+  matching the count both it and `ci.yml` actually run (`ci.yml`'s comment
+  already did); `install.sh`'s version-stamp comment no longer claims v0.1.0
+  is refused there — it was hand-built and hand-stamped before the release
+  workflow existed, so it reports its own tag like every later release and
+  passes that gate; it is refused later, correctly, for lacking a build
+  attestation the workflow did not yet exist to create.
 
 Invocation contract:
 

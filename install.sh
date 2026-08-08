@@ -215,9 +215,10 @@ Refusing to install."
     # a noexec TMPDIR), where executing "$tmp/testimony" fails for a
     # perfectly good binary — and only the verified copy is renamed onto the
     # final name, so a refusal leaves any previously installed binary
-    # untouched. Releases predating the version stamp (v0.1.0) report
-    # "testimony dev" and are refused here; every release since prints its
-    # own tag.
+    # untouched. Every published release, including the pre-workflow v0.1.0
+    # (hand-built and hand-stamped before the release workflow existed),
+    # prints its own tag here; only a genuinely unstamped dev build reports
+    # "testimony dev" and is refused.
     mkdir -p "$INSTALL_DIR"
     staged="$INSTALL_DIR/.testimony.staged.$$"
     install -m 0755 "$tmp/testimony" "$staged"
