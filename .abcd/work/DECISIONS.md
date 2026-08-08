@@ -1268,3 +1268,36 @@ Architecture-shaping decisions graduate to an ADR under
   and refuted — each shown to be either unobservable in practice,
   deliberately scoped, or consistent with the page's own established
   abridgement convention.
+- 2026-08-08 — Bug-hunt round 38: one confirmed substantive defect, three
+  nitpicks, three refuted. `demo`'s capture endpoint total-size guard for
+  `interactions.jsonl` (round 36) measured the raw posted bytes, never
+  carrying round 32's wrapped-vs-raw lesson from the per-record guard to
+  the total: merge re-frames each accepted interaction into a larger
+  timeline entry before `session.WriteJSONL` checks *that* total against
+  the same 16 MiB cap, so a run of individually-valid, 204-accepted
+  records could cross the wrapped cap tens of thousands of records before
+  the raw one caught up — durably bricking the session with no
+  `timeline.jsonl` and no in-tool repair. Two independent refuters each
+  reproduced this live against the real server (accepting 120,000-160,000
+  records depending on record shape while only ~100,000-120,000 stayed
+  mergeable). Fixed with a running wrapped-bytes total (`server.entryBytes`)
+  alongside the existing raw one. Nitpicks: `spc-2-analysis-findings.md`'s
+  "Sample smoke" test-plan item named an `analyze -ingest` leg no CI
+  workflow runs and that cannot run as written against the bundled fixture
+  (it already holds verdict records); corrected to match shipped CI and
+  the same document's own design section 80 lines above it.
+  `session-directory.md`'s `report.md` template for a joined-event bullet
+  omitted the backticks `report.eventLine` actually wraps the selector in
+  (present in real output and in both sibling pages that show it);
+  restored. Two stray blank lines in this file, introduced by round 37's
+  own commit against 72 contiguous prior entries, flipped the whole list
+  to loose CommonMark rendering; removed. Refuted: `install.sh`'s
+  dependency-free command enumeration omitting `analyze`/`review` (split
+  verdict — the staleness premise was backwards, the comment predates
+  neither command); `install.sh`'s closing "speak while you click" hint
+  read as claiming `demo` captures audio (both refuters found the wording
+  describes an activity, not a capability, corrected within the tool's
+  own next screen, and that the "fix" would be wrong on Linux);
+  `analyse-a-session.md` omitting the 16 MiB limit round 37 added to three
+  sibling pages (both refuters found the how-to omits every file-state
+  refusal uniformly by design, not selectively).
