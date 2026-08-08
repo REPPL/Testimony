@@ -15,7 +15,7 @@ severity: minor
 
 > **Testimony now defaults every new session to one fixed, discoverable location** (`~/Testimony/sessions`) instead of a `sessions/` folder relative to whatever directory `record` or `demo` happened to be run from. The existing `-out` flag still overrides it for anyone who wants project-scoped capture; nothing about `merge`, `report`, `analyze`, or `review` changes, since they already take an explicit `-session DIR`.
 >
-> "I ran `demo`, closed the terminal, and twenty minutes later couldn't remember which folder I'd been in when the session was created," said Bob, capturing his first session. "Once it always landed in the same place, I stopped worrying about it."
+> "I ran `demo`, closed the terminal, and twenty minutes later couldn't remember which folder I'd been in when the session was created," said Bob, capturing their first session. "Once it always landed in the same place, I stopped worrying about it."
 
 ## Why This Matters
 
