@@ -1229,8 +1229,8 @@ Architecture-shaping decisions graduate to an ADR under
   `session-directory.md` now state it (the reference's new sentence
   states the write/load-refusal outcome rather than an internal
   every-reader-and-writer claim, since `analyze`'s internal re-ingest
-  probe deliberately does not itself bound the total — see Refuted
-  below). Nitpick: `install.sh`'s version-stamp comment wrongly claimed
+  probe deliberately does not itself bound the total — see rounds 35 and
+  36 above). Nitpick: `install.sh`'s version-stamp comment wrongly claimed
   v0.1.0 is refused there as an unstamped "testimony dev" build — it is
   hand-stamped and passes that gate, and is refused earlier, correctly, at
   the preceding attestation check, for predating the release workflow
