@@ -1203,7 +1203,6 @@ Architecture-shaping decisions graduate to an ADR under
   identical line-wrap grep trap that had already hidden two other carriers
   from two prior passes. Rather than attempt a fourth count, this entry
   drops the specific number entirely (see above). Verdict MERGE once fixed.
-
 - 2026-08-08 — Bug-hunt round 37: three confirmed substantive defects, one
   nitpick, ten refuted. `record`'s detected audio-device roster reached
   the terminal without the same `SafeText` sanitisation applied to every
@@ -1235,7 +1234,6 @@ Architecture-shaping decisions graduate to an ADR under
   hand-stamped and passes that gate, and is refused earlier, correctly, at
   the preceding attestation check, for predating the release workflow
   that creates attestations.
-
   Refuted: a doc claim that `transcript.jsonl`/`timeline.jsonl`'s `id`
   field is enforced-required, contradicted by `merge`'s deliberate,
   documented empty-id skip (`internal/timeline/timeline.go`, landed round
