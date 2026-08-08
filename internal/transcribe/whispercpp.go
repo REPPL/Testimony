@@ -54,7 +54,7 @@ func runWhisperCpp(bin, wav string, opts Options) ([]segment, error) {
 		"-oj",
 		"-of", outBase,
 		"--language", opts.Language)
-	if raw, err := cmd.CombinedOutput(); err != nil {
+	if raw, err := runWithHeartbeat(cmd, opts.Log, whisperCppBinary); err != nil {
 		return nil, fmt.Errorf("%s: %w\n%s", whisperCppBinary, err, tail(raw))
 	}
 
