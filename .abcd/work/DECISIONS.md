@@ -1105,24 +1105,25 @@ Architecture-shaping decisions graduate to an ADR under
   corrections missed — round 35's "sole outlier" framing covered only the
   canonical `adds no network dependency` phrase, which cannot match
   README's differently-worded instance; reworded to the canonical,
-  `analyze`-scoped form. Six other files already carried the correctly-scoped
-  `adds no network dependency` phrase untouched by this round's finding —
-  `AGENTS.md`, `docs/reference/cli.md`, `docs/how-to/analyse-a-session.md`
-  (round 35's fix), `internal/analyze/analyze.go`'s doc comment, and two
-  `.abcd/development/` files (a spec and a brief) — so README is the
-  seventh, not the sixth this file first said. A related absolute claim
-  survives untouched at `spc-2-analysis-findings.md:25`
-  (`.abcd/development/specs/open/`) — "No LLM and no network anywhere in
-  the CLI" — same defect class, internal-doc scope; out of this round's
-  confirmed findings, left for a future round.
+  `analyze`-scoped form. This round's finding was scoped to README's one
+  absolute, unscoped claim; it did not touch the several other files (both
+  user-facing docs and code comments, some CLI-scoped rather than
+  `analyze`-scoped) that already carry some form of the canonical phrase —
+  no attempt is made here to give their exact count, since three
+  consecutive attempts in this entry's own drafting each undercounted it
+  (the phrase wraps across lines in a way that keeps defeating a simple
+  grep). A related absolute, CLI-wide claim survives untouched at
+  `spc-2-analysis-findings.md:25` (`.abcd/development/specs/open/`) — "No
+  LLM and no network anywhere in the CLI" — same defect class, internal-doc
+  scope; out of this round's confirmed findings, left for a future round.
   `docs/reference/session-directory.md`'s `findings.jsonl` schema table
   named `mode`'s `A`/`B` values without defining what distinguishes them
   anywhere user-facing (the only definition lived in internal, non-shipped
   brief documents) — one clause now points the reader at README's "Coming
   next" section, which names the Mode B feature ("Reference capture —
   narrated sessions over third-party apps") without using the letter B.
-- 2026-08-07 — Round 36's own PR (#53) picked up two adversarial reviews
-  before merge. The correctness reviewer caught a real off-by-one in the
+- 2026-08-07 — Round 36's own PR (#53) picked up three rounds of
+  adversarial review before merge. The correctness reviewer caught a real off-by-one in the
   round's own `AppendVerdict` total-size check: `writeVerdict` is called
   with `len(b)+1` bytes but itself prepends a second leading newline when
   the file is non-empty and its last byte is not already `\n` (a real,
@@ -1178,9 +1179,26 @@ Architecture-shaping decisions graduate to an ADR under
   (`interactions.jsonl` entries, where its nearest siblings live) — moved,
   the same class of group-placement miss round 35's own post-fix reviews
   also caught; and this file's own recount of files carrying the
-  correctly-scoped `adds no network dependency` phrase was still wrong by
-  one (README is the seventh carrier, not the sixth) and mischaracterised
-  the round's finding as "the one absolute network claim" when
-  `spc-2-analysis-findings.md:25` carries an untouched, unscoped "No LLM
-  and no network anywhere in the CLI" of the identical class — both
-  corrected above. Verdict MERGE once fixed.
+  canonical `adds no network dependency` phrase was still wrong (it named
+  README the seventh carrier when a third pass found an eighth,
+  `.abcd/work/CONTEXT.md`, that two prior passes had also missed to the
+  same line-wrap trap) and mischaracterised the round's finding as "the one
+  absolute network claim" when `spc-2-analysis-findings.md:25` carries an
+  untouched, unscoped "No LLM and no network anywhere in the CLI" of the
+  identical class — the count is dropped from this entry entirely rather
+  than attempted a fourth time; the rest corrected above. A third pair of
+  reviews then re-verified that HEAD. The correctness reviewer normalised
+  both the pre- and post-fix `review.go`/`demo.go` with `go/parser` and
+  `go/printer` (comments stripped) and diffed the output byte-for-byte
+  identical, mechanically confirming every change since the `+2` fix was
+  comment-only — verdict MERGE. The docs-accuracy reviewer, told explicitly
+  to distrust any count or magnitude claim given the pattern above,
+  independently re-derived every number in this entry (the ~130 B/record
+  fixture average, the ~130,000-interaction reachability figure, the
+  six-field/two-required count, the `spc-2-analysis-findings.md:25` quote,
+  the `CHANGELOG.md` group placement) and confirmed all of them — except
+  one: the "six other files" / "README is the seventh" carrier count was
+  still wrong, missing an eighth carrier, `.abcd/work/CONTEXT.md`, to the
+  identical line-wrap grep trap that had already hidden two other carriers
+  from two prior passes. Rather than attempt a fourth count, this entry
+  drops the specific number entirely (see above). Verdict MERGE once fixed.
