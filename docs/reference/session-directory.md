@@ -16,7 +16,7 @@ sessions/<timestamp>/
   report.md            # human-readable aligned record (written by report)
 ```
 
-All `.jsonl` files are JSON Lines: one JSON value per line, blank lines ignored.
+All `.jsonl` files are JSON Lines: one JSON value per line, blank lines ignored. `timeline.jsonl`, `transcript.jsonl`, `interactions.jsonl`, and `findings.jsonl` each carry a 16 MiB total-size limit: a write that would push one over the cap is refused, and a load of one already over it is refused, so a session that reaches it needs a fresh session directory to continue in. `events.rrweb.jsonl` is archival and carries no such limit.
 
 ## `manifest.json`
 

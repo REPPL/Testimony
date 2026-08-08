@@ -477,7 +477,7 @@ func startRecorders(dir string, streams []string, log io.Writer) ([]*liveChild, 
 	// so a virtual audio driver shadowing the real mic is visible before a session
 	// is recorded to silence.
 	if contains(streams, streamMicrophone) && len(mics) > 0 {
-		fmt.Fprintf(log, "  audio inputs: %s\n  microphone  : system default (avfoundation :default)\n", strings.Join(mics, ", "))
+		fmt.Fprint(log, formatAudioRoster(mics))
 	}
 
 	var children []*liveChild

@@ -182,6 +182,24 @@ func TestOutputTailSanitisesOutput(t *testing.T) {
 	}
 }
 
+// TestFormatAudioRosterSanitisesDeviceNames is formatAudioRoster's sibling to
+// TestOutputTailSanitisesOutput: mics comes from the identical unsanitised
+// avfoundation listing as outputTail's input (parseAVDevices/selectDevices
+// apply no sanitisation of their own), so a crafted device name must not
+// reach the operator's terminal via the roster line either.
+func TestFormatAudioRosterSanitisesDeviceNames(t *testing.T) {
+	got := formatAudioRoster([]string{"Built-in\x1b[31mMicrophone\x1b[0m", "rtl\u202eoverride"})
+	if strings.ContainsAny(got, "\x1b") {
+		t.Fatalf("formatAudioRoster must strip ESC bytes, got %q", got)
+	}
+	if strings.Contains(got, "\u202e") {
+		t.Fatalf("formatAudioRoster must strip invisible-Unicode bidi override, got %q", got)
+	}
+	if !strings.Contains(got, "audio inputs:") {
+		t.Fatalf("formatAudioRoster must keep the roster label, got %q", got)
+	}
+}
+
 // fakeFFmpeg writes an executable shell script standing in for the ffmpeg
 // binary, so probeDevices' spawn-and-wait paths run hermetically on any Unix.
 func fakeFFmpeg(t *testing.T, script string) string {

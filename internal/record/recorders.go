@@ -140,6 +140,18 @@ func selectDevices(video, audio []avDevice, wantScreen bool) (screenIndex int, m
 	return screenIndex, mics, nil
 }
 
+// formatAudioRoster renders the detected microphone roster for startRecorders'
+// status log. Device names come straight from ffmpeg's avfoundation listing —
+// OS-supplied strings a crafted USB/virtual-audio device can set — so they pass
+// through session.SafeText before reaching the operator's terminal, the same
+// per-line guard every other ffmpeg-derived string printed in this package
+// applies via SafeTextLines (outputTail, lockedBuffer.tail); this roster is a
+// single formatted line, so the plain SafeText form suffices. Pure and
+// unit-testable.
+func formatAudioRoster(mics []string) string {
+	return fmt.Sprintf("  audio inputs: %s\n  microphone  : system default (avfoundation :default)\n", session.SafeText(strings.Join(mics, ", ")))
+}
+
 // probeSink is a concurrency-safe, bounded sink for the enumeration child's
 // output: os/exec copies each pipe on its own goroutine while probeDevices may
 // return early on the abandon path, and those copiers then keep writing here.
