@@ -225,6 +225,13 @@ Capture and diagnostics:
   of being left behind, empty and manifest-only, for every retry; a
   directory a recorder had already captured real, partial audio to before a
   later stream failed is kept.
+- `record`'s detected audio-device roster is passed through the same
+  invisible-Unicode/bidi-reordering sanitiser as the device-probe and
+  recorder-stderr tails printed alongside it — a device name that reached
+  the terminal unsanitised was the one class this package's earlier
+  hardening still missed, and it is precisely the string the roster exists
+  to make readable, so a crafted device name could hide its own entry from
+  the operator it was meant to warn.
 
 Checks and installer:
 
