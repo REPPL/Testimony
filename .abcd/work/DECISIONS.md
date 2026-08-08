@@ -1279,7 +1279,7 @@ Architecture-shaping decisions graduate to an ADR under
   the raw one caught up — durably bricking the session with no
   `timeline.jsonl` and no in-tool repair. Two independent refuters each
   reproduced this live against the real server: one with 129,854 accepted
-  against 102,343 stayed mergeable; the other with 159,783 against 120,011
+  against 102,343 mergeable; the other with 159,783 against 120,011
   mergeable, plus a second, minimal reproduction of just 16 ~1 MiB
   records already enough to brick the session — record count, not size,
   drives the gap. Fixed with a running wrapped-bytes total
