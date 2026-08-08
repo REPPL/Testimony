@@ -821,13 +821,13 @@ func entryLenFor(t *testing.T, body string, t0 int64) int {
 	return n
 }
 
-// TestInteractionRefusedWhenIDGrowthPushesOverCap pins entryBytes' own blind
-// spot: it assumes every entry keeps EventEntry's "ev-001" placeholder width,
-// but merge assigns the real, position-based id — the same gap
-// eventIDGrowthMargin closes for the per-record tooLongOnceWrapped check. A
-// record posted once the wrapped total sits exactly at the cap using the
-// placeholder width, but whose real ordinal (tracked by entryCount) needs one
-// extra digit, must still be refused.
+// TestInteractionRefusedWhenIDGrowthPushesOverCap pins idGrowth's correction
+// to EncodedLen's own blind spot: EventEntry sizes every entry at its
+// "ev-001" placeholder width, but merge assigns the real, position-based id —
+// the same gap eventIDGrowthMargin closes for the per-record
+// tooLongOnceWrapped check. A record posted once the wrapped total sits
+// exactly at the cap using the placeholder width, but whose real ordinal
+// (tracked by entryCount) needs one extra digit, must still be refused.
 func TestInteractionRefusedWhenIDGrowthPushesOverCap(t *testing.T) {
 	body := `{"t":1,"kind":"click"}`
 	s, dir := newTestServer(t)

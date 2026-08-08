@@ -546,10 +546,10 @@ func tooLongOnceWrapped(entryLen int) bool {
 // an interaction at this position among every interaction in the session —
 // runs than the "ev-001" placeholder EventEntry sizes it with. A flat
 // eventIDGrowthMargin is cheap paid once per record; charging that same 32
-// bytes into a running total for every one of a session's records would
-// waste most of the file's real capacity for growth that stays 0 until the
-// 1000th interaction, so this charges only what nth's own digit count
-// actually adds.
+// bytes into a running total for every one of a session's records would waste
+// a real fraction of the file's capacity for growth that stays 0 until the
+// 1000th interaction (up to a third of it, on the smallest legal entries), so
+// this charges only what nth's own digit count actually adds.
 func idGrowth(nth int64) int64 {
 	if nth < 1000 {
 		return 0
