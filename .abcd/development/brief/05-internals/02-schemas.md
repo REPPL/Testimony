@@ -101,7 +101,7 @@ validation boundary; every field below is checked, and `status` is forced to
 | `status` | string | yes | always `"unverified"` on ingest (the model is never trusted) |
 
 ```json
-{"id":"F-001","t":22.0,"type":"bug","severity":3,"mode":"A",
+{"id":"F-001","t":22,"type":"bug","severity":3,"mode":"A",
  "quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],
  "ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
 ```

@@ -130,7 +130,7 @@ Ingest validates every finding against the merged timeline and is the sole valid
 | `status` | string | yes | always `"unverified"` on ingest |
 
 ```json
-{"id":"F-001","t":22.0,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],"ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
+{"id":"F-001","t":22,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],"ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
 ```
 
 **Verdict record**
