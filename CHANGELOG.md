@@ -534,6 +534,15 @@ Capture integrity:
   file's own reader refuses, discovered only once capture ended and `merge`
   could no longer read the session back. `events.rrweb.jsonl` is
   unaffected: it is archival and carries no total-size cap.
+- **Behaviour:** `POST /api/interactions` also refuses with 413 a record
+  whose own timeline entry, not `interactions.jsonl`'s raw bytes, would push
+  the session's merged `timeline.jsonl` past that same 16 MiB limit. The
+  guard above tracks `interactions.jsonl`'s own total; `merge` instead
+  checks the larger, wrapped form each record becomes once written into
+  `timeline.jsonl` (an envelope, plus an id that grows with the
+  interaction's position), so a run of records that stayed under the raw
+  cap could still cross the wrapped one first, bricking the session before
+  the guard above ever fired.
 - `POST /api/events` refuses a literal JSON `null` body with 400 instead of
   decoding it to a nil slice and answering 204: a JSON `null` unmarshals
   cleanly into an empty `[]json.RawMessage`, so it slipped past the "body is
