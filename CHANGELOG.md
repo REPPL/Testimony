@@ -395,6 +395,12 @@ Documentation:
   `record`'s live capture, the demo page's CDN-loaded rrweb recorder, and
   the ASR engine's model fetch all use the network, so the unscoped claim
   was false the moment it left `analyze`'s own boundary.
+- `cli.md`, the instrument-your-own-app how-to, and the session-directory
+  reference now name the 16 MiB total-size limit on `timeline.jsonl`,
+  `transcript.jsonl`, `interactions.jsonl`, and `findings.jsonl`: every
+  reader/writer for these four files has enforced it since round 33, but no
+  user-facing doc named it, so a capture or ingest refused for reaching it
+  had no documented cause or remedy.
 
 Invocation contract:
 
