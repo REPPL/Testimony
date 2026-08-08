@@ -1278,14 +1278,25 @@ Architecture-shaping decisions graduate to an ADR under
   records could cross the wrapped cap tens of thousands of records before
   the raw one caught up — durably bricking the session with no
   `timeline.jsonl` and no in-tool repair. Two independent refuters each
-  reproduced this live against the real server (accepting 120,000-160,000
-  records depending on record shape while only ~100,000-120,000 stayed
-  mergeable). Fixed with a running wrapped-bytes total (`server.entryBytes`)
-  alongside the existing raw one. Nitpicks: `spc-2-analysis-findings.md`'s
+  reproduced this live against the real server: one with 129,854 accepted
+  against 102,343 stayed mergeable; the other with 159,783 against 120,011
+  mergeable, plus a second, minimal reproduction of just 16 ~1 MiB
+  records already enough to brick the session — record count, not size,
+  drives the gap. Fixed with a running wrapped-bytes total
+  (`server.entryBytes`) alongside the existing raw one. The merge-gate
+  correctness and docs-accuracy reviews (both initially BLOCK) then caught
+  that the fix itself under-counted: it sized every entry at
+  `EventEntry`'s fixed "ev-001" placeholder width instead of the real,
+  position-based id merge assigns, the same blind spot
+  `eventIDGrowthMargin` already closes for the per-record check — closed
+  here with a new `idGrowth` helper charging each record's actual digit
+  growth, plus a `CHANGELOG.md` entry and a `cli.md`/
+  `instrument-your-own-app.md` correction naming the new refusal cause,
+  both raised by the same reviews. Nitpicks: `spc-2-analysis-findings.md`'s
   "Sample smoke" test-plan item named an `analyze -ingest` leg no CI
   workflow runs and that cannot run as written against the bundled fixture
   (it already holds verdict records); corrected to match shipped CI and
-  the same document's own design section 80 lines above it.
+  the same document's own design section earlier in the file.
   `session-directory.md`'s `report.md` template for a joined-event bullet
   omitted the backticks `report.eventLine` actually wraps the selector in
   (present in real output and in both sibling pages that show it);
