@@ -1203,7 +1203,6 @@ Architecture-shaping decisions graduate to an ADR under
   identical line-wrap grep trap that had already hidden two other carriers
   from two prior passes. Rather than attempt a fourth count, this entry
   drops the specific number entirely (see above). Verdict MERGE once fixed.
-
 - 2026-08-08 — Bug-hunt round 37: three confirmed substantive defects, one
   nitpick, ten refuted. `record`'s detected audio-device roster reached
   the terminal without the same `SafeText` sanitisation applied to every
@@ -1235,7 +1234,6 @@ Architecture-shaping decisions graduate to an ADR under
   hand-stamped and passes that gate, and is refused earlier, correctly, at
   the preceding attestation check, for predating the release workflow
   that creates attestations.
-
   Refuted: a doc claim that `transcript.jsonl`/`timeline.jsonl`'s `id`
   field is enforced-required, contradicted by `merge`'s deliberate,
   documented empty-id skip (`internal/timeline/timeline.go`, landed round
@@ -1270,3 +1268,47 @@ Architecture-shaping decisions graduate to an ADR under
   and refuted — each shown to be either unobservable in practice,
   deliberately scoped, or consistent with the page's own established
   abridgement convention.
+- 2026-08-08 — Bug-hunt round 38: one confirmed substantive defect, three
+  nitpicks, three refuted. `demo`'s capture endpoint total-size guard for
+  `interactions.jsonl` (round 36) measured the raw posted bytes, never
+  carrying round 32's wrapped-vs-raw lesson from the per-record guard to
+  the total: merge re-frames each accepted interaction into a larger
+  timeline entry before `session.WriteJSONL` checks *that* total against
+  the same 16 MiB cap, so a run of individually-valid, 204-accepted
+  records could cross the wrapped cap tens of thousands of records before
+  the raw one caught up — durably bricking the session with no
+  `timeline.jsonl` and no in-tool repair. Two independent refuters each
+  reproduced this live against the real server: one with 129,854 accepted
+  against 102,343 mergeable; the other with 159,783 against 120,011
+  mergeable, plus a second, minimal reproduction of just 16 ~1 MiB
+  records already enough to brick the session — record count, not size,
+  drives the gap. Fixed with a running wrapped-bytes total
+  (`server.entryBytes`) alongside the existing raw one. The merge-gate
+  correctness and docs-accuracy reviews (both initially BLOCK) then caught
+  that the fix itself under-counted: it sized every entry at
+  `EventEntry`'s fixed "ev-001" placeholder width instead of the real,
+  position-based id merge assigns, the same blind spot
+  `eventIDGrowthMargin` already closes for the per-record check — closed
+  here with a new `idGrowth` helper charging each record's actual digit
+  growth, plus a `CHANGELOG.md` entry and a `cli.md`/
+  `instrument-your-own-app.md` correction naming the new refusal cause,
+  both raised by the same reviews. Nitpicks: `spc-2-analysis-findings.md`'s
+  "Sample smoke" test-plan item named an `analyze -ingest` leg no CI
+  workflow runs and that cannot run as written against the bundled fixture
+  (it already holds verdict records); corrected to match shipped CI and
+  the same document's own design section earlier in the file.
+  `session-directory.md`'s `report.md` template for a joined-event bullet
+  omitted the backticks `report.eventLine` actually wraps the selector in
+  (present in real output and in both sibling pages that show it);
+  restored. Two stray blank lines in this file, introduced by round 37's
+  own commit against 72 contiguous prior entries, flipped the whole list
+  to loose CommonMark rendering; removed. Refuted: `install.sh`'s
+  dependency-free command enumeration omitting `analyze`/`review` (split
+  verdict — the staleness premise was backwards, the comment predates
+  neither command); `install.sh`'s closing "speak while you click" hint
+  read as claiming `demo` captures audio (both refuters found the wording
+  describes an activity, not a capability, corrected within the tool's
+  own next screen, and that the "fix" would be wrong on Linux);
+  `analyse-a-session.md` omitting the 16 MiB limit round 37 added to three
+  sibling pages (both refuters found the how-to omits every file-state
+  refusal uniformly by design, not selectively).

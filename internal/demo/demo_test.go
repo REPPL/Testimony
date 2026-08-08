@@ -2,6 +2,7 @@ package demo
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/REPPL/Testimony/internal/session"
+	"github.com/REPPL/Testimony/internal/timeline"
 )
 
 // captureStderr runs fn with os.Stderr redirected to a pipe and returns
@@ -724,6 +726,141 @@ func TestInteractionAcceptedUnderTotalCap(t *testing.T) {
 	}
 	if !bytes.Contains(got, []byte(`"kind":"click"`)) {
 		t.Fatal("accepted write did not append the new record")
+	}
+}
+
+// TestInteractionRefusedWhenWrappedTotalExceedsCap is the wrapped-total twin of
+// TestInteractionRefusedOverTotalCap: session.WriteJSONL's cap on timeline.jsonl
+// binds on each interaction's *wrapped* timeline-entry size, not its raw
+// interactions.jsonl bytes, and the wrapped form runs larger (the src/id/payload
+// envelope and rebased t). Tracking only the raw running total let a sequence of
+// individually-valid, 204-accepted records cross the wrapped cap long before the
+// raw total did, durably bricking merge without ever refusing a single request
+// (empirically: tens of thousands of accepted records past the point merge could
+// still write timeline.jsonl). A record posted once entryBytes — the running
+// wrapped total — is close to the cap must be refused, even though
+// interactions.jsonl's own raw bytes are nowhere near it.
+func TestInteractionRefusedWhenWrappedTotalExceedsCap(t *testing.T) {
+	s, dir := newTestServer(t)
+	// As if prior records already wrapped to just under the cap; the raw file
+	// itself is still empty, so the pre-existing raw-size check alone would
+	// let this record through.
+	s.entryBytes = session.MaxJSONLBytes - 10
+
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", `{"t":1,"kind":"click"}`, nil))
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", w.Code)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, session.InteractionsFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", session.InteractionsFile, err)
+	}
+	if len(got) != 0 {
+		t.Fatal("refused write was persisted")
+	}
+}
+
+// TestInteractionAcceptedWhenWrappedTotalUnderCap is the positive control for
+// TestInteractionRefusedWhenWrappedTotalExceedsCap: a record posted while
+// entryBytes has enough headroom under session.MaxJSONLBytes is still accepted,
+// and entryBytes grows to reflect it.
+func TestInteractionAcceptedWhenWrappedTotalUnderCap(t *testing.T) {
+	s, dir := newTestServer(t)
+	s.entryBytes = session.MaxJSONLBytes - 10000
+
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", `{"t":1,"kind":"click"}`, nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	if s.entryBytes <= session.MaxJSONLBytes-10000 {
+		t.Fatal("accepted write did not grow entryBytes")
+	}
+	if lines := fileLines(t, filepath.Join(dir, session.InteractionsFile)); len(lines) != 1 {
+		t.Fatalf("wrote %d lines, want 1", len(lines))
+	}
+}
+
+// TestIDGrowth pins idGrowth's boundaries against the real "ev-%03d" width it
+// mirrors: zero for every ordinal the "%03d" padding already covers, then one
+// extra byte per extra decimal digit.
+func TestIDGrowth(t *testing.T) {
+	cases := map[int64]int64{
+		1:         0,
+		999:       0,
+		1000:      1,
+		9999:      1,
+		10000:     2,
+		99999:     2,
+		100000:    3,
+		999999999: 6,
+	}
+	for nth, want := range cases {
+		if got := idGrowth(nth); got != want {
+			t.Errorf("idGrowth(%d) = %d, want %d", nth, got, want)
+		}
+	}
+}
+
+// entryLenFor computes the wrapped timeline-entry size handleInteraction
+// itself would compute for body, the same way production code does, so a
+// test can pin entryBytes to an exact boundary relative to a real record
+// rather than an arbitrary one.
+func entryLenFor(t *testing.T, body string, t0 int64) int {
+	t.Helper()
+	var rec timeline.Interaction
+	if err := json.Unmarshal([]byte(body), &rec); err != nil {
+		t.Fatalf("unmarshal %q: %v", body, err)
+	}
+	n, err := session.EncodedLen(timeline.EventEntry(rec, t0))
+	if err != nil {
+		t.Fatalf("EncodedLen: %v", err)
+	}
+	return n
+}
+
+// TestInteractionRefusedWhenIDGrowthPushesOverCap pins idGrowth's correction
+// to EncodedLen's own blind spot: EventEntry sizes every entry at its
+// "ev-001" placeholder width, but merge assigns the real, position-based id —
+// the same gap eventIDGrowthMargin closes for the per-record
+// tooLongOnceWrapped check. A record posted once the wrapped total sits
+// exactly at the cap using the placeholder width, but whose real ordinal
+// (tracked by entryCount) needs one extra digit, must still be refused.
+func TestInteractionRefusedWhenIDGrowthPushesOverCap(t *testing.T) {
+	body := `{"t":1,"kind":"click"}`
+	s, dir := newTestServer(t)
+	s.entryBytes = session.MaxJSONLBytes - int64(entryLenFor(t, body, s.t0))
+	s.entryCount = 999 // next ordinal is 1000: "ev-1000" runs one byte past "ev-001"
+
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", body, nil))
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 (id growth ignored)", w.Code)
+	}
+	if lines := fileLines(t, filepath.Join(dir, session.InteractionsFile)); len(lines) != 0 {
+		t.Fatalf("refused write persisted %d lines, want none", len(lines))
+	}
+}
+
+// TestInteractionAcceptedWhenIDGrowthStaysZero is the positive control for
+// TestInteractionRefusedWhenIDGrowthPushesOverCap: the identical entryBytes
+// boundary is accepted when entryCount stays low enough that the next
+// ordinal's id does not outgrow the placeholder width.
+func TestInteractionAcceptedWhenIDGrowthStaysZero(t *testing.T) {
+	body := `{"t":1,"kind":"click"}`
+	s, dir := newTestServer(t)
+	s.entryBytes = session.MaxJSONLBytes - int64(entryLenFor(t, body, s.t0))
+	s.entryCount = 0 // next ordinal is 1: "ev-001" matches the placeholder exactly
+
+	w := httptest.NewRecorder()
+	s.handleInteraction(w, jsonPost("/api/interactions", body, nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	if lines := fileLines(t, filepath.Join(dir, session.InteractionsFile)); len(lines) != 1 {
+		t.Fatalf("wrote %d lines, want 1", len(lines))
 	}
 }
 

@@ -36,6 +36,22 @@ type server struct {
 	interactions *os.File
 	rawEvents    *os.File
 	t0           int64 // manifest t0_epoch_ms, anchoring the interaction shape check
+	// entryBytes is the running total of accepted interactions' *wrapped*
+	// timeline-entry size, id growth included (see idGrowth) — a lower-bound
+	// estimate of what those records contribute to timeline.jsonl once merge's
+	// WriteJSONL writes it, not their raw interactions.jsonl bytes and not the
+	// transcript-derived speech entries WriteJSONL also writes into the same
+	// file, which this endpoint cannot see at capture time. Every real caller
+	// opens interactions.jsonl empty (session.Create always precedes
+	// serveOn), so starting this at zero tracks the file exactly.
+	// entryCount is the running count backing it, needed to charge each
+	// record the same real-id growth eventIDGrowthMargin bounds per record
+	// (see idGrowth): merge assigns "ev-%03d" by an interaction's position
+	// among every interaction in interactions.jsonl, one-to-one with capture
+	// order, so entryCount+1 is always the ordinal the next accepted record
+	// would get.
+	entryBytes int64
+	entryCount int64
 }
 
 // DefaultApp is the app-under-test name a demo session records.
@@ -316,6 +332,7 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	}
 
 	var lines [][]byte
+	var entryLen int // this request's wrapped timeline-entry size; unset (0) for a batch
 	if batch {
 		var msgs []json.RawMessage
 		if err := json.Unmarshal(body, &msgs); err != nil || bytes.Equal(bytes.TrimSpace(body), []byte("null")) {
@@ -367,11 +384,12 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 			refuseWrite(w, r, "invalid JSON", "invalid JSON", http.StatusBadRequest)
 			return
 		}
-		entryLen, err := session.EncodedLen(timeline.EventEntry(rec, s.t0))
+		n, err := session.EncodedLen(timeline.EventEntry(rec, s.t0))
 		if err != nil {
 			refuseWrite(w, r, "invalid JSON", "invalid JSON", http.StatusBadRequest)
 			return
 		}
+		entryLen = n
 		if tooLongOnceWrapped(entryLen) {
 			refuseWrite(w, r, "interaction's timeline entry over the JSONL line limit", "record exceeds the readable JSONL line limit", http.StatusRequestEntityTooLarge)
 			return
@@ -395,6 +413,23 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 	// same write-before-read stance WriteJSONL and oversizedFindings take for
 	// their own artefacts. Batched raw-event uploads (events.rrweb.jsonl) skip
 	// this: they are archival and read by nothing that enforces a total.
+	//
+	// Fitting under interactions.jsonl's own raw-byte cap is not enough either:
+	// merge re-frames each record into a timeline entry (rebased t, a
+	// src/id/payload envelope) before session.WriteJSONL checks *that* total
+	// against the same cap, and the wrapped form runs larger than the raw one —
+	// the same gap the per-record tooLongOnceWrapped check above closes for one
+	// record at a time. Tracking only the raw total let a run of individually-
+	// valid, 204-accepted records cross the wrapped cap tens of thousands of
+	// records before the raw one caught up, durably bricking the session with no
+	// warning. entryBytes tracks the running wrapped event total the same way
+	// size tracks the running raw one, charged with idGrowth so it, like
+	// tooLongOnceWrapped, accounts for the real id merge assigns rather than
+	// EventEntry's fixed-width placeholder. It narrows this gap rather than
+	// closing it outright: timeline.jsonl also carries transcript's speech
+	// entries, written into the same file by the same merge call, which this
+	// endpoint has no way to see at capture time.
+	var grown int64
 	if !batch {
 		size, err := f.Seek(0, io.SeekEnd)
 		if err != nil {
@@ -410,6 +445,12 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 				"session's captured interactions are at the file size limit; start a new session", http.StatusRequestEntityTooLarge)
 			return
 		}
+		grown = idGrowth(s.entryCount + 1)
+		if s.entryBytes+int64(entryLen)+grown > session.MaxJSONLBytes {
+			refuseWrite(w, r, "capture's timeline entry would push the session's merged timeline over the JSONL file limit",
+				"session's captured interactions are at the file size limit; start a new session", http.StatusRequestEntityTooLarge)
+			return
+		}
 	}
 	if err := appendRecords(f, lines); err != nil {
 		// The capture was not persisted. Tell the client so it does not treat a
@@ -420,6 +461,10 @@ func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File,
 		fmt.Fprintf(os.Stderr, "testimony demo: capture write failed, event(s) dropped: %v\n", err)
 		http.Error(w, "capture write failed", http.StatusInternalServerError)
 		return
+	}
+	if !batch {
+		s.entryBytes += int64(entryLen) + grown
+		s.entryCount++
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -494,6 +539,22 @@ const eventIDGrowthMargin = 32
 // writes timeline.jsonl.
 func tooLongOnceWrapped(entryLen int) bool {
 	return entryLen+eventIDGrowthMargin > session.MaxJSONLLine
+}
+
+// idGrowth is the total-size guard's twin of eventIDGrowthMargin: how many
+// bytes longer nth — the real, 1-based ordinal merge's "ev-%03d" would give
+// an interaction at this position among every interaction in the session —
+// runs than the "ev-001" placeholder EventEntry sizes it with. A flat
+// eventIDGrowthMargin is cheap paid once per record; charging that same 32
+// bytes into a running total for every one of a session's records would waste
+// a real fraction of the file's capacity for growth that stays 0 until the
+// 1000th interaction (up to a third of it, on the smallest legal entries), so
+// this charges only what nth's own digit count actually adds.
+func idGrowth(nth int64) int64 {
+	if nth < 1000 {
+		return 0
+	}
+	return int64(len(strconv.FormatInt(nth, 10))) - 3
 }
 
 // allowWrite guards the capture write endpoints against cross-origin forgery
