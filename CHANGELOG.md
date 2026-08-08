@@ -389,26 +389,27 @@ Documentation:
   qualified with the same model-fetch exception `02-transcribe.md` and
   `docs/explanation/privacy.md` already carry — the one internal-brief page
   still making the unqualified claim.
-- `spc-2-analysis-findings.md`'s two absolute "no network anywhere in the
-  CLI" claims (the Summary and the Decisions section) are reworded to the
-  scoped form its own Design section and every other carrier already use —
-  `record`'s live capture, the demo page's CDN-loaded rrweb recorder, and
-  the ASR engine's model fetch all use the network, so the unscoped claim
-  was false the moment it left `analyze`'s own boundary.
+- `spc-2-analysis-findings.md` carried two absolute network claims. The
+  Summary's "No LLM and no network anywhere in the CLI" is removed outright
+  — the correctly scoped form already sits two sentences earlier in the
+  same paragraph, so it was a redundant restatement, not new information.
+  The Decisions section's separate "the CLI never calls a model or the
+  network" is reworded to the same scoped form used everywhere else in the
+  repo. `record`'s live capture, the demo page's CDN-loaded rrweb recorder,
+  and the ASR engine's model fetch all use the network, so both unscoped
+  claims were false the moment they left `analyze`'s own boundary.
 - `cli.md`, the instrument-your-own-app how-to, and the session-directory
   reference now name the 16 MiB total-size limit on `timeline.jsonl`,
   `transcript.jsonl`, `interactions.jsonl`, and `findings.jsonl`: the
   readers have enforced it since round 33 and the last writers since round
   36, but no user-facing doc named it, so a capture or ingest refused for
   reaching it had no documented cause or remedy.
-- `release.yml`'s installer-flag-handling comment now says "six" invocations,
-  matching the count both it and `ci.yml` actually run (`ci.yml`'s comment
-  already did); `install.sh`'s version-stamp comment no longer claims v0.1.0
-  is refused there — it was hand-built and hand-stamped before the release
-  workflow existed, so it reports its own tag like every later release and
-  passes that gate; it is refused earlier, correctly, at the preceding
-  attestation check, for lacking a build attestation the workflow did not
-  yet exist to create.
+- `install.sh`'s version-stamp comment no longer claims v0.1.0 is refused
+  there — it was hand-built and hand-stamped before the release workflow
+  existed, so it reports its own tag like every later release and passes
+  that gate; it is refused earlier, correctly, at the preceding attestation
+  check, for lacking a build attestation the workflow did not yet exist to
+  create.
 
 Invocation contract:
 

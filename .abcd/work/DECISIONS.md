@@ -1204,28 +1204,33 @@ Architecture-shaping decisions graduate to an ADR under
   from two prior passes. Rather than attempt a fourth count, this entry
   drops the specific number entirely (see above). Verdict MERGE once fixed.
 
-- 2026-08-08 — Bug-hunt round 37: three confirmed substantive defects, two
-  nitpicks, nine refuted. `record`'s detected audio-device roster reached
+- 2026-08-08 — Bug-hunt round 37: three confirmed substantive defects, one
+  nitpick, ten refuted. `record`'s detected audio-device roster reached
   the terminal without the same `SafeText` sanitisation applied to every
   other ffmpeg-derived string this package prints (`outputTail`,
-  `lockedBuffer.tail`), so a crafted device name could inject terminal
-  escapes or, more pointedly, use bidi reordering to hide its own entry
-  from the operator the roster exists to warn — closed by factoring the
-  print into a new, unit-tested `formatAudioRoster`. `spc-2-analysis-
-  findings.md:25`'s untouched, unscoped "No LLM and no network anywhere in
-  the CLI" claim flagged in round 36's own entry above (and its
-  previously-unnoticed sibling at the same file's Decisions section) is
-  now reworded to the scoped form used everywhere else — real network use
-  in `record`, the demo page's CDN-loaded rrweb recorder, and the ASR
-  model fetch each independently falsified the absolute version. The 16
-  MiB total-size limit on `timeline.jsonl`/`transcript.jsonl`/
+  `lockedBuffer.tail`, both via `SafeTextLines`), so a crafted device name
+  could inject terminal escapes or, more pointedly, use bidi reordering to
+  hide its own entry from the operator the roster exists to warn — closed
+  by factoring the print into a new, unit-tested `formatAudioRoster`.
+  `spc-2-analysis-findings.md:25`'s untouched, unscoped "No LLM and no
+  network anywhere in the CLI" claim, flagged in round 36's own entry
+  above, is removed outright — a correctly scoped form of it already sits
+  two sentences earlier in the same paragraph, so it was a redundant
+  restatement. Its previously-unnoticed sibling in the same file's
+  Decisions section ("the CLI never calls a model or the network") is
+  reworded to that same scoped form used everywhere else in the repo —
+  real network use in `record`, the demo page's CDN-loaded rrweb recorder,
+  and the ASR model fetch each independently falsified both absolute
+  claims.
+  The 16 MiB total-size limit on `timeline.jsonl`/`transcript.jsonl`/
   `interactions.jsonl`/`findings.jsonl` (readers enforcing it since round
   33, the last writers since round 36) had never been named in any
   user-facing doc; `cli.md`, the instrument-your-own-app how-to, and
-  `session-directory.md` now state it. Nitpicks: `release.yml`'s
-  installer-flag-handling comment said "four" early-return paths where
-  both it and `ci.yml` actually run six invocations (`ci.yml`'s comment
-  already said six); `install.sh`'s version-stamp comment wrongly claimed
+  `session-directory.md` now state it (the reference's new sentence
+  states the write/load-refusal outcome rather than an internal
+  every-reader-and-writer claim, since `analyze`'s internal re-ingest
+  probe deliberately does not itself bound the total — see Refuted
+  below). Nitpick: `install.sh`'s version-stamp comment wrongly claimed
   v0.1.0 is refused there as an unstamped "testimony dev" build — it is
   hand-stamped and passes that gate, and is refused earlier, correctly, at
   the preceding attestation check, for predating the release workflow
@@ -1233,28 +1238,35 @@ Architecture-shaping decisions graduate to an ADR under
 
   Refuted: a doc claim that `transcript.jsonl`/`timeline.jsonl`'s `id`
   field is enforced-required, contradicted by `merge`'s deliberate,
-  documented, and already-litigated (round 27) empty-id skip — the
-  "Required" column tracks shape, not enforcement, as several neighbouring
-  fields already establish; a macOS-specific `ELOOP`-vs-`EMLINK` symlink-
-  refusal gap in `session.go`, refuted by Go's own stdlib source, which
-  cites Apple's `open(2)` and puts darwin in the `ELOOP` bucket (`EMLINK`
-  is FreeBSD/DragonFly-only, neither a shipped target); a `release.yml`
+  documented empty-id skip (`internal/timeline/timeline.go`, landed round
+  10) and the "Required" column's already-litigated (round 27) tracking
+  of shape rather than enforcement, as several neighbouring fields
+  establish; a macOS-specific `ELOOP`-vs-`EMLINK` symlink-refusal gap in
+  `session.go`, refuted by Go's own stdlib source, which cites Apple's
+  `open(2)` and puts darwin in the `ELOOP` bucket (`EMLINK` is
+  FreeBSD/DragonFly-only, neither a shipped target); a `release.yml`
   private-repo attestation-fallback comment, a precedent duplicate of a
   claim already refuted in round 20 for the identical reason (an
   unauthenticated tarball fetch against a private repo 404s before the
   attestation branch is ever reached); an intents-README "always
   they/them" persona rule read as contradicting `03-personas.md`'s
   gendered narrative pronouns, a precedent duplicate refuted in rounds 14,
-  24, and 29 (different registers for the same names, co-authored in one
-  commit, the intents rule honoured with zero exceptions); and, spun off
-  from the private-repo investigation, a claim that `install.sh --version`
-  is broken for pre-attestation releases under a modern `gh` — the
-  refusal is correct, security-required fail-closed behaviour against a
-  release with no attestation to verify, not a defect (its own
-  version-stamp comment was the actual, narrower bug, fixed above). Two
-  nitpicks (`proc.go`'s `dropped` flag on an exact-boundary write; `demo`
-  not handling SIGHUP unlike `record`) and two doc-drift candidates
-  (`session-directory.md`'s illustrative manifest example; `AGENTS.md`
-  omitting `release.yml`'s tag-time-only gates) were raised and refuted —
-  each shown to be either unobservable in practice, deliberately scoped,
-  or consistent with the page's own established abridgement convention.
+  24, and 28 (different registers for the same names, co-authored in one
+  commit, the intents rule honoured with zero exceptions); a `release.yml`
+  installer-flag-handling comment's "four early-return flag paths" read
+  against `ci.yml`'s "six" invocations, a precedent duplicate of round
+  24's identical count read against `install.sh` itself, already settled
+  there as both accurate at their own granularity (four code paths, six
+  invocations exercising them) — the comment is left as it was; and, spun
+  off from the private-repo investigation, a claim that
+  `install.sh --version` is broken for pre-attestation releases under a
+  modern `gh` — the refusal is correct, security-required fail-closed
+  behaviour against a release with no attestation to verify, not a defect
+  (its own version-stamp comment was the actual, narrower bug, fixed
+  above). Two nitpicks (`proc.go`'s `dropped` flag on an exact-boundary
+  write; `demo` not handling SIGHUP unlike `record`) and two doc-drift
+  candidates (`session-directory.md`'s illustrative manifest example;
+  `AGENTS.md` omitting `release.yml`'s tag-time-only gates) were raised
+  and refuted — each shown to be either unobservable in practice,
+  deliberately scoped, or consistent with the page's own established
+  abridgement convention.

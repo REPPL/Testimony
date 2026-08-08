@@ -393,9 +393,8 @@ jobs:
 
       - name: End-to-end install.sh smoke test
         # Every gate above this line only parses install.sh's syntax (verify's
-        # "Installer syntax" step) or its six early-return flag-handling
-        # invocations (verify's "Installer flag handling" step: --help/--dir/
-        # --version/--bogus, plus --dir/--version with an empty value, all of
+        # "Installer syntax" step) or its four early-return flag paths (verify's
+        # "Installer flag handling" step: --help/--dir/--version/--bogus, all of
         # which return before any network access or write). Nothing has ever run
         # install_binary itself: the SHA256SUMS fetch, the awk lookup of this
         # tarball's line, the hash compare, the gh attestation branch, tar
