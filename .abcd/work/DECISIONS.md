@@ -1065,3 +1065,141 @@ Architecture-shaping decisions graduate to an ADR under
   were fixed — corrected here too. It also caught that round 2's "six"
   recount of `adds no network dependency` instances double-counted
   `CLAUDE.md`, a symlink to `AGENTS.md`; the distinct-file count is five.
+- 2026-08-07 — Bug-hunt round 36: two confirmed substantive defects, two
+  nitpicks, zero refuted. `review.AppendVerdict` held its verdict record to
+  `MaxJSONLLine` (round 7) but never checked the running total against
+  `MaxJSONLBytes` (round 33) — the last of `findings.jsonl`'s two writers
+  left uncovered after round 35 closed the same gap for `analyze -ingest`.
+  A `findings.jsonl` built at or right up to the cap is a legal ingest
+  output; recording a verdict against it durably bricked every finding and
+  verdict already on file (every later `analyze.Load` and `review` call
+  refused it outright; `report` exited 0 but rendered an explicit "Findings
+  unavailable" notice in place of the session's findings; re-ingesting to
+  repair it was itself refused once a verdict existed, since `holdsVerdicts`
+  bounds only a line, not the total, so it still detects the verdict and
+  blocks the overwrite). Fixed with a stat-then-append check under
+  `AppendVerdict`'s existing lock, mirroring `WriteJSONL`'s and
+  `oversizedFindings`' pre-flight pattern. Separately, `demo`'s capture
+  endpoint checked each interaction record against `MaxJSONLLine` but never
+  tracked `interactions.jsonl`'s running total against `MaxJSONLBytes` (the
+  bound `merge`'s reader enforces): a sequence of individually valid
+  captures, each answered `204`, could accumulate past the cap and leave a
+  session's `interactions.jsonl` durably unmergeable — `merge` then refuses
+  it outright, so `timeline.jsonl` is never produced and `report`/`analyze`
+  fail for lack of it — discovered only after capture ended. Reachable well
+  within an ordinary session, not just the contrived multi-megabyte records
+  the hunting round first reproduced with: the bundled
+  `examples/sample-session/interactions.jsonl` fixture averages ~130 bytes
+  per record across its six documented fields (`t`, `kind`, `selector`,
+  `text`, `value`, `route` — two required, four optional), and a session of
+  ordinary records at that size crosses the 16 MiB cap at roughly 130,000
+  interactions. Fixed the same way, with its own `Seek` to the file's
+  current end before every write; `events.rrweb.jsonl` is deliberately
+  exempt, matching `MaxJSONLBytes`' own documented archival
+  carve-out. Both fixes carry regression tests watched to fail pre-fix and
+  pass post-fix, and both survived two independent adversarial refuters
+  apiece, including live end-to-end reproductions against a built binary
+  rather than re-reading the same source the hunt round had. Nitpicks
+  fixed: `README.md`'s "the CLI never calls a model or the network" was an
+  absolute network claim rounds 26, 27, and 35's otherwise-identical
+  corrections missed — round 35's "sole outlier" framing covered only the
+  canonical `adds no network dependency` phrase, which cannot match
+  README's differently-worded instance; reworded to the canonical,
+  `analyze`-scoped form. This round's finding was scoped to README's one
+  absolute, unscoped claim; it did not touch the several other files (both
+  user-facing docs and code comments, some CLI-scoped rather than
+  `analyze`-scoped) that already carry some form of the canonical phrase —
+  no attempt is made here to give their exact count, since three
+  consecutive attempts in this entry's own drafting each undercounted it
+  (the phrase wraps across lines in a way that keeps defeating a simple
+  grep). A related absolute, CLI-wide claim survives untouched at
+  `spc-2-analysis-findings.md:25` (`.abcd/development/specs/open/`) — "No
+  LLM and no network anywhere in the CLI" — same defect class, internal-doc
+  scope; out of this round's confirmed findings, left for a future round.
+  `docs/reference/session-directory.md`'s `findings.jsonl` schema table
+  named `mode`'s `A`/`B` values without defining what distinguishes them
+  anywhere user-facing (the only definition lived in internal, non-shipped
+  brief documents) — one clause now points the reader at README's "Coming
+  next" section, which names the Mode B feature ("Reference capture —
+  narrated sessions over third-party apps") without using the letter B.
+- 2026-08-07 — Round 36's own PR (#53) picked up three rounds of
+  adversarial review before merge. The correctness reviewer caught a real
+  off-by-one in the round's own `AppendVerdict` total-size check:
+  `writeVerdict` is called with `len(b)+1` bytes but itself prepends a
+  second leading newline when the file is non-empty and its last byte is
+  not already `\n` (a real, supported state — an exchanged or hand-edited
+  `findings.jsonl` can end unterminated), so the true worst case is
+  `len(b)+2`; the check as first written budgeted only `+1`, reproducibly
+  letting a file at exactly `cap-(len(b)+1)` pass and still land one byte
+  over `MaxJSONLBytes` —
+  precisely the brick the check exists to prevent. Fixed to budget `+2`,
+  with a new regression test seeding an unterminated file at the corrected
+  boundary, watched to fail against `+1` and pass against `+2`. The
+  docs-accuracy reviewer then caught, against that fixed code: the
+  `MaxJSONLLine` bound on `AppendVerdict` was misattributed to round 25 (it
+  was round 7); `findings.jsonl` was called out as having three writers
+  where it has two (`analyze.commitFindings` and `AppendVerdict` only —
+  restated correctly at `session.go:527-528` and this file's own round-33
+  entry); the CHANGELOG's "report … rendered it as no findings at all"
+  contradicted the actual behaviour (`report` renders an explicit "Findings
+  unavailable" notice, distinct from the empty-state one) and contradicted
+  its own neighbouring entry; a fresh comment on `AppendVerdict` reintroduced
+  the identical `holdsVerdicts`-refuses-oversized-files overclaim round 35
+  had already corrected in four places (`holdsVerdicts` bounds only a line,
+  not the total, so it does not refuse — it still detects the verdict and
+  blocks the re-ingest repair path on that basis); a fresh comment on
+  `demo`'s capture endpoint overstated that "merge, report, and analyze all
+  refuse the file outright" when only `merge` reads `interactions.jsonl`
+  directly (`report`/`analyze` fail downstream for lack of the
+  `timeline.jsonl` `merge` never produces); and the round's original
+  "~2,000 ordinary-sized interactions" reachability figure understated what
+  ordinary records need to cross the cap, conflating a reproduction that
+  had padded records with an extra, non-bare field with the ordinary case.
+  All corrected before merge; the code fixes themselves (both the original
+  two and the off-by-one correction) were independently confirmed sound by
+  both reviewers. A second pair of adversarial reviews then re-verified the
+  corrected HEAD from scratch. The correctness reviewer independently
+  re-derived the `+2` arithmetic, ran its own boundary-condition sweep
+  against a built binary (terminated/unterminated files at cap-1/cap/cap+1,
+  empty, and already-over-cap), and confirmed every accepted write lands at
+  or under the cap with no false acceptance and only a single, deliberate,
+  safe-direction false refusal at one exact file size (a terminated file
+  whose append would land exactly at the cap, refused anyway because the
+  pre-flight budgets the unterminated worst case rather than probing the
+  file's last byte) — verdict MERGE. The docs-accuracy reviewer caught that
+  the first round's own corrections had introduced fresh errors: the
+  "~2,000" reachability figure's replacement still named "four documented
+  fields" when the schema documents six (`t`, `kind`, `selector`, `text`,
+  `value`, `route`; two required, four optional) and still said "tens of
+  thousands" when the bundled sample session's own ~130-byte average record
+  size crosses the cap at roughly 130,000 — both corrected here to name the
+  real field count and the fixture-derived figure directly, dropping the
+  now-unnecessary "30-80x" framing above; a `CHANGELOG.md` entry for the
+  `demo` capture-endpoint fix was misplaced in `Evidence integrity`
+  (`findings.jsonl` entries) rather than `Capture integrity`
+  (`interactions.jsonl` entries, where its nearest siblings live) — moved,
+  the same class of group-placement miss round 35's own post-fix reviews
+  also caught; and this file's own recount of files carrying the
+  canonical `adds no network dependency` phrase was still wrong (it named
+  README the seventh carrier when a third pass found an eighth,
+  `.abcd/work/CONTEXT.md`, that two prior passes had also missed to the
+  same line-wrap trap) and mischaracterised the round's finding as "the one
+  absolute network claim" when `spc-2-analysis-findings.md:25` carries an
+  untouched, unscoped "No LLM and no network anywhere in the CLI" of the
+  identical class — the count is dropped from this entry entirely rather
+  than attempted a fourth time; the rest corrected above. A third pair of
+  reviews then re-verified that HEAD. The correctness reviewer normalised
+  both the pre- and post-fix `review.go`/`demo.go` with `go/parser` and
+  `go/printer` (comments stripped) and diffed the output byte-for-byte
+  identical, mechanically confirming every change since the `+2` fix was
+  comment-only — verdict MERGE. The docs-accuracy reviewer, told explicitly
+  to distrust any count or magnitude claim given the pattern above,
+  independently re-derived every number in this entry (the ~130 B/record
+  fixture average, the ~130,000-interaction reachability figure, the
+  six-field/two-required count, the `spc-2-analysis-findings.md:25` quote,
+  the `CHANGELOG.md` group placement) and confirmed all of them — except
+  one: the "six other files" / "README is the seventh" carrier count was
+  still wrong, missing an eighth carrier, `.abcd/work/CONTEXT.md`, to the
+  identical line-wrap grep trap that had already hidden two other carriers
+  from two prior passes. Rather than attempt a fourth count, this entry
+  drops the specific number entirely (see above). Verdict MERGE once fixed.

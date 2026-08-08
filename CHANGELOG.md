@@ -181,6 +181,16 @@ Evidence integrity:
   a set of individually valid findings could still serialise to a file
   `report` and `review` both refuse to read back. It used to report success
   and write the unreadable file.
+- **Behaviour:** `review` refuses to record a verdict that would push
+  `findings.jsonl` past its 16 MiB total-size limit, the last of the file's
+  two writers left unguarded after the previous entry closed the same gap
+  for `analyze -ingest`. A `findings.jsonl` built at or near the cap could
+  legally exist; recording a verdict against it used to succeed and silently
+  brick every finding and verdict already on file — every later `analyze
+  -ingest` and `review` call refused the file outright, and `report` exited
+  0 but rendered an explicit "Findings unavailable" notice in place of the
+  session's findings, with no in-tool repair (re-ingesting was itself
+  refused once a verdict record existed).
 
 Capture and diagnostics:
 
@@ -488,6 +498,14 @@ Capture integrity:
 - `POST /api/interactions` refuses with 400 any record `merge` would refuse —
   a non-object body, or a missing/implausible `t` or missing `kind` — instead
   of persisting with 204 a line that later fails the whole session's merge.
+- **Behaviour:** `POST /api/interactions` refuses with 413 a record that
+  would push `interactions.jsonl` past its 16 MiB total-size limit, matching
+  the cap `merge` already enforces on read. Each record was checked only
+  against the per-line limit, so a session with enough individually valid
+  captures — each answered `204` — could accumulate past the total the
+  file's own reader refuses, discovered only once capture ended and `merge`
+  could no longer read the session back. `events.rrweb.jsonl` is
+  unaffected: it is archival and carries no total-size cap.
 - `POST /api/events` refuses a literal JSON `null` body with 400 instead of
   decoding it to a nil slice and answering 204: a JSON `null` unmarshals
   cleanly into an empty `[]json.RawMessage`, so it slipped past the "body is

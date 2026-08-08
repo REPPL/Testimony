@@ -333,6 +333,34 @@ func AppendVerdict(dir string, v analyze.Verdict, expect *analyze.Finding) error
 		f.Close()
 		return err
 	}
+	// Hold the file to MaxJSONLBytes, the total-size invariant ParseRecords
+	// enforces and every other JSONL writer (session.WriteJSONL,
+	// analyze.oversizedFindings) already pre-flights before appending. A
+	// findings.jsonl built by analyze -ingest can legally sit right at the cap;
+	// without this check, the next verdict recorded against it would land findings
+	// past MaxJSONLBytes, and every later analyze.Load, review, and report would
+	// refuse it — including the verdict just appended, and any recorded before it.
+	// holdsVerdicts (analyze.Ingest's re-ingest guard) is the one reader that does
+	// NOT refuse an over-total file: it bounds only a per-line scan, not the total,
+	// so it still finds the verdict and blocks re-ingest as a repair path.
+	// Measured under the lock, after the file is open, so a
+	// concurrent append cannot land between this check and the write below. writeVerdict
+	// is called with append(b, '\n') below — len(b)+1 bytes — but writeVerdict itself
+	// prepends a second leading newline when the file is non-empty and its last byte
+	// is not already '\n' (an exchanged or hand-edited findings.jsonl can end
+	// unterminated), so the worst case it actually writes is len(b)+2, not len(b)+1;
+	// budgeting only +1 here let a file at exactly the cap minus (len(b)+1) pass this
+	// check and still land one byte over MaxJSONLBytes.
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if info.Size()+int64(len(b))+2 > session.MaxJSONLBytes {
+		f.Close()
+		return fmt.Errorf("%s is %d bytes; appending this verdict would push it past the %d-byte JSONL file limit; refusing to write a session no command could read back",
+			session.FindingsFile, info.Size(), session.MaxJSONLBytes)
+	}
 	// Under the lock, confirm the verdict still targets the finding the analyst
 	// judged. review.Run snapshots findings once (analyze.Load) and then blocks on
 	// the operator for the whole interactive walk; a concurrent `analyze -ingest`
