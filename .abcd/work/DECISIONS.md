@@ -1093,9 +1093,9 @@ Architecture-shaping decisions graduate to an ADR under
   per record across its six documented fields (`t`, `kind`, `selector`,
   `text`, `value`, `route` — two required, four optional), and a session of
   ordinary records at that size crosses the 16 MiB cap at roughly 130,000
-  interactions. Fixed the same way, with its own `Seek` to
-  the file's current end before every write; `events.rrweb.jsonl` is
-  deliberately exempt, matching `MaxJSONLBytes`' own documented archival
+  interactions. Fixed the same way, with its own `Seek` to the file's
+  current end before every write; `events.rrweb.jsonl` is deliberately
+  exempt, matching `MaxJSONLBytes`' own documented archival
   carve-out. Both fixes carry regression tests watched to fail pre-fix and
   pass post-fix, and both survived two independent adversarial refuters
   apiece, including live end-to-end reproductions against a built binary
@@ -1123,14 +1123,15 @@ Architecture-shaping decisions graduate to an ADR under
   next" section, which names the Mode B feature ("Reference capture —
   narrated sessions over third-party apps") without using the letter B.
 - 2026-08-07 — Round 36's own PR (#53) picked up three rounds of
-  adversarial review before merge. The correctness reviewer caught a real off-by-one in the
-  round's own `AppendVerdict` total-size check: `writeVerdict` is called
-  with `len(b)+1` bytes but itself prepends a second leading newline when
-  the file is non-empty and its last byte is not already `\n` (a real,
-  supported state — an exchanged or hand-edited `findings.jsonl` can end
-  unterminated), so the true worst case is `len(b)+2`; the check as first
-  written budgeted only `+1`, reproducibly letting a file at exactly
-  `cap-(len(b)+1)` pass and still land one byte over `MaxJSONLBytes` —
+  adversarial review before merge. The correctness reviewer caught a real
+  off-by-one in the round's own `AppendVerdict` total-size check:
+  `writeVerdict` is called with `len(b)+1` bytes but itself prepends a
+  second leading newline when the file is non-empty and its last byte is
+  not already `\n` (a real, supported state — an exchanged or hand-edited
+  `findings.jsonl` can end unterminated), so the true worst case is
+  `len(b)+2`; the check as first written budgeted only `+1`, reproducibly
+  letting a file at exactly `cap-(len(b)+1)` pass and still land one byte
+  over `MaxJSONLBytes` —
   precisely the brick the check exists to prevent. Fixed to budget `+2`,
   with a new regression test seeding an unterminated file at the corrected
   boundary, watched to fail against `+1` and pass against `+2`. The
