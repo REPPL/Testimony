@@ -389,6 +389,12 @@ Documentation:
   qualified with the same model-fetch exception `02-transcribe.md` and
   `docs/explanation/privacy.md` already carry — the one internal-brief page
   still making the unqualified claim.
+- `spc-2-analysis-findings.md`'s two absolute "no network anywhere in the
+  CLI" claims (the Summary and the Decisions section) are reworded to the
+  scoped form its own Design section and every other carrier already use —
+  `record`'s live capture, the demo page's CDN-loaded rrweb recorder, and
+  the ASR engine's model fetch all use the network, so the unscoped claim
+  was false the moment it left `analyze`'s own boundary.
 
 Invocation contract:
 

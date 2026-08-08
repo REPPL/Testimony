@@ -22,8 +22,7 @@ verdict non-interactively — and records `confirmed | rejected | duplicate`
 verdicts as **appended, non-destructive records**, so the original finding and
 the full verdict history survive as the precision measure the method stands on.
 `report` gains a Findings section that renders `findings.jsonl` grouped by
-effective status. No LLM and no network anywhere in the CLI; every test is
-fixture-based and hermetic.
+effective status. Every test in this slice is fixture-based and hermetic.
 
 ## Design
 
@@ -299,8 +298,9 @@ same change.
   verdict wins for display; `duplicate-of-F-NNN` stores `verdict:"duplicate"` +
   `of:"F-NNN"`.
 - **`analyze` is emit-or-ingest, host-delegated.** Emit prints a versioned,
-  self-contained rubric + whole timeline (chunking seam kept); the CLI never
-  calls a model or the network. Ingest is the sole validation boundary.
+  self-contained rubric + whole timeline (chunking seam kept); `analyze` itself
+  calls no model and adds no network dependency. Ingest is the sole
+  validation boundary.
 - **Ingest refuses to overwrite a `findings.jsonl` that holds verdicts**,
   protecting the retained precision record.
 
