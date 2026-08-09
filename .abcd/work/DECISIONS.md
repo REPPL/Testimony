@@ -1353,3 +1353,50 @@ Architecture-shaping decisions graduate to an ADR under
   directory rather than a fixed, discoverable location, prompting a new
   draft intent, `itd-10-fixed-session-location`, for the maintainer to
   weigh in on. Neither was actioned as a code fix this round.
+- 2026-08-09 — Bug-hunt round 40: zero substantive defects, five confirmed
+  nitpicks, three refuted. `docs/reference/session-directory.md`'s
+  `transcript.jsonl` example wrote `"t0":16.0`/`"t1":21.0` and a word
+  `"t":16.0`, a form `transcribe` (writing via `encoding/json`) never
+  emits — it writes `16`, not `16.0` — and which contradicted the same
+  page's own `timeline.jsonl` example for the identical utterance two
+  tables down; the internal schema brief (`02-schemas.md`) carried the
+  sibling case, `"t1":131.90` instead of the `131.9` `encoding/json`
+  actually writes. `cli.md`'s `-offset` flag row said derivation happens
+  "with `-audio`" without qualification, but `transcribe.go`'s
+  `resolveOffset` only derives when `-audio` names a file other than the
+  session's own `audio.wav` — `-audio audio.wav` takes the sidecar path
+  instead, a carve-out the row's neighbouring prose already states twice
+  for other behaviours but not for this one. `cli.md` and
+  `session-directory.md` both described the report's Findings section as
+  having only two states (present, absent) and missed a third, real one:
+  `findings.jsonl` present but unreadable, where `report` still exits `0`
+  and renders a "Findings unavailable" notice (already named in
+  `CHANGELOG.md`, now documented on both reference pages). `outputTail`
+  (`internal/record/recorders.go`) prefixed a truncated tail with ASCII
+  `"..."` while its two siblings doing the identical job both use `"…"` —
+  the sole ASCII ellipsis literal left in the non-test tree; fixed to
+  match, with `TestOutputTail` updated and confirmed to fail against the
+  prior code and pass after. Refuted: a claim that `EmitRequest`
+  (`internal/analyze/emit.go`) reintroduces HTML-escaping relative to
+  `timeline.jsonl` and so can make an agent's copied `quote`/`ui.selector`
+  fail validation — both refuters built the CLI and reproduced that the
+  escaping is JSON-transparent (validation decodes both forms identically)
+  and that `findings.jsonl` itself is already written with the same
+  escaping convention via a plain encoder, so the claimed consequence does
+  not occur; the `mode` field's documented `default A` having no assigning
+  code (split verdict — discarded per the loop's tie-breaking rule: for an
+  optional field, "default" in a schema table states what a reader should
+  assume when absent, not a claim that ingest materialises the value, and
+  sibling specs use the identical phrasing deliberately); and
+  `internal/demo/demo.go`'s `session.EncodedLen` error branch being
+  unreachable dead code (true but not a defect — it is one of three
+  identical, mandatory error handlers on the same shared, error-returning
+  API, and removing it would be the actual regression). Separately, a
+  stale `bughunt-33` branch was found pushed to origin with no open PR;
+  investigation showed every fix in it (the round-32/33-era self-exit
+  diagnosis, dead-code removal, and doc corrections) had already landed on
+  `main` independently, worded differently, via other rounds — so it was
+  left unopened rather than turned into a PR that would revert improved
+  wording. This session's tools could not delete the branch (`git push
+  --delete` was rejected); it is safe leftover cruft for the maintainer to
+  remove.
