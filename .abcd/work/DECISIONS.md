@@ -1402,3 +1402,31 @@ Architecture-shaping decisions graduate to an ADR under
   wording. This session's tools could not delete the branch (`git push
   --delete` was rejected); it is safe leftover cruft for the maintainer to
   remove.
+
+- 2026-08-09: Bug-hunt round 41 (PR TBD). Two findings survived adversarial
+  verification (both refuters failed to kill each). Substantive:
+  `.abcd/development/brief/04-surfaces/06-analyze.md`'s ingest section
+  claimed to run "every schema rule" and then listed six, silently
+  omitting two `validate.go` actually enforces — the `mode` `A|B` enum
+  (`internal/analyze/validate.go:164-165`) and the 64-id evidence cap
+  (`:17`, `:174-175`) — the same gap round 39 already fixed on
+  `docs/reference/cli.md:156`, which the brief page cites as its own
+  source (`../05-internals/02-schemas.md:97,99`) and still contradicts;
+  corrected to match. Nitpick: `docs/reference/cli.md:47`'s `transcribe`
+  synopsis and `internal/cli/cli.go:34`'s usage banner rendered
+  `-compute_type auto|int8|float16` in the identical closed-set pipe form
+  as its three genuinely-validated siblings on the same line
+  (`-engine`/`-device`/`-vad`, each refused at exit 2 by
+  `CheckEngine`/`CheckDevice`/`CheckVAD`), even though `-compute_type` has
+  no validator and is a deliberate pass-through
+  (`internal/cli/cli.go:228-230`; `internal/transcribe/whisperx.go:96-103`)
+  — reproduced live (`-device bogus`/`-vad bogus`/`-engine bogus` all exit
+  2; `-compute_type bogus`/`float32` do not). Both sites now carry the
+  openness marker (`|…`), matching the pipe form already used correctly at
+  `docs/how-to/transcribe-a-recording.md:80`. Refuted: `internal/cli/cli.go:183`'s
+  `-compute_type` help string using ASCII `"..."` where `cli.md`'s prose
+  table uses `"…"` — split verdict (one refuter found no stated repo
+  convention ties code-side text to doc-side glyphs, and that a
+  single-site fix would desynchronise the help string from its own
+  explanatory comment at `cli.go:229`, which carries the identical ASCII
+  list) — discarded per the loop's tie-breaking rule.
