@@ -73,7 +73,7 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 | `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — a word is omitted if the aligner could not time it, if its time is implausible (non-finite, or beyond ±1e9 seconds) either as engine-reported (before the session offset is added) or after adding the offset, or if its text is empty, whitespace-only, or invisible-only Unicode |
 
 ```json
-{"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16.0},{"w":"feels","t":16.42}]}
+{"id":"utt-003","t0":16,"t1":21,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16},{"w":"feels","t":16.42}]}
 ```
 
 ## `audio.offset.json`
@@ -156,4 +156,4 @@ Human-readable Markdown rendered from the timeline and findings:
 
 - a header with session name, app, participant, duration (`MM:SS`, the latest moment on the timeline — the maximum over all entries, taking an utterance's end `t1` and an event's time), and utterance/event counts, plus the task list;
 - a **Timeline** section: each utterance as `**[MM:SS] <speaker>:** “<text>”` (curly quotes), with the events joined to it — the first utterance (in time) whose span, widened by the report's join window, contains the event — as indented bullets ``[MM:SS] <kind> `<selector>` "<text>" value="…" (<route>)`` (straight quotes, selector in its own code span); events matched by no utterance appear as standalone bullets in time order; every `MM:SS` in `report.md` (including the header's duration) carries a leading `-` for a negative time — one preceding `t0` (a recording predating it, see `t`'s note above) — except a time that rounds to zero, which renders `00:00` unsigned;
-- a **Findings** section rendering `findings.jsonl` grouped by effective status (Confirmed, Unverified, Duplicate, Rejected), each group headed with a count and each finding line carrying its id, type, severity, clock, quote, anchor, and any verdict and date. When there is no `findings.jsonl` the section is a short notice pointing at `analyze` and `review`.
+- a **Findings** section rendering `findings.jsonl` grouped by effective status (Confirmed, Unverified, Duplicate, Rejected), each group headed with a count and each finding line carrying its id, type, severity, clock, quote, anchor, and any verdict and date. When there is no `findings.jsonl` the section is a short notice pointing at `analyze` and `review`; when the file exists but cannot be read, the section instead reports that `findings.jsonl` could not be read, without the underlying error (`report` still exits `0`).

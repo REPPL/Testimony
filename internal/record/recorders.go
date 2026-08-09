@@ -283,7 +283,7 @@ func outputTail(out []byte) string {
 		for i < len(s) && !utf8.RuneStart(s[i]) {
 			i++
 		}
-		s = "..." + s[i:]
+		s = "…" + s[i:]
 	}
 	// ffmpeg's device listing is diagnostic text printed straight to the
 	// operator's terminal; session.SafeTextLines closes the same
