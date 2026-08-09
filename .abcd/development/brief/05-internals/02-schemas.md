@@ -44,7 +44,7 @@ schema changes update code, sample, and tests together
 | `words` | []Word | optional; each `{"w": string, "t": float64}` — word start time, session-relative |
 
 ```json
-{"id":"utt-034","t0":128.42,"t1":131.90,"speaker":"P1",
+{"id":"utt-034","t0":128.42,"t1":131.9,"speaker":"P1",
  "text":"I expected this button to save immediately",
  "words":[{"w":"I","t":128.42},{"w":"expected","t":128.61}]}
 ```

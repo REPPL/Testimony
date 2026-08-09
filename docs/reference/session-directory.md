@@ -73,7 +73,7 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 | `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — a word is omitted if the aligner could not time it, if its time is implausible (non-finite, or beyond ±1e9 seconds) either as engine-reported (before the session offset is added) or after adding the offset, or if its text is empty, whitespace-only, or invisible-only Unicode |
 
 ```json
-{"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16.0},{"w":"feels","t":16.42}]}
+{"id":"utt-003","t0":16,"t1":21,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16},{"w":"feels","t":16.42}]}
 ```
 
 ## `audio.offset.json`
