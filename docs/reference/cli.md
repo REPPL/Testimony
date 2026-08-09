@@ -44,7 +44,7 @@ Transcribes a voice recording into `transcript.jsonl` using a local ASR engine.
 testimony transcribe -session DIR [-audio FILE]
                     [-engine auto|whisperx|whispercpp] [-model large-v3-turbo]
                     [-language en] [-offset SECONDS]
-                    [-device auto|cpu|cuda] [-compute_type auto|int8|float16]
+                    [-device auto|cpu|cuda] [-compute_type auto|int8|float16|…]
                     [-vad auto|silero|pyannote]
 ```
 
