@@ -1374,9 +1374,11 @@ Architecture-shaping decisions graduate to an ADR under
   `CHANGELOG.md`, now documented on both reference pages). `outputTail`
   (`internal/record/recorders.go`) prefixed a truncated tail with ASCII
   `"..."` while its two siblings doing the identical job both use `"…"` —
-  the sole ASCII ellipsis literal left in the non-test tree; fixed to
-  match, with `TestOutputTail` updated and confirmed to fail against the
-  prior code and pass after. Refuted: a claim that `EmitRequest`
+  the sole ASCII truncation marker left in the non-test tree (ASCII `...`
+  still appears inside `internal/cli/cli.go`'s usage and `-compute_type`
+  help strings, where `cli.md` renders the same list with `…` — a
+  candidate for a later round); fixed to match, with `TestOutputTail`
+  updated and confirmed to fail against the prior code and pass after. Refuted: a claim that `EmitRequest`
   (`internal/analyze/emit.go`) reintroduces HTML-escaping relative to
   `timeline.jsonl` and so can make an agent's copied `quote`/`ui.selector`
   fail validation — both refuters built the CLI and reproduced that the
