@@ -97,7 +97,7 @@ testimony report -session DIR [-window 2.5]
 | `-session` | *(required)* | session directory |
 | `-window` | `2.5` | utterance-to-event join window, in seconds |
 
-Behaviour: reads `manifest.json` (required) and `timeline.jsonl`, plus `findings.jsonl` when present (the Findings section; without the file it is a short notice pointing at `analyze` and `review`). A timeline entry whose `src` is neither `speech` nor `event` is refused rather than silently omitted from the rendered record. Attaches each event to the first utterance whose span, widened by the window on both sides, contains it; events matched by no utterance appear as standalone lines. Writes `report.md` into the session directory and prints `wrote <path>`.
+Behaviour: reads `manifest.json` (required) and `timeline.jsonl`, plus `findings.jsonl` when present (the Findings section; without the file it is a short notice pointing at `analyze` and `review`; if the file exists but cannot be read, the section reports that instead, and the command still exits `0`). A timeline entry whose `src` is neither `speech` nor `event` is refused rather than silently omitted from the rendered record. Attaches each event to the first utterance whose span, widened by the window on both sides, contains it; events matched by no utterance appear as standalone lines. Writes `report.md` into the session directory and prints `wrote <path>`.
 
 ## `testimony record`
 
