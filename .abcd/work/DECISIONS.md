@@ -1403,7 +1403,7 @@ Architecture-shaping decisions graduate to an ADR under
   --delete` was rejected); it is safe leftover cruft for the maintainer to
   remove.
 
-- 2026-08-09: Bug-hunt round 41 (PR TBD). Two findings survived adversarial
+- 2026-08-09 — Bug-hunt round 41 (PR #61). Two findings survived adversarial
   verification (both refuters failed to kill each). Substantive:
   `.abcd/development/brief/04-surfaces/06-analyze.md`'s ingest section
   claimed to run "every schema rule" and then listed six, silently
