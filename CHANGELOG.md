@@ -417,6 +417,9 @@ Documentation:
   `transcribe` never writes, since `encoding/json` marshals `float64(16)`
   as `16`) are corrected to match, as the doc example for the same
   utterance already did since round 40.
+- The internal `report` surface brief names the Findings section's third
+  state — present but unreadable — that its two user-facing siblings
+  already documented since round 40.
 
 Invocation contract:
 
