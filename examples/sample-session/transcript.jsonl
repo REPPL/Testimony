@@ -1,10 +1,10 @@
-{"id":"utt-001","t0":2.0,"t1":5.5,"speaker":"P1","text":"Session start. I'm looking at the settings prototype for the first time."}
-{"id":"utt-002","t0":8.0,"t1":12.5,"speaker":"P1","text":"Okay, three tabs, General is open. I'll change my display name first."}
-{"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16.0},{"w":"feels","t":16.42},{"w":"fine.","t":16.8},{"w":"Now","t":17.6},{"w":"I","t":17.92},{"w":"expect","t":18.08},{"w":"this","t":18.52},{"w":"save","t":18.78},{"w":"button","t":19.05},{"w":"to","t":19.5},{"w":"confirm","t":19.66},{"w":"somehow.","t":20.24}]}
-{"id":"utt-004","t0":22.0,"t1":28.0,"speaker":"P1","text":"Hm. I clicked save and nothing happened. No message, no spinner. I can't actually tell if it saved."}
-{"id":"utt-005","t0":31.0,"t1":36.0,"speaker":"P1","text":"I'll switch to Appearance. The tab switch is instant, that's nice."}
-{"id":"utt-006","t0":38.0,"t1":45.0,"speaker":"P1","text":"Oh, I like this dark mode toggle. Immediate feedback, the whole page changes. This is how the save button should feel."}
-{"id":"utt-007","t0":48.0,"t1":54.0,"speaker":"P1","text":"Turning it back. The label just says dark mode whether it's on or off, so the switch has to carry the meaning."}
-{"id":"utt-008","t0":57.0,"t1":63.0,"speaker":"P1","text":"Back to General. My name is still here, so maybe it did save earlier. The button just doesn't say so."}
-{"id":"utt-009","t0":66.0,"t1":74.0,"speaker":"P1","text":"If I could fix one thing it would be save feedback. A toast or a brief disabled state would do."}
-{"id":"utt-010","t0":78.0,"t1":82.0,"speaker":"P1","text":"That's the end of the session. Stopping the recorders now."}
+{"id":"utt-001","t0":2,"t1":5.5,"speaker":"P1","text":"Session start. I'm looking at the settings prototype for the first time."}
+{"id":"utt-002","t0":8,"t1":12.5,"speaker":"P1","text":"Okay, three tabs, General is open. I'll change my display name first."}
+{"id":"utt-003","t0":16,"t1":21,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16},{"w":"feels","t":16.42},{"w":"fine.","t":16.8},{"w":"Now","t":17.6},{"w":"I","t":17.92},{"w":"expect","t":18.08},{"w":"this","t":18.52},{"w":"save","t":18.78},{"w":"button","t":19.05},{"w":"to","t":19.5},{"w":"confirm","t":19.66},{"w":"somehow.","t":20.24}]}
+{"id":"utt-004","t0":22,"t1":28,"speaker":"P1","text":"Hm. I clicked save and nothing happened. No message, no spinner. I can't actually tell if it saved."}
+{"id":"utt-005","t0":31,"t1":36,"speaker":"P1","text":"I'll switch to Appearance. The tab switch is instant, that's nice."}
+{"id":"utt-006","t0":38,"t1":45,"speaker":"P1","text":"Oh, I like this dark mode toggle. Immediate feedback, the whole page changes. This is how the save button should feel."}
+{"id":"utt-007","t0":48,"t1":54,"speaker":"P1","text":"Turning it back. The label just says dark mode whether it's on or off, so the switch has to carry the meaning."}
+{"id":"utt-008","t0":57,"t1":63,"speaker":"P1","text":"Back to General. My name is still here, so maybe it did save earlier. The button just doesn't say so."}
+{"id":"utt-009","t0":66,"t1":74,"speaker":"P1","text":"If I could fix one thing it would be save feedback. A toast or a brief disabled state would do."}
+{"id":"utt-010","t0":78,"t1":82,"speaker":"P1","text":"That's the end of the session. Stopping the recorders now."}

@@ -413,6 +413,10 @@ Documentation:
 - `session-directory.md` and `cli.md` now name `manifest.json`'s own 1 MiB
   size limit, enforced since round 6 but previously stated only in this
   file's own entry above.
+- The bundled `transcript.jsonl` fixture's `.0`-suffixed floats (a form
+  `transcribe` never writes, since `encoding/json` marshals `float64(16)`
+  as `16`) are corrected to match, as the doc example for the same
+  utterance already did since round 40.
 
 Invocation contract:
 
