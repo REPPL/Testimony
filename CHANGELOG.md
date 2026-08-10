@@ -410,6 +410,16 @@ Documentation:
   that gate; it is refused earlier, correctly, at the preceding attestation
   check, for lacking a build attestation the workflow did not yet exist to
   create.
+- `session-directory.md` and `cli.md` now name `manifest.json`'s own 1 MiB
+  size limit, enforced by the reader since round 7 and the writer since
+  round 14, but previously stated only in this file's own entry above.
+- The bundled `transcript.jsonl` fixture's `.0`-suffixed floats (a form
+  `transcribe` never writes, since `encoding/json` marshals `float64(16)`
+  as `16`) are corrected to match, as the doc example for the same
+  utterance already did since round 40.
+- The internal `report` surface brief names the Findings section's third
+  state — present but unreadable — that its two user-facing siblings
+  already documented since round 40.
 
 Invocation contract:
 

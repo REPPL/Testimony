@@ -32,6 +32,8 @@ A single JSON object describing the session. `t0_epoch_ms` anchors every session
 | `tasks` | array of strings | no | tasks given to the participant |
 | `notes` | string | no | free-form notes |
 
+`manifest.json` carries a 1 MiB size limit of its own, separate from the `.jsonl` limit above: a write that would push it over the cap is refused, and a load of one already over it is refused.
+
 ```json
 {
   "session": "sample-session",

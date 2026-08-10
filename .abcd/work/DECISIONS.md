@@ -1431,3 +1431,42 @@ Architecture-shaping decisions graduate to an ADR under
   single-site fix would desynchronise the help string from its own
   explanatory comment at `cli.go:229`, which carries the identical ASCII
   list) — discarded per the loop's tie-breaking rule.
+- 2026-08-10 — Bug-hunt round 42: two confirmed substantive defects, one
+  nitpick, two refuted on split verdicts. `manifest.json`'s 1 MiB size
+  limit (`internal/session/session.go`'s `maxManifestBytes`, enforced by
+  the reader since round 7 and the writer since round 14, reachable via
+  long `-task`/`-app` text) was named only in `CHANGELOG.md`'s own
+  entry, on no user-facing reference page — now named in
+  `session-directory.md` and `cli.md`, matching how the `.jsonl` files'
+  16 MiB cap is already documented. `.abcd/development/brief/04-surfaces/
+  04-report.md` documented only two Findings-section states (present,
+  absent) where `report.go` has a third (present but unreadable), which
+  both user-facing reference pages have named since round 40 — the brief
+  sibling was never swept; fixed. Nitpick: the bundled
+  `examples/sample-session/transcript.jsonl` fixture carried `.0`-suffixed
+  whole-number times, a form `transcribe` can never write
+  (`encoding/json` marshals `float64(16)` as `16`), confirmed against the
+  fixture's own merge-generated `timeline.jsonl` sibling — round 40 fixed
+  the doc example for the same utterance to the realistic bare form; this
+  fixture was the sibling left unswept. Refuted on split verdicts (one
+  refuter killed, one survived, discarded per the loop's rule):
+  `transcribe.checkEntriesFit` lacking a wrapped-total guard against
+  `session.MaxJSONLBytes` — a precedent duplicate of round 35's identical
+  refutation (the total is `merge`'s invariant, since `transcribe` never
+  sees `interactions.jsonl`, and the failure mode is a clean `merge`
+  refusal rather than silent corruption); and `ci.yml` using a fixed
+  `/tmp` path in one step instead of the `$RUNNER_TEMP` used everywhere
+  else, with no documented convention or behavioural consequence on the
+  ephemeral hosted runner. Also refuted, both unanimously and matching
+  prior-round precedent (`record -addr` unvalidated without `-demo`,
+  documented as applying only in that combination; `record -participant
+  ""` silently defaulting to `P1`, round 39; `demo` not handling `SIGHUP`
+  unlike `record`, round 37; `AGENTS.md`'s CI-trigger summary omitting
+  `merge_group`, round 35; the `check` job's abbreviated inline comment
+  against its own complete file-header roster, round 37; "four" vs "six"
+  early-return flag-path counts, rounds 24 and 37; `install.sh`'s
+  untested short-form flags, which share their `case` arm with the tested
+  long forms; the `interactions.jsonl` fixture's non-semantic JSON key
+  order; the report brief's uniform omission of every input refusal, not
+  a selective one; and no `CHANGELOG.md` entry for rounds 40/41's cosmetic
+  string-glyph changes, below the file's own "notable changes" bar).
