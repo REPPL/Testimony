@@ -1433,8 +1433,9 @@ Architecture-shaping decisions graduate to an ADR under
   list) — discarded per the loop's tie-breaking rule.
 - 2026-08-10 — Bug-hunt round 42: two confirmed substantive defects, one
   nitpick, two refuted on split verdicts. `manifest.json`'s 1 MiB size
-  limit (`internal/session/session.go`'s `maxManifestBytes`, reachable via
-  repeated `-task`/`-app` text) was named only in `CHANGELOG.md`'s own
+  limit (`internal/session/session.go`'s `maxManifestBytes`, enforced by
+  the reader since round 7 and the writer since round 14, reachable via
+  long `-task`/`-app` text) was named only in `CHANGELOG.md`'s own
   entry, on no user-facing reference page — now named in
   `session-directory.md` and `cli.md`, matching how the `.jsonl` files'
   16 MiB cap is already documented. `.abcd/development/brief/04-surfaces/
