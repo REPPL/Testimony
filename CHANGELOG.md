@@ -410,6 +410,9 @@ Documentation:
   that gate; it is refused earlier, correctly, at the preceding attestation
   check, for lacking a build attestation the workflow did not yet exist to
   create.
+- `session-directory.md` and `cli.md` now name `manifest.json`'s own 1 MiB
+  size limit, enforced since round 6 but previously stated only in this
+  file's own entry above.
 
 Invocation contract:
 
