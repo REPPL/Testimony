@@ -84,7 +84,7 @@ Written by `transcribe` only when the audio came from an external recording (a `
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `offset_seconds` | number | yes | seconds added to every audio-clock time to place it on the session clock |
+| `offset_seconds` | number | yes | seconds added to every audio-clock time to place it on the session clock; must not exceed 1e9 seconds in magnitude (`transcribe` refuses otherwise) |
 | `provenance` | string | no | how the offset was obtained, for the operator |
 
 ## `events.rrweb.jsonl`

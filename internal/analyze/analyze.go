@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strings"
 
 	"github.com/REPPL/Testimony/internal/session"
 )
@@ -181,15 +182,20 @@ func ParseRecords(r io.Reader, name string) ([]Finding, []Verdict, error) {
 			return nil, nil, fmt.Errorf("%s:%d: %w", name, line, err)
 		}
 		id := session.SafeText(fnd.ID)
-		// An empty id is refused on its own terms, not folded into the
-		// duplicate check below: unlike timeline.Merge's and loadTimeline's
-		// sibling checks — where an id-less entry is legitimately skipped,
-		// because an utterance or event needs no id — a finding's id is
-		// never optional (EffectiveStatus and findByID key on it, so two
-		// id-less findings would collapse onto one entry), and reporting the
-		// second one as `duplicate finding id ""` misnames what is actually
-		// wrong with the first.
-		if id == "" {
+		// An empty (or, per the TrimSpace check, whitespace-only) id is
+		// refused on its own terms, not folded into the duplicate check
+		// below: unlike timeline.Merge's and loadTimeline's sibling checks —
+		// where an id-less entry is legitimately skipped, because an
+		// utterance or event needs no id — a finding's id is never optional
+		// (EffectiveStatus and findByID key on it, so two id-less findings
+		// would collapse onto one entry), and reporting the second one as
+		// `duplicate finding id ""` misnames what is actually wrong with the
+		// first. TrimSpace matches every other presence check in this
+		// package (report.inlineRendersEmpty, review.printFinding/anchor,
+		// validate's quote gate): a whitespace-only id renders with no
+		// fallback in report.md and review's interactive walk, so it must be
+		// refused here rather than treated as present.
+		if strings.TrimSpace(id) == "" {
 			return nil, nil, fmt.Errorf("%s:%d: finding has no id; every finding must have a unique id", name, line)
 		}
 		if seenID[id] {

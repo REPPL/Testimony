@@ -1470,3 +1470,37 @@ Architecture-shaping decisions graduate to an ADR under
   order; the report brief's uniform omission of every input refusal, not
   a selective one; and no `CHANGELOG.md` entry for rounds 40/41's cosmetic
   string-glyph changes, below the file's own "notable changes" bar).
+- 2026-08-11 — Bug-hunt round 43: one confirmed substantive defect, one
+  nitpick, three refuted. `analyze.ParseRecords`' finding-id presence check
+  (`internal/analyze/analyze.go`) tested `session.SafeText(fnd.ID) == ""`
+  instead of the trimmed form every other presence decision in the package
+  uses (report's and review's rendering fallbacks, validate's quote gate),
+  so a whitespace-only id (a literal space, or a tab — `SafeText` maps it to
+  one) passed as "present" and then rendered with no fallback, unlike its
+  neighbouring fields on the same line — `** **` in `report.md`, a dangling
+  line in `review`'s interactive walk, and a verdict recorded against an
+  id `review -finding` can never subsequently name. Fixed by trimming the
+  presence check, so a whitespace-only id is now refused the same way an
+  empty one already was. Nitpick: `docs/reference/session-directory.md`'s
+  `audio.offset.json` schema table omitted the ±1e9-second magnitude bound
+  `transcribe` enforces on `offset_seconds` — every sibling time field on
+  the same page states its bound; this was the one omitted. Refuted: an
+  `internal/analyze/validate.go` evidence-validation loop that keeps
+  emitting per-id errors after reporting the `maxEvidence` cap violation —
+  measured amplification is real but not caused by the claimed fall-through
+  (a cap-compliant hostile answer produces byte-identical worst-case output),
+  the proposed fix trims the ceiling by only ~20%, and it is the same
+  "transactional and exhaustive" error-collection contract validate.go
+  applies uniformly, already refuted once before in round 33 for the
+  sibling `Ingest` accumulator; `.abcd/development/brief/05-internals/
+  02-schemas.md`'s transcript/timeline `id` rows omitting the id-uniqueness
+  and `ev-NNN`-namespace-exclusion invariant — a full field-by-field diff
+  showed the same page uniformly omits eleven other enforcement details
+  (size caps, magnitude bounds, closed-set constraints) from these
+  shape-only tables, unlike its findings/verdict tables, which state
+  "every field below is checked" and carry a `Required` column those don't;
+  and `.abcd/development/brief/04-surfaces/03-merge.md` omitting the same
+  id-collision refusal from its behaviour bullets — that page and
+  `docs/reference/cli.md`'s own merge section both omit all seven of
+  merge's per-record validation refusals uniformly, delegating schema-level
+  rules to `02-schemas.md` by name on its own last line.
