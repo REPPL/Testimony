@@ -1504,3 +1504,34 @@ Architecture-shaping decisions graduate to an ADR under
   `docs/reference/cli.md`'s own merge section both omit all seven of
   merge's per-record validation refusals uniformly, delegating schema-level
   rules to `02-schemas.md` by name on its own last line.
+- 2026-08-15 — Bug-hunt round 45: one confirmed substantive defect, two
+  refuted. `transcribe.atomicConvert` (`internal/transcribe/ffmpeg.go`)
+  chmod'd its temp file to the umask-masked default unconditionally before
+  renaming it over `out`, even when `out` already existed with a
+  deliberately different mode — a direct ffmpeg write over an existing file
+  leaves that file's mode untouched (`open(2)`'s mode argument is only
+  consulted on `O_CREAT`), so the rename path diverged from the very
+  behaviour its own comment claimed to reproduce. Reachable on an ordinary
+  `transcribe -audio` re-run over a session whose `audio.wav` an operator
+  had tightened to `0600`, or one copied from a machine with a different
+  umask: the recording came back group/world-readable (and the reverse,
+  `0666` silently narrowed to `0644`), unlike `session.WriteFileAtomicNoFollow`'s
+  matching guarantee for the offset sidecar. Fixed by `Lstat`-ing `out`
+  first and, when it is already a regular file, preserving its mode across
+  the rename instead of reapplying the umask-derived default. Refuted:
+  `internal/demo/assets/index.html`'s rrweb CDN `<script>` tag lacking a
+  Subresource Integrity hash — real and unmitigated, but both refuters
+  independently killed it as an in-round fix: round 9 already disclosed
+  the CDN fetch and deferred the vendoring decision as a standing,
+  human-owned tradeoff, the tag is pinned to an exact immutable npm
+  version rather than a floating one, and an unverifiable hash computed
+  without network access to the CDN (blocked in this environment) risks
+  a silent false pin worse than no pin — recorded for whoever takes the
+  vendoring decision rather than fixed here; and `.abcd/development/specs/
+  open/spc-2-analysis-findings.md`'s finding-schema table omitting the
+  64-id evidence cap every sibling reference page states — split verdict
+  (one refuter found spc-2's table uniformly stale across five
+  post-dated ingest rules, not a single unswept gap, and that its own
+  schema-move note delegates the canonical table to `05-internals/
+  02-schemas.md`; the other found the omission real but nitpick-tier) —
+  discarded per the loop's tie-breaking rule.
