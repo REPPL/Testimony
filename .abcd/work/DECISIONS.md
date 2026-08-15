@@ -1504,8 +1504,9 @@ Architecture-shaping decisions graduate to an ADR under
   `docs/reference/cli.md`'s own merge section both omit all seven of
   merge's per-record validation refusals uniformly, delegating schema-level
   rules to `02-schemas.md` by name on its own last line.
-- 2026-08-15 — Bug-hunt round 45: one confirmed substantive defect, two
-  refuted. `transcribe.atomicConvert` (`internal/transcribe/ffmpeg.go`)
+- 2026-08-15 — Bug-hunt round 45: one confirmed substantive defect, one
+  refuted, one discarded on a split verdict. `transcribe.atomicConvert`
+  (`internal/transcribe/ffmpeg.go`)
   chmod'd its temp file to the umask-masked default unconditionally before
   renaming it over `out`, even when `out` already existed with a
   deliberately different mode — a direct ffmpeg write over an existing file

@@ -110,8 +110,9 @@ func atomicConvert(out string, produce func(tmpPath string) error, beforeFinalis
 	// or other non-regular target, so a Lstat hit here is a regular file) must
 	// preserve that file's own mode: a direct ffmpeg write reopens an existing
 	// path with O_TRUNC, which open(2) honours by leaving the current mode
-	// alone (the mode argument is only consulted on O_CREAT), so the rename
-	// path has to match it rather than reapply the umask-masked default below.
+	// alone (the mode argument is only consulted when O_CREAT actually
+	// creates the file), so the rename path has to match it rather than
+	// reapply the umask-masked default below.
 	// Without this, re-running `transcribe -audio` over a session whose
 	// audio.wav an operator had deliberately chmod 600'd — or one copied from
 	// a machine with a different umask — silently widens (or narrows) that
