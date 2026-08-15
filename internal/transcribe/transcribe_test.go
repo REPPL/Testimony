@@ -1320,6 +1320,52 @@ func TestAtomicConvertLeavesNoPartialOnFailure(t *testing.T) {
 	}
 }
 
+// TestAtomicConvertPreservesExistingMode is the pre-existing-out regression.
+// A rename over an operator-tightened audio.wav (0600) must leave it 0600, not
+// reset it to whatever the current umask produces — the reverse (0666
+// narrowed to a flat 0644) must also not happen. Pre-fix, atomicConvert always
+// chmod'd the temp to 0644&^umask regardless of what already sat at out.
+func TestAtomicConvertPreservesExistingMode(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, session.AudioFile)
+
+	// Seed a pre-existing audio.wav that an operator has deliberately tightened.
+	if err := os.WriteFile(out, []byte("RIFF....original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := atomicConvert(out, func(tmpPath string) error {
+		return os.WriteFile(tmpPath, []byte("RIFF....replacement"), 0o644)
+	}, nil); err != nil {
+		t.Fatalf("atomicConvert: %v", err)
+	}
+	fi, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("stat converted audio: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("converting over an existing 0600 %s must preserve its mode, got %v — it must not be silently widened to the umask-masked default", session.AudioFile, got)
+	}
+
+	// The reverse direction: a deliberately widened 0666 must not be silently
+	// narrowed to 0644 either.
+	if err := os.Chmod(out, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicConvert(out, func(tmpPath string) error {
+		return os.WriteFile(tmpPath, []byte("RIFF....replacement again"), 0o644)
+	}, nil); err != nil {
+		t.Fatalf("atomicConvert: %v", err)
+	}
+	fi, err = os.Stat(out)
+	if err != nil {
+		t.Fatalf("stat converted audio: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o666 {
+		t.Fatalf("converting over an existing 0666 %s must preserve its mode, got %v — it must not be silently narrowed", session.AudioFile, got)
+	}
+}
+
 func TestResolveVAD(t *testing.T) {
 	cases := []struct{ pref, want string }{
 		{"", "silero"},
