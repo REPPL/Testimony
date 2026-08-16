@@ -1625,6 +1625,26 @@ func TestResolveModelAcceptsRegularFile(t *testing.T) {
 	}
 }
 
+// TestResolveModelGuidanceFailsClosedOnHTTPError pins resolveModel's printed
+// download recipe to curl's fail-closed flag. Without -f/--fail, curl treats
+// an HTTP error response (e.g. a moved or withdrawn Hugging Face asset) as a
+// successful transfer and writes the error page into the destination .bin
+// file at exit 0 — silently corrupting the model the reader thinks they just
+// downloaded, which then fails opaquely at whisper-cli load time rather than
+// at download time. install.sh's own equivalent guidance already uses -fL
+// for the identical recipe; this pins the printed guidance to match.
+func TestResolveModelGuidanceFailsClosedOnHTTPError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no cached model anywhere for resolveModel to find
+
+	_, err := resolveModel("missing-model")
+	if err == nil {
+		t.Fatal("resolveModel of a nonexistent model must fail")
+	}
+	if !strings.Contains(err.Error(), "curl -fL --create-dirs") {
+		t.Fatalf("resolveModel guidance must use curl -fL (fail-closed on HTTP errors), got: %v", err)
+	}
+}
+
 // TestWriteOffsetSidecarFailurePreservesPrior pins the atomic sidecar write.
 // The previous truncating write (O_TRUNC, then write) destroyed the prior
 // sidecar's bytes the moment the open succeeded, so a write that failed after

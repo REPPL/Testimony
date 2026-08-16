@@ -796,7 +796,7 @@ Resource and process lifecycle:
   a versioned rubric plus the session timeline as a self-contained prompt any
   assistant can answer; `-ingest` validates that answer against the timeline
   (evidence must exist, quotes must be verbatim, status is forced to
-  `unverified`) into `findings.jsonl`. The CLI holds no API keys and makes no
+  `unverified`) into `findings.jsonl`. `analyze` holds no API keys and makes no
   network calls.
 - **`testimony review`** — records `confirmed` / `rejected` / `duplicate`
   verdicts append-only, never rewriting the original finding; interactive walk

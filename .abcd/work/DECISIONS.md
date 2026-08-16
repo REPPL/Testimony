@@ -1536,3 +1536,48 @@ Architecture-shaping decisions graduate to an ADR under
   schema-move note delegates the canonical table to `05-internals/
   02-schemas.md`; the other found the omission real but nitpick-tier) —
   discarded per the loop's tie-breaking rule.
+
+- 2026-08-16 — Bug-hunt round 46: three confirmed nitpicks, zero refuted.
+  `install_ffmpeg_local`'s Linux branch (`install.sh`) downloaded and
+  verified the johnvansickle static ffmpeg tarball, which bundles
+  `ffprobe` alongside `ffmpeg`, but only ever installed `ffmpeg` —
+  `ffprobe` was extracted and discarded. `transcribe -audio`'s offset
+  derivation shells out to `ffprobe` to read a recording's `creation_time`
+  tag; without it on PATH (guaranteed by getting-started.md's documented
+  no-Homebrew "local" install path on Linux), every external recording
+  silently fell back to a 0 offset, indistinguishable from a genuinely
+  missing or unreadable tag — and `docs/explanation/how-alignment-works.md`
+  and `docs/reference/cli.md` named only the tag-based causes. Fixed by
+  installing `ffprobe` from the already-downloaded tarball alongside
+  `ffmpeg`, and naming the missing-binary cause in both docs pages; the
+  macOS local-install branch still lacks `ffprobe` (evermeet publishes it
+  as a separate signed download this round did not add, to avoid an
+  unverified new network path) and is now accurately reflected as the
+  residual gap rather than being the whole story. Separately,
+  `resolveModel`'s not-found guidance (`internal/transcribe/whispercpp.go`)
+  and its mirror in `docs/how-to/transcribe-a-recording.md` both printed a
+  `curl -L --create-dirs` model-download recipe omitting `-f`/`--fail`;
+  without it, an HTTP error response (a moved or withdrawn model asset)
+  is written into the destination `.bin` file at exit 0 instead of failing
+  the download, so a reader gets a "successful" download that only fails,
+  confusingly, at whisper-cli load time — `install.sh`'s own equivalent
+  guidance already used `curl -fL` for the identical recipe; both sites
+  now match it, pinned by a new test. And the released `[0.2.0]`
+  `CHANGELOG.md` entry for `testimony analyze` closed with "The CLI holds
+  no API keys and makes no network calls" — a CLI-wide *and* unqualified
+  claim, unlike every other occurrence of this phrase family: three
+  scope the subject to `analyze` (`README.md`, `docs/reference/cli.md`,
+  `docs/how-to/analyse-a-session.md`) and three keep "The CLI" as
+  subject but qualify the predicate to "adds no network dependency"
+  rather than "makes no network calls" (`AGENTS.md`,
+  `internal/analyze/analyze.go`, `.abcd/work/CONTEXT.md`) — a narrower,
+  still-true claim about the analysis layer's own design rather than a
+  claim of zero runtime network activity anywhere in the CLI, which the
+  demo page's rrweb CDN load (already present at v0.2.0's release) and
+  transcribe's ASR model fetch both falsify. Adversarial review of this
+  round's own PR caught an earlier draft of this entry overclaiming that
+  "every other occurrence uses the scoped `analyze`-only form" — false,
+  since three of the six use "The CLI" as subject; corrected here to
+  name the qualifier that actually distinguishes them. Rescoped the
+  CHANGELOG bullet's subject to `analyze`, true of it, without altering
+  the historical record's substance.
