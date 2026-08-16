@@ -1563,10 +1563,21 @@ Architecture-shaping decisions graduate to an ADR under
   confusingly, at whisper-cli load time — `install.sh`'s own equivalent
   guidance already used `curl -fL` for the identical recipe; both sites
   now match it, pinned by a new test. And the released `[0.2.0]`
-  `CHANGELOG.md` entry for `testimony analyze` closed with an unscoped
-  "The CLI holds no API keys and makes no network calls" — the sole
-  remaining unscoped instance of a claim every other occurrence in the
-  repo states in the deliberately scoped `analyze`-only form, because the
-  CLI-wide reading is false (the demo page's rrweb CDN load already
-  existed at v0.2.0's release) — rescoped to `analyze`, the bullet's
-  actual subject, without altering the historical record's substance.
+  `CHANGELOG.md` entry for `testimony analyze` closed with "The CLI holds
+  no API keys and makes no network calls" — a CLI-wide *and* unqualified
+  claim, unlike every other occurrence of this phrase family: three
+  scope the subject to `analyze` (`README.md`, `docs/reference/cli.md`,
+  `docs/how-to/analyse-a-session.md`) and three keep "The CLI" as
+  subject but qualify the predicate to "adds no network dependency"
+  rather than "makes no network calls" (`AGENTS.md`,
+  `internal/analyze/analyze.go`, `.abcd/work/CONTEXT.md`) — a narrower,
+  still-true claim about the analysis layer's own design rather than a
+  claim of zero runtime network activity anywhere in the CLI, which the
+  demo page's rrweb CDN load (already present at v0.2.0's release) and
+  transcribe's ASR model fetch both falsify. Adversarial review of this
+  round's own PR caught an earlier draft of this entry overclaiming that
+  "every other occurrence uses the scoped `analyze`-only form" — false,
+  since three of the six use "The CLI" as subject; corrected here to
+  name the qualifier that actually distinguishes them. Rescoped the
+  CHANGELOG bullet's subject to `analyze`, true of it, without altering
+  the historical record's substance.

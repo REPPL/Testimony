@@ -64,7 +64,7 @@ Behaviour: reads `manifest.json` (required). With `-audio`, requires ffmpeg on P
 
 - `from -offset flag` — the explicit flag, which always wins;
 - `derived: audio creation_time − manifest t0` — derived for an external recording;
-- `default 0: audio creation time unavailable` — an external recording whose creation time could not be read, or whose `ffprobe` was not found on PATH;
+- `default 0: audio creation time unavailable` — an external recording whose creation time could not be read, or for which `ffprobe` was not found on PATH;
 - `persisted: audio.wav converted from an external recording (+3.20s)` — read back from `audio.offset.json`, the printed value being the persisted offset;
 - `default 0: session audio.wav captured at t0` — a session whose `audio.wav` was captured here and has no sidecar.
 
