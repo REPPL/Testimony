@@ -60,11 +60,11 @@ testimony transcribe -session DIR [-audio FILE]
 | `-vad` | `auto` | (whisperx) VAD method: `auto`, `silero`, or `pyannote`. `auto` picks `silero`; `pyannote` fails under newer torch versions |
 | `-offset` | derived | audio-to-session clock offset in seconds. When not given: with `-audio` naming a file other than the session's own `audio.wav`, derived from the recording's creation time minus the manifest's `t0_epoch_ms`, or 0 when derivation is impossible; without it (including `-audio audio.wav`), read back from `audio.offset.json` when the session has one, else 0. A non-finite value, or one beyond ±10⁹ seconds (the bound every derived or persisted offset already meets), is a usage error |
 
-Behaviour: reads `manifest.json` (required). With `-audio`, requires ffmpeg on PATH and converts the recording to 16 kHz mono `audio.wav` in the session directory; without it (or when `-audio` points at the session's own `audio.wav`), it uses the existing `audio.wav` in place and skips the conversion. It then runs the engine, applies the offset, and writes `transcript.jsonl`. Always prints the offset it used and its provenance — one of:
+Behaviour: reads `manifest.json` (required). With `-audio`, requires ffmpeg on PATH and converts the recording to 16 kHz mono `audio.wav` in the session directory; without it (or when `-audio` points at the session's own `audio.wav`), it uses the existing `audio.wav` in place and skips the conversion. Deriving the offset below additionally needs `ffprobe`, ffmpeg's companion tool, on PATH; without it derivation falls back to 0 like a missing or unreadable timestamp tag. It then runs the engine, applies the offset, and writes `transcript.jsonl`. Always prints the offset it used and its provenance — one of:
 
 - `from -offset flag` — the explicit flag, which always wins;
 - `derived: audio creation_time − manifest t0` — derived for an external recording;
-- `default 0: audio creation time unavailable` — an external recording whose creation time could not be read;
+- `default 0: audio creation time unavailable` — an external recording whose creation time could not be read, or whose `ffprobe` was not found on PATH;
 - `persisted: audio.wav converted from an external recording (+3.20s)` — read back from `audio.offset.json`, the printed value being the persisted offset;
 - `default 0: session audio.wav captured at t0` — a session whose `audio.wav` was captured here and has no sidecar.
 
