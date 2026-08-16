@@ -51,7 +51,7 @@ whisper.cpp needs a ggml model file. `-model` accepts either:
 - **A model name** (default `large-v3-turbo`): Testimony looks for `ggml-<name>.bin` in `~/.cache/whisper.cpp`, `~/.cache/whisper`, `~/.local/share/whisper.cpp`, and `~/models`. Download one there if missing:
 
   ```sh
-  curl -L --create-dirs -o ~/.cache/whisper.cpp/ggml-large-v3-turbo.bin \
+  curl -fL --create-dirs -o ~/.cache/whisper.cpp/ggml-large-v3-turbo.bin \
     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
   ```
 
