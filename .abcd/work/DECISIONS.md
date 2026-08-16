@@ -1582,31 +1582,32 @@ Architecture-shaping decisions graduate to an ADR under
   CHANGELOG bullet's subject to `analyze`, true of it, without altering
   the historical record's substance.
 
-- 2026-08-16 — Bug-hunt round 47: one confirmed nitpick, six refuted. Round
-  46's `install.sh` ffprobe-install fix and the `curl -fL` model-download
-  recipe fix had no `CHANGELOG.md` entry anywhere (the round's only edit to
-  that file was an unrelated rescope of an existing `[0.2.0]` bullet);
-  matching this repo's established practice of backfilling exactly this gap
-  (rounds 27 and 30's PR #47), a bullet was added to `[Unreleased]`'s
-  "Checks and installer:" group. Six candidates were refuted: `record`'s
-  Ctrl+C handling during macOS device probing (the ordering is a documented,
-  tested, deliberate fix for a worse defect, and the claimed misdiagnosis is
-  a pre-existing gap unrelated to the probe window); `demo`'s case-sensitive
-  `loopbackHost` "localhost" match (no real caller — browser and Node URL
-  parsers lowercase hosts before any header is written); `WriteFileAtomicNoFollow`
-  replacing a non-regular file its sibling refuses (already adjudicated
-  refuted in round 30 — `rename(2)` never opens the target, so the hazard
-  the sibling's stricter check guards against is absent by construction; a
-  planted FIFO/socket carries no real threat and the sidecar's own repair
-  path depends on the replace succeeding); and, on split verdicts (discarded
-  per the loop's tie-breaking rule): `transcribe-a-recording.md` omitting
-  `ffprobe` as a dependency (Homebrew's `ffmpeg` formula bundles it, narrowing
-  the exposed population to the tutorial's no-Homebrew macOS path); the same
-  macOS `install.sh` branch lacking a residual-gap warning message (round
-  46's own commit called the branch "untouched" as a considered decision, but
-  the message-only fix was judged separately fixable by the other refuter);
-  and the `[0.4.0]` CHANGELOG entry's `audio.wav` file-mode claim being made
-  stale by round 45's existing-file mode preservation (both refuters held
-  that a released section's entry is only corrected when it was already
-  wrong at release time — round 46's own precedent for editing a released
-  entry — and this one was true on the day it was written).
+- 2026-08-16 — Bug-hunt round 47: one confirmed nitpick, four refuted, two
+  discarded on split verdicts. Round 46's `install.sh` ffprobe-install fix
+  and the `curl -fL` model-download recipe fix had no `CHANGELOG.md` entry
+  anywhere (the round's only edit to that file was an unrelated rescope of
+  an existing `[0.2.0]` bullet); matching this repo's established practice
+  of backfilling exactly this gap (rounds 27 and 30's PR #47), a bullet was
+  added to `[Unreleased]`'s "Checks and installer:" group. Four candidates
+  were refuted: `record`'s Ctrl+C handling during macOS device probing (the
+  ordering is a documented, tested, deliberate fix for a worse defect, and
+  the claimed misdiagnosis is a pre-existing gap unrelated to the probe
+  window); `demo`'s case-sensitive `loopbackHost` "localhost" match (no real
+  caller — browser and Node URL parsers lowercase hosts before any header is
+  written); `WriteFileAtomicNoFollow` replacing a non-regular file its
+  sibling refuses (already adjudicated refuted in round 30 — `rename(2)`
+  never opens the target, so the hazard the sibling's stricter check guards
+  against is absent by construction; a planted FIFO/socket carries no real
+  threat and the sidecar's own repair path depends on the replace
+  succeeding); and the `[0.4.0]` CHANGELOG entry's `audio.wav` file-mode
+  claim being made stale by round 45's existing-file mode preservation (both
+  refuters held that a released section's entry is only corrected when it
+  was already wrong at release time — round 46's own precedent for editing a
+  released entry — and this one was true on the day it was written). Two
+  candidates were discarded on split verdicts (per the loop's tie-breaking
+  rule): `transcribe-a-recording.md` omitting `ffprobe` as a dependency
+  (Homebrew's `ffmpeg` formula bundles it, narrowing the exposed population
+  to the tutorial's no-Homebrew macOS path); and the same macOS `install.sh`
+  branch lacking a residual-gap warning message (round 46's own commit
+  called the branch "untouched" as a considered decision, but the
+  message-only fix was judged separately fixable by the other refuter).
