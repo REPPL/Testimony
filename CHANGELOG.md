@@ -284,6 +284,18 @@ Checks and installer:
   `--help` works through the documented pipe invocation; `--dir`/`--version`
   without a value are refused cleanly; the whisper.cpp model recipe
   downloads into a directory `-model NAME` actually searches.
+- `install.sh`'s Linux local-ffmpeg branch now installs `ffprobe` alongside
+  `ffmpeg` from the same tarball: `transcribe -audio`'s offset derivation
+  shells out to `ffprobe` to read a recording's `creation_time` tag, and
+  without it on PATH external-recording offset derivation fell back to 0,
+  reported with the same provenance as a genuinely missing or unreadable tag
+  (the macOS local-install branch still lacks `ffprobe`, a residual gap).
+  The whisper.cpp model-download recipe, printed by `resolveModel` and
+  mirrored in the how-to guide, now uses `curl -fL` instead of `curl -L`:
+  without `-f`, an HTTP error response for a moved or withdrawn model asset
+  used to be written into the destination `.bin` file at exit 0, a
+  "successful" download whisper-cli only rejects later, confusingly, at
+  load time.
 
 Documentation:
 
