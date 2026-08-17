@@ -1581,14 +1581,14 @@ Architecture-shaping decisions graduate to an ADR under
   name the qualifier that actually distinguishes them. Rescoped the
   CHANGELOG bullet's subject to `analyze`, true of it, without altering
   the historical record's substance.
-
 - 2026-08-16 — Bug-hunt round 47: one confirmed nitpick, four refuted, two
   discarded on split verdicts. Round 46's `install.sh` ffprobe-install fix
   and the `curl -fL` model-download recipe fix had no `CHANGELOG.md` entry
   anywhere (the round's only edit to that file was an unrelated rescope of
   an existing `[0.2.0]` bullet); matching this repo's established practice
-  of backfilling exactly this gap (rounds 27 and 30's PR #47), a bullet was
-  added to `[Unreleased]`'s "Checks and installer:" group. Four candidates
+  of backfilling exactly this gap (round 27's own entry, and round 31's
+  PR #47 backfilling round 30's fix), a bullet was added to `[Unreleased]`'s
+  "Checks and installer:" group. Four candidates
   were refuted: `record`'s Ctrl+C handling during macOS device probing (the
   ordering is a documented, tested, deliberate fix for a worse defect, and
   the claimed misdiagnosis is a pre-existing gap unrelated to the probe
