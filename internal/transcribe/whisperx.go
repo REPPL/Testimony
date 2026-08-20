@@ -65,7 +65,7 @@ func runWhisperX(bin, wav string, opts Options) ([]segment, error) {
 		"--vad_method", resolveVAD(opts.VAD),
 		"--output_format", "json",
 		"--output_dir", tmp)
-	if raw, err := cmd.CombinedOutput(); err != nil {
+	if raw, err := runWithHeartbeat(cmd, opts.Log, "whisperx"); err != nil {
 		return nil, fmt.Errorf("whisperx: %w\n%s", err, tail(raw))
 	}
 

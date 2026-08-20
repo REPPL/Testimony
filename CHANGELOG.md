@@ -10,6 +10,13 @@ break an existing invocation is called out in the entry that records it.
 
 ## [Unreleased]
 
+### Added
+
+- `transcribe` prints an elapsed-time status line every 5 seconds while the
+  ASR engine is still running, instead of staying silent between the offset
+  line and completion — a CPU-only `whisperx`/`whisper-cli` run can take
+  several minutes with nothing else printed, indistinguishable from a hang.
+
 ### Fixed
 
 Evidence integrity:
