@@ -291,6 +291,18 @@ Checks and installer:
   `--help` works through the documented pipe invocation; `--dir`/`--version`
   without a value are refused cleanly; the whisper.cpp model recipe
   downloads into a directory `-model NAME` actually searches.
+- `install.sh`'s Linux local-ffmpeg branch now installs `ffprobe` alongside
+  `ffmpeg` from the same tarball: `transcribe -audio`'s offset derivation
+  shells out to `ffprobe` to read a recording's `creation_time` tag, and
+  without it on PATH external-recording offset derivation fell back to 0,
+  reported with the same provenance as a genuinely missing or unreadable tag
+  (the macOS local-install branch still lacks `ffprobe`, a residual gap).
+  The whisper.cpp model-download recipe, printed by `resolveModel` and
+  mirrored in the how-to guide, now uses `curl -fL` instead of `curl -L`:
+  without `-f`, an HTTP error response for a moved or withdrawn model asset
+  used to be written into the destination `.bin` file at exit 0, a
+  "successful" download whisper-cli only rejects later, confusingly, at
+  load time.
 
 Documentation:
 
@@ -417,6 +429,16 @@ Documentation:
   that gate; it is refused earlier, correctly, at the preceding attestation
   check, for lacking a build attestation the workflow did not yet exist to
   create.
+- `session-directory.md` and `cli.md` now name `manifest.json`'s own 1 MiB
+  size limit, enforced by the reader since round 7 and the writer since
+  round 14, but previously stated only in this file's own entry above.
+- The bundled `transcript.jsonl` fixture's `.0`-suffixed floats (a form
+  `transcribe` never writes, since `encoding/json` marshals `float64(16)`
+  as `16`) are corrected to match, as the doc example for the same
+  utterance already did since round 40.
+- The internal `report` surface brief names the Findings section's third
+  state — present but unreadable — that its two user-facing siblings
+  already documented since round 40.
 
 Invocation contract:
 
@@ -793,7 +815,7 @@ Resource and process lifecycle:
   a versioned rubric plus the session timeline as a self-contained prompt any
   assistant can answer; `-ingest` validates that answer against the timeline
   (evidence must exist, quotes must be verbatim, status is forced to
-  `unverified`) into `findings.jsonl`. The CLI holds no API keys and makes no
+  `unverified`) into `findings.jsonl`. `analyze` holds no API keys and makes no
   network calls.
 - **`testimony review`** — records `confirmed` / `rejected` / `duplicate`
   verdicts append-only, never rewriting the original finding; interactive walk

@@ -30,5 +30,8 @@ by a Findings section rendering `findings.jsonl` from the analysis layer
   Each finding line carries its id, type, severity, clock, quote, anchor (the
   `ui` selector in backticks and route, else the evidence ids), and, where a
   verdict exists, the verdict and its date. When there is no `findings.jsonl`
-  the section is a short, non-fatal notice pointing at `analyze` and `review`.
+  the section is a short, non-fatal notice pointing at `analyze` and `review`;
+  when the file exists but cannot be read, the section instead reports that
+  `findings.jsonl` could not be read, without the underlying error. Neither
+  case fails the command — `report` still exits `0`.
   Report reads only derived text; it never touches media.
