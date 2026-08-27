@@ -19,6 +19,14 @@ break an existing invocation is called out in the entry that records it.
 
 ### Fixed
 
+- `record`'s avfoundation device-listing parser no longer mistakes a device
+  row for a section header when the device's name — an OS-supplied string a
+  crafted USB or virtual-audio device can set — contains the phrase
+  "AVFoundation audio devices:" (or the video variant). Such a row used to be
+  dropped and the section flipped, misclassifying every device listed after
+  it: a false "no microphone found" abort, or a shadowing virtual driver
+  silently missing from the roster whose purpose is to make it visible. The
+  `[N]` index, which a real header line never carries, now decides.
 - `install.sh`'s macOS local-ffmpeg branch now installs `ffprobe` alongside
   `ffmpeg`, fetching evermeet.cx's separately-published build and verifying
   it against the same pinned publisher key: `transcribe -audio`'s offset
