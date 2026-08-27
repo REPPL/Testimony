@@ -19,6 +19,14 @@ break an existing invocation is called out in the entry that records it.
 
 ### Fixed
 
+- `record -video` resolves the screen-capture device by the anchored
+  canonical name `Capture screen N` instead of a loose substring: cameras
+  enumerate before screen pseudo-devices and device names are OS-supplied
+  strings a crafted USB or virtual camera can set, so a camera whose name
+  merely contained the phrase (e.g. a vendor string such as "Elgato Capture
+  screen HD") used to be recorded into `screen.mp4` in the genuine display's
+  place, silently — the video-side sibling of the microphone's `:default`
+  anti-shadowing hardening.
 - `analyze`'s emitted request escapes inline Markdown in the manifest's App,
   Participant, and task fields, as `report.md` already does for the identical
   fields: they render as list items outside any code fence, and an

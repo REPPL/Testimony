@@ -156,6 +156,20 @@ func TestSelectDevices(t *testing.T) {
 		t.Fatal("missing Capture screen device must error when screen requested")
 	}
 
+	// A camera whose OS-supplied name merely CONTAINS the phrase must not
+	// shadow the genuine display: avfoundation lists cameras before screen
+	// pseudo-devices, so an unanchored first-match-wins would capture the
+	// crafted (or coincidentally-named) camera into screen.mp4 silently. Only
+	// the canonical anchored form "Capture screen N" selects.
+	shadowed := []avDevice{{0, "Elgato Capture screen HD"}, {1, "Capture screen 0"}}
+	screen, _, err = selectDevices(shadowed, audio, true)
+	if err != nil {
+		t.Fatalf("selectDevices with lookalike camera: %v", err)
+	}
+	if screen != 1 {
+		t.Fatalf("screen index: got %d, want 1 (the genuine display, not the lookalike camera)", screen)
+	}
+
 	// No audio device at all → error.
 	if _, _, err := selectDevices(video, nil, false); err == nil {
 		t.Fatal("no audio device must error")
