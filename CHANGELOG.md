@@ -19,6 +19,13 @@ break an existing invocation is called out in the entry that records it.
 
 ### Fixed
 
+- `analyze`'s emitted request escapes inline Markdown in the manifest's App,
+  Participant, and task fields, as `report.md` already does for the identical
+  fields: they render as list items outside any code fence, and an
+  attacker-authored manifest value such as `[x](http://…/beacon.png)` used to
+  survive verbatim — an active link, or a tracking/exfil image beacon fired
+  the moment a saved `request.md` is previewed in a Markdown viewer. The
+  escape set now has one shared home so the two artefacts cannot drift.
 - `record`'s avfoundation device-listing parser no longer mistakes a device
   row for a section header when the device's name — an OS-supplied string a
   crafted USB or virtual-audio device can set — contains the phrase

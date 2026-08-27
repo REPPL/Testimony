@@ -393,6 +393,32 @@ func SafeText(s string) string {
 	}, s)
 }
 
+// SafeInline renders untrusted text inert for a Markdown INLINE context:
+// SafeText first (control/format/bidi bytes, and the newlines that could forge
+// block structure), then a backslash before each inline-Markdown trigger
+// SafeText deliberately passes through. Without the second step a manifest or
+// finding value of `![x](http://host/beacon.png)` renders a live remote image —
+// a tracking/exfil beacon fired the instant the artefact is opened in a
+// Markdown viewer — and `[label](http://host)` an active link disguised as
+// evidence. Backslash-escaping renders the triggers as literal text in a viewer
+// and keeps them readable in source; ordinary text carries none of these bytes
+// and is byte-for-byte unchanged. This is the one home for the escape set, so
+// every Markdown artefact built from untrusted text (report.md, the emitted
+// analysis request) neutralises the same constructs the same way.
+func SafeInline(s string) string {
+	s = SafeText(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '\\', '`', '*', '_', '[', ']', '(', ')', '!', '<', '>', '~':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // SafeTextLines applies SafeText to s one line at a time, preserving the
 // newlines SafeText itself would strip (they fall under r < 0x20). A
 // subprocess's captured output — ffmpeg's multi-line metadata dump, a device

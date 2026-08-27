@@ -321,18 +321,10 @@ func clock(sec float64) string {
 // Backslash-escaping each trigger renders it as literal text in a viewer and keeps it
 // readable in source. Ordinary transcript, selector, and route text carries none of
 // these bytes, so the report of a normal session is byte-for-byte unchanged.
+// The escape set lives in session.SafeInline, shared with the emitted analysis
+// request, so the two Markdown artefacts built from untrusted text cannot drift.
 func mdInline(s string) string {
-	s = session.SafeText(s)
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch r {
-		case '\\', '`', '*', '_', '[', ']', '(', ')', '!', '<', '>', '~':
-			b.WriteByte('\\')
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
+	return session.SafeInline(s)
 }
 
 // mdCode renders untrusted text inside a Markdown code span, where backslash escapes
