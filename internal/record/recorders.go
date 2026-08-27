@@ -77,6 +77,16 @@ type avDevice struct {
 // "[AVFoundation indev @ 0x...] [1] Capture screen 0".
 var deviceLine = regexp.MustCompile(`\[AVFoundation[^\]]*\]\s+\[(\d+)\]\s+(.*)`)
 
+// screenDevice matches the canonical name macOS gives its screen-capture
+// pseudo-devices, and nothing else. Anchored on both ends: device names are
+// OS-supplied strings a crafted USB/virtual camera can set, cameras enumerate
+// BEFORE screen devices, and selectDevices takes the first match — so a loose
+// substring test let a camera named to contain the phrase (deliberately, or a
+// vendor string like "Elgato Capture screen HD") shadow the genuine display
+// and be recorded into screen.mp4 silently. The video-side sibling of the
+// audio path's ":default" anti-shadowing hardening (see micArgs).
+var screenDevice = regexp.MustCompile(`^Capture screen \d+$`)
+
 // parseAVDevices splits ffmpeg's `-list_devices true` stderr into its video and
 // audio device lists. Pure and table-testable against captured stderr.
 //
@@ -114,8 +124,9 @@ func parseAVDevices(stderr string) (video, audio []avDevice) {
 }
 
 // selectDevices validates that at least one avfoundation audio input exists and,
-// when video is requested, resolves the screen index (the video device whose
-// name contains "Capture screen"). It returns the detected audio-input names for
+// when video is requested, resolves the screen index (the first video device
+// whose name is exactly the canonical "Capture screen N" form — see
+// screenDevice). It returns the detected audio-input names for
 // the caller to log: the microphone itself is captured via avfoundation
 // ":default" (see micArgs), not by index, so ffmpeg picks the system default at
 // capture time and this list is what makes a surprising default — a virtual
@@ -132,7 +143,7 @@ func selectDevices(video, audio []avDevice, wantScreen bool) (screenIndex int, m
 	screenIndex = -1
 	if wantScreen {
 		for _, d := range video {
-			if strings.Contains(d.name, "Capture screen") {
+			if screenDevice.MatchString(d.name) {
 				screenIndex = d.index
 				break
 			}
