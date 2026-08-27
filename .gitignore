@@ -52,5 +52,6 @@ examples/*/report.md
 
 # BEGIN ABCD
 # abcd-managed block — do not hand-edit. Run /abcd:ahoy to refresh.
-.work/
+.abcd/.work.local/
+/memory/
 # END ABCD

@@ -5,8 +5,8 @@
   "meta": {
     "project_name": "Testimony",
     "schema_version": 1,
-    "setup_date": "2026-07-17",
-    "setup_version": "dev"
+    "setup_date": "2026-08-27",
+    "setup_version": "v0.6.6"
   },
   "oracle": {
     "backend": "host-delegated"
