@@ -90,8 +90,14 @@ func convertAudio(in, out string, beforeFinalise func() error) error {
 // reassigns it.
 var convertRunner = func(ffmpeg, in, tmpPath string) error {
 	cmd := exec.Command(ffmpeg, "-y", "-i", in, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", tmpPath)
-	if raw, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ffmpeg: %w\n%s", err, tail(raw))
+	// A bounded tail instead of CombinedOutput: a crafted or damaged container
+	// makes ffmpeg warn per packet, so its chatter is attacker-scalable, and
+	// only tail(≤800 bytes) is ever read — and only on error (see sink.go).
+	var sink tailSink
+	cmd.Stdout = &sink
+	cmd.Stderr = &sink
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg: %w\n%s", err, tail(sink.bytes()))
 	}
 	return nil
 }
@@ -209,10 +215,18 @@ func deriveOffset(audio string, t0EpochMS int64) (float64, bool) {
 		return 0, false
 	}
 	cmd := exec.Command(ffprobe, "-v", "quiet", "-print_format", "json", "-show_format", audio)
-	raw, err := cmd.Output()
-	if err != nil {
+	// A bounded head instead of cmd.Output(): -show_format prints every
+	// format-level tag whole (JSON-escaped, so control bytes inflate
+	// several-fold), and a crafted file carrying huge metadata would otherwise
+	// make this best-effort derivation buffer all of it to read one timestamp.
+	// A capped, truncated JSON fails to parse and lands on the same graceful
+	// (0, false) path as a missing tag (see sink.go).
+	var out headSink
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
 		return 0, false
 	}
+	raw := out.bytes()
 	var probe struct {
 		Format struct {
 			Tags struct {

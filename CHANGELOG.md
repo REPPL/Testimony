@@ -19,6 +19,16 @@ break an existing invocation is called out in the entry that records it.
 
 ### Fixed
 
+- `transcribe` bounds what it retains of its subprocesses' output, as
+  `record`'s sinks already do: the ffmpeg conversion and both whisper engine
+  runs keep an 8 KiB trailing window (at most an 800-byte tail was ever
+  read, and only on error, while a crafted container's per-packet warnings
+  or an hours-long CPU engine run grew the old unbounded buffer without
+  limit — the OOM assumption `record` documented and closed), and the
+  ffprobe offset probe keeps a 1 MiB leading window (a crafted file's huge
+  metadata dump now degrades to the same graceful no-derivation path as a
+  missing `creation_time` tag instead of being buffered whole to read one
+  timestamp).
 - `record -video` resolves the screen-capture device by the anchored
   canonical name `Capture screen N` instead of a loose substring: cameras
   enumerate before screen pseudo-devices and device names are OS-supplied
