@@ -19,6 +19,15 @@ break an existing invocation is called out in the entry that records it.
 
 ### Fixed
 
+- `install.sh`'s macOS local-ffmpeg branch now installs `ffprobe` alongside
+  `ffmpeg`, fetching evermeet.cx's separately-published build and verifying
+  it against the same pinned publisher key: `transcribe -audio`'s offset
+  derivation shells out to `ffprobe`, and without it on PATH the offset
+  silently fell back to 0 — mis-timing every utterance of an external
+  recording — with a provenance note blaming the recording's creation time
+  rather than the missing binary. This closes the residual macOS gap the
+  Linux-branch fix recorded.
+
 Evidence integrity:
 
 - **Behaviour:** `merge` refuses a transcript whose utterance ids repeat or
