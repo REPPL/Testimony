@@ -270,59 +270,79 @@ dep_ffmpeg() {
     esac
 }
 
+# install_evermeet_tool NAME — fetch evermeet.cx's separately-published static
+# build of NAME (ffmpeg or ffprobe: each is its own info/NAME/release download,
+# the ffmpeg zip does not carry ffprobe), verify it against the pinned publisher
+# key when gpg is available, and install it into $INSTALL_DIR. evermeet.cx
+# publishes a GPG signature (.sig) per build; verification refuses on a bad or
+# wrong-key signature. Returns non-zero after its own err message on any
+# failure, leaving the caller to decide whether the loss is fatal to the
+# branch. Uses $tmp2 for scratch space.
+install_evermeet_tool() {
+    tool="$1"
+    say "Fetching static $tool build (evermeet.cx) ..."
+    fetch "https://evermeet.cx/ffmpeg/info/$tool/release" "$tmp2/$tool-info.json" \
+        || { err "could not reach evermeet.cx; skipping $tool"; return 1; }
+    u=$(sed -n 's/.*"zip":{"url":"\([^"]*\)".*/\1/p' "$tmp2/$tool-info.json" | head -1)
+    [ -n "$u" ] || { err "could not parse evermeet.cx response; skipping $tool"; return 1; }
+    fetch "$u" "$tmp2/$tool.zip" \
+        || { err "$tool download failed; skipping $tool"; return 1; }
+    if have gpg; then
+        fetch "$u.sig" "$tmp2/$tool.zip.sig" \
+            || { err "could not fetch the $tool signature; refusing this unverifiable build"; return 1; }
+        # Import ONLY the pinned publisher key into a throwaway keyring,
+        # then verify against it. --auto-key-retrieve is never used: it
+        # would fetch whatever key the (attacker-supplied) signature
+        # names and accept a build signed by that key. We also assert the
+        # good signature's VALIDSIG carries the pinned fingerprint, so a
+        # signature made by any other key is rejected. Fail closed.
+        gnupg=$(mktemp -d "${TMPDIR:-/tmp}/testimony-gpg.XXXXXX")
+        status=$(GNUPGHOME="$gnupg" gpg --batch --no-auto-key-retrieve \
+                     --keyserver hkps://keys.openpgp.org \
+                     --recv-keys "$EVERMEET_FPR" >/dev/null 2>&1 \
+                 && GNUPGHOME="$gnupg" gpg --batch --no-auto-key-retrieve --status-fd 1 \
+                     --verify "$tmp2/$tool.zip.sig" "$tmp2/$tool.zip" 2>/dev/null) || true
+        rm -rf "$gnupg"
+        if printf '%s\n' "$status" | grep -q "VALIDSIG.*$EVERMEET_FPR"; then
+            say "$tool GPG signature verified (pinned evermeet key $EVERMEET_FPR)."
+        else
+            err "$tool GPG signature verification FAILED (not signed by the pinned evermeet key); refusing this build."
+            return 1
+        fi
+    else
+        say "WARNING: gpg not found — installing this $tool build unverified"
+        say "         (its signature is at $u.sig)."
+    fi
+    (cd "$tmp2" && unzip -q "$tool.zip") \
+        || { err "could not unpack $tool; skipping $tool"; return 1; }
+    install -m 0755 "$tmp2/$tool" "$INSTALL_DIR/$tool" \
+        || { err "could not install $tool into $INSTALL_DIR; skipping $tool"; return 1; }
+}
+
 install_ffmpeg_local() {
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     mkdir -p "$INSTALL_DIR"
     tmp2=$(mktemp -d "${TMPDIR:-/tmp}/testimony-ffmpeg.XXXXXX")
     case "$os" in
         darwin)
-            # evermeet.cx publishes a GPG signature (.sig) per build; verify it
-            # against the PINNED publisher key ($EVERMEET_FPR) when gpg is
-            # available, and refuse on a bad or wrong-key signature.
-            # Every fetch/unpack below is guarded with the err-skip-return
-            # convention the parse failure already uses: ffmpeg is an OPTIONAL
-            # dependency, and under `set -eu` an unguarded failure would abort
-            # the whole installer with the child's raw exit code, skipping the
-            # ASR step and the closing guidance (install_binary's EXIT trap
-            # still sweeps $tmp2, so nothing leaks — but the abort itself is
-            # still the wrong outcome for an optional dependency).
-            say "Fetching static ffmpeg build (evermeet.cx) ..."
-            fetch "https://evermeet.cx/ffmpeg/info/ffmpeg/release" "$tmp2/info.json" \
-                || { err "could not reach evermeet.cx; skipping ffmpeg"; rm -rf "$tmp2"; return; }
-            u=$(sed -n 's/.*"zip":{"url":"\([^"]*\)".*/\1/p' "$tmp2/info.json" | head -1)
-            [ -n "$u" ] || { err "could not parse evermeet.cx response; skipping ffmpeg"; rm -rf "$tmp2"; return; }
-            fetch "$u" "$tmp2/ffmpeg.zip" \
-                || { err "ffmpeg download failed; skipping ffmpeg"; rm -rf "$tmp2"; return; }
-            if have gpg; then
-                fetch "$u.sig" "$tmp2/ffmpeg.zip.sig" \
-                    || { err "could not fetch the ffmpeg signature; refusing this unverifiable build"; rm -rf "$tmp2"; return; }
-                # Import ONLY the pinned publisher key into a throwaway keyring,
-                # then verify against it. --auto-key-retrieve is never used: it
-                # would fetch whatever key the (attacker-supplied) signature
-                # names and accept a build signed by that key. We also assert the
-                # good signature's VALIDSIG carries the pinned fingerprint, so a
-                # signature made by any other key is rejected. Fail closed.
-                gnupg=$(mktemp -d "${TMPDIR:-/tmp}/testimony-gpg.XXXXXX")
-                status=$(GNUPGHOME="$gnupg" gpg --batch --no-auto-key-retrieve \
-                             --keyserver hkps://keys.openpgp.org \
-                             --recv-keys "$EVERMEET_FPR" >/dev/null 2>&1 \
-                         && GNUPGHOME="$gnupg" gpg --batch --no-auto-key-retrieve --status-fd 1 \
-                             --verify "$tmp2/ffmpeg.zip.sig" "$tmp2/ffmpeg.zip" 2>/dev/null) || true
-                rm -rf "$gnupg"
-                if printf '%s\n' "$status" | grep -q "VALIDSIG.*$EVERMEET_FPR"; then
-                    say "ffmpeg GPG signature verified (pinned evermeet key $EVERMEET_FPR)."
-                else
-                    err "ffmpeg GPG signature verification FAILED (not signed by the pinned evermeet key); refusing this build."
-                    rm -rf "$tmp2"; return
-                fi
-            else
-                say "WARNING: gpg not found — installing this ffmpeg build unverified"
-                say "         (its signature is at $u.sig)."
-            fi
-            (cd "$tmp2" && unzip -q ffmpeg.zip) \
-                || { err "could not unpack ffmpeg; skipping ffmpeg"; rm -rf "$tmp2"; return; }
-            install -m 0755 "$tmp2/ffmpeg" "$INSTALL_DIR/ffmpeg" \
-                || { err "could not install ffmpeg into $INSTALL_DIR; skipping ffmpeg"; rm -rf "$tmp2"; return; }
+            # Every fetch/unpack in the helper is guarded with the
+            # err-skip-return convention: ffmpeg is an OPTIONAL dependency, and
+            # under `set -eu` an unguarded failure would abort the whole
+            # installer with the child's raw exit code, skipping the ASR step
+            # and the closing guidance (install_binary's EXIT trap still
+            # sweeps $tmp2, so nothing leaks — but the abort itself is still
+            # the wrong outcome for an optional dependency).
+            install_evermeet_tool ffmpeg || { rm -rf "$tmp2"; return; }
+            # ffprobe ships as its own evermeet download, never inside the
+            # ffmpeg zip. transcribe -audio uses it to derive the
+            # audio-to-session offset from a recording's creation_time tag;
+            # without it that derivation silently falls back to 0 — the gap
+            # the Linux branch below already closes from its shared tarball.
+            # Best-effort: ffmpeg itself already succeeded above, so a failure
+            # here only loses offset derivation, not the conversion this
+            # function exists to provide.
+            install_evermeet_tool ffprobe \
+                || err "ffprobe unavailable; offset derivation for transcribe -audio will fall back to 0"
             ;;
         linux)
             arch=$(uname -m)
