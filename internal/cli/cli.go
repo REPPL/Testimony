@@ -31,7 +31,7 @@ Usage:
   testimony demo        [-addr :8737] [-out sessions]   serve the instrumented demo app, capture a session
   testimony transcribe   -session DIR [-audio FILE]     transcribe a voice recording into transcript.jsonl (reuses the session's audio.wav when -audio is omitted)
                         [-engine auto|whisperx|whispercpp] [-model large-v3-turbo] [-language en] [-offset SECONDS]
-                        [-device auto|cpu|cuda] [-compute_type auto|int8|float16] [-vad auto|silero|pyannote]   (whisperx only)
+                        [-device auto|cpu|cuda] [-compute_type auto|int8|float16|…] [-vad auto|silero|pyannote]   (whisperx only)
   testimony merge        -session DIR                   merge transcript + interactions into timeline.jsonl
   testimony report       -session DIR [-window 2.5]     render timeline.jsonl as a Markdown report
   testimony analyze      -session DIR [-out FILE]        emit the analysis request (rubric + timeline) on stdout or to FILE

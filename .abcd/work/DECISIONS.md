@@ -1312,3 +1312,302 @@ Architecture-shaping decisions graduate to an ADR under
   `analyse-a-session.md` omitting the 16 MiB limit round 37 added to three
   sibling pages (both refuters found the how-to omits every file-state
   refusal uniformly by design, not selectively).
+- 2026-08-08 — Bug-hunt round 39: zero substantive defects, three nitpicks,
+  four refuted. `cli.md`'s ingest section claimed to check an answer
+  against "every schema rule" but omitted the `mode` A|B enum
+  `validate.go:164-166` enforces, the one rule missing from an otherwise
+  complete, source-ordered list. `docs/reference/session-directory.md` and
+  the internal schema brief (`02-schemas.md`) both showed a `findings.jsonl`
+  example as `"t":22.0`, a form the CLI never writes — `findings.jsonl` is
+  written output, and Go's `encoding/json` marshals `float64(22)` as `22`,
+  matching the bundled fixture; corrected both. `spc-2-analysis-findings.md`
+  named `Validate` as a live `internal/analyze` export in two places; round
+  34 deleted it as a zero-caller export, leaving only the unexported
+  `validate` — the spec had been amended for accuracy several times since
+  (rounds 19/20/21/37/38) but missed this one. Refuted: `record
+  -participant ""` silently defaulting to `P1` instead of refusing, unlike
+  the empty-flag-guard family (rounds 18/19/21/22/23 closed that family
+  against required-path/closed-enum flags only; `-participant` is neither,
+  and round 23 already refuted the identical shape for `transcribe
+  -model`/`-language`); `cli.md`'s `-window` row omitting the same
+  finiteness usage-error `-offset`'s row documents (the generic exit-2 row
+  already covers it, and `-offset`'s inline clause exists for its
+  non-obvious ±10⁹s bound, not for finiteness symmetry); `demo`'s printed
+  instructions never saying to *save* an external QuickTime recording
+  before referencing it as `<your-recording.m4a>` (split refuter verdict —
+  discarded per the loop's tie-breaking rule; the same phrasing is the
+  repo-wide convention, matching `record`'s identical fallback text, and
+  the failure mode is a self-diagnosing "no such file"); and
+  `01-packages.md` reading as claiming all nine subcommands get their own
+  `flag.FlagSet`, when `version`/`help` parse none (both refuters read the
+  parenthetical as a subcommand roster, not an allocation claim, matching
+  `CLAUDE.md`'s own "seven pipeline commands ... plus version and help").
+  Separately, live manual testing of a fresh v0.4.0 install surfaced two
+  usability observations outside this round's scope (no misleading doc
+  claim, no wrong behaviour): `transcribe` gives no progress feedback
+  during a whisperx run — `runWhisperX` (`internal/transcribe/whisperx.go:68`)
+  buffers the subprocess's entire output via `cmd.CombinedOutput()`, so
+  nothing reaches the terminal between the offset line and completion,
+  which can plausibly take minutes on CPU-only hardware; and `record`/
+  `demo`'s default `-out sessions` is relative to the current working
+  directory rather than a fixed, discoverable location, prompting a new
+  draft intent, `itd-10-fixed-session-location`, for the maintainer to
+  weigh in on. Neither was actioned as a code fix this round.
+- 2026-08-09 — Bug-hunt round 40: zero substantive defects, five confirmed
+  nitpicks, three refuted. `docs/reference/session-directory.md`'s
+  `transcript.jsonl` example wrote `"t0":16.0`/`"t1":21.0` and a word
+  `"t":16.0`, a form `transcribe` (writing via `encoding/json`) never
+  emits — it writes `16`, not `16.0` — and which contradicted the same
+  page's own `timeline.jsonl` example for the identical utterance two
+  tables down; the internal schema brief (`02-schemas.md`) carried the
+  sibling case, `"t1":131.90` instead of the `131.9` `encoding/json`
+  actually writes. `cli.md`'s `-offset` flag row said derivation happens
+  "with `-audio`" without qualification, but `transcribe.go`'s
+  `resolveOffset` only derives when `-audio` names a file other than the
+  session's own `audio.wav` — `-audio audio.wav` takes the sidecar path
+  instead, a carve-out the row's neighbouring prose already states twice
+  for other behaviours but not for this one. `cli.md` and
+  `session-directory.md` both described the report's Findings section as
+  having only two states (present, absent) and missed a third, real one:
+  `findings.jsonl` present but unreadable, where `report` still exits `0`
+  and renders a "Findings unavailable" notice (already named in
+  `CHANGELOG.md`, now documented on both reference pages). `outputTail`
+  (`internal/record/recorders.go`) prefixed a truncated tail with ASCII
+  `"..."` while its two siblings doing the identical job both use `"…"` —
+  the sole ASCII truncation marker left in the non-test tree (ASCII `...`
+  still appears inside `internal/cli/cli.go`'s usage and `-compute_type`
+  help strings, where `cli.md` renders the same list with `…` — a
+  candidate for a later round); fixed to match, with `TestOutputTail`
+  updated and confirmed to fail against the prior code and pass after. Refuted: a claim that `EmitRequest`
+  (`internal/analyze/emit.go`) reintroduces HTML-escaping relative to
+  `timeline.jsonl` and so can make an agent's copied `quote`/`ui.selector`
+  fail validation — both refuters built the CLI and reproduced that the
+  escaping is JSON-transparent (validation decodes both forms identically)
+  and that `findings.jsonl` itself is already written with the same
+  escaping convention via a plain encoder, so the claimed consequence does
+  not occur; the `mode` field's documented `default A` having no assigning
+  code (split verdict — discarded per the loop's tie-breaking rule: for an
+  optional field, "default" in a schema table states what a reader should
+  assume when absent, not a claim that ingest materialises the value, and
+  sibling specs use the identical phrasing deliberately); and
+  `internal/demo/demo.go`'s `session.EncodedLen` error branch being
+  unreachable dead code (true but not a defect — it is one of three
+  identical, mandatory error handlers on the same shared, error-returning
+  API, and removing it would be the actual regression). Separately, a
+  stale `bughunt-33` branch was found pushed to origin with no open PR;
+  investigation showed every fix in it (the round-32/33-era self-exit
+  diagnosis, dead-code removal, and doc corrections) had already landed on
+  `main` independently, worded differently, via other rounds — so it was
+  left unopened rather than turned into a PR that would revert improved
+  wording. This session's tools could not delete the branch (`git push
+  --delete` was rejected); it is safe leftover cruft for the maintainer to
+  remove.
+- 2026-08-09 — Bug-hunt round 41 (PR #61). Two findings survived adversarial
+  verification (both refuters failed to kill each). Substantive:
+  `.abcd/development/brief/04-surfaces/06-analyze.md`'s ingest section
+  claimed to run "every schema rule" and then listed six, silently
+  omitting two `validate.go` actually enforces — the `mode` `A|B` enum
+  (`internal/analyze/validate.go:164-165`) and the 64-id evidence cap
+  (`:17`, `:174-175`). The brief page cites `../05-internals/02-schemas.md`
+  as its own source, which documents both rules (`:97,99`) and so
+  contradicted it; round 39 had already fixed the identical gap on the
+  sibling user-facing page, `docs/reference/cli.md:156`, but never swept
+  this one — corrected to match. Nitpick: `docs/reference/cli.md:47`'s
+  `transcribe` synopsis and `internal/cli/cli.go:34`'s usage banner rendered
+  `-compute_type auto|int8|float16` in the identical closed-set pipe form
+  as its three genuinely-validated siblings on the same line
+  (`-engine`/`-device`/`-vad`, each refused at exit 2 by
+  `CheckEngine`/`CheckDevice`/`CheckVAD`), even though `-compute_type` has
+  no validator and is a deliberate pass-through
+  (`internal/cli/cli.go:228-230`; `internal/transcribe/whisperx.go:96-103`)
+  — reproduced live (`-device bogus`/`-vad bogus`/`-engine bogus` all exit
+  2; `-compute_type bogus`/`float32` do not). Both sites now carry the
+  openness marker (`|…`), matching the Unicode form already used correctly
+  at `docs/reference/cli.md:59` and
+  `.abcd/development/brief/04-surfaces/02-transcribe.md:18`. Refuted: `internal/cli/cli.go:183`'s
+  `-compute_type` help string using ASCII `"..."` where `cli.md`'s prose
+  table uses `"…"` — split verdict (one refuter found no stated repo
+  convention ties code-side text to doc-side glyphs, and that a
+  single-site fix would desynchronise the help string from its own
+  explanatory comment at `cli.go:229`, which carries the identical ASCII
+  list) — discarded per the loop's tie-breaking rule.
+- 2026-08-10 — Bug-hunt round 42: two confirmed substantive defects, one
+  nitpick, two refuted on split verdicts. `manifest.json`'s 1 MiB size
+  limit (`internal/session/session.go`'s `maxManifestBytes`, enforced by
+  the reader since round 7 and the writer since round 14, reachable via
+  long `-task`/`-app` text) was named only in `CHANGELOG.md`'s own
+  entry, on no user-facing reference page — now named in
+  `session-directory.md` and `cli.md`, matching how the `.jsonl` files'
+  16 MiB cap is already documented. `.abcd/development/brief/04-surfaces/
+  04-report.md` documented only two Findings-section states (present,
+  absent) where `report.go` has a third (present but unreadable), which
+  both user-facing reference pages have named since round 40 — the brief
+  sibling was never swept; fixed. Nitpick: the bundled
+  `examples/sample-session/transcript.jsonl` fixture carried `.0`-suffixed
+  whole-number times, a form `transcribe` can never write
+  (`encoding/json` marshals `float64(16)` as `16`), confirmed against the
+  fixture's own merge-generated `timeline.jsonl` sibling — round 40 fixed
+  the doc example for the same utterance to the realistic bare form; this
+  fixture was the sibling left unswept. Refuted on split verdicts (one
+  refuter killed, one survived, discarded per the loop's rule):
+  `transcribe.checkEntriesFit` lacking a wrapped-total guard against
+  `session.MaxJSONLBytes` — a precedent duplicate of round 35's identical
+  refutation (the total is `merge`'s invariant, since `transcribe` never
+  sees `interactions.jsonl`, and the failure mode is a clean `merge`
+  refusal rather than silent corruption); and `ci.yml` using a fixed
+  `/tmp` path in one step instead of the `$RUNNER_TEMP` used everywhere
+  else, with no documented convention or behavioural consequence on the
+  ephemeral hosted runner. Also refuted, both unanimously and matching
+  prior-round precedent (`record -addr` unvalidated without `-demo`,
+  documented as applying only in that combination; `record -participant
+  ""` silently defaulting to `P1`, round 39; `demo` not handling `SIGHUP`
+  unlike `record`, round 37; `AGENTS.md`'s CI-trigger summary omitting
+  `merge_group`, round 35; the `check` job's abbreviated inline comment
+  against its own complete file-header roster, round 37; "four" vs "six"
+  early-return flag-path counts, rounds 24 and 37; `install.sh`'s
+  untested short-form flags, which share their `case` arm with the tested
+  long forms; the `interactions.jsonl` fixture's non-semantic JSON key
+  order; the report brief's uniform omission of every input refusal, not
+  a selective one; and no `CHANGELOG.md` entry for rounds 40/41's cosmetic
+  string-glyph changes, below the file's own "notable changes" bar).
+- 2026-08-11 — Bug-hunt round 43: one confirmed substantive defect, one
+  nitpick, three refuted. `analyze.ParseRecords`' finding-id presence check
+  (`internal/analyze/analyze.go`) tested `session.SafeText(fnd.ID) == ""`
+  instead of the trimmed form every other presence decision in the package
+  uses (report's and review's rendering fallbacks, validate's quote gate),
+  so a whitespace-only id (a literal space, or a tab — `SafeText` maps it to
+  one) passed as "present" and then rendered with no fallback, unlike its
+  neighbouring fields on the same line — `** **` in `report.md`, a dangling
+  line in `review`'s interactive walk, and a verdict recorded against an
+  id `review -finding` can never subsequently name. Fixed by trimming the
+  presence check, so a whitespace-only id is now refused the same way an
+  empty one already was. Nitpick: `docs/reference/session-directory.md`'s
+  `audio.offset.json` schema table omitted the ±1e9-second magnitude bound
+  `transcribe` enforces on `offset_seconds` — every sibling time field on
+  the same page states its bound; this was the one omitted. Refuted: an
+  `internal/analyze/validate.go` evidence-validation loop that keeps
+  emitting per-id errors after reporting the `maxEvidence` cap violation —
+  measured amplification is real but not caused by the claimed fall-through
+  (a cap-compliant hostile answer produces byte-identical worst-case output),
+  the proposed fix trims the ceiling by only ~20%, and it is the same
+  "transactional and exhaustive" error-collection contract validate.go
+  applies uniformly, already refuted once before in round 33 for the
+  sibling `Ingest` accumulator; `.abcd/development/brief/05-internals/
+  02-schemas.md`'s transcript/timeline `id` rows omitting the id-uniqueness
+  and `ev-NNN`-namespace-exclusion invariant — a full field-by-field diff
+  showed the same page uniformly omits eleven other enforcement details
+  (size caps, magnitude bounds, closed-set constraints) from these
+  shape-only tables, unlike its findings/verdict tables, which state
+  "every field below is checked" and carry a `Required` column those don't;
+  and `.abcd/development/brief/04-surfaces/03-merge.md` omitting the same
+  id-collision refusal from its behaviour bullets — that page and
+  `docs/reference/cli.md`'s own merge section both omit all seven of
+  merge's per-record validation refusals uniformly, delegating schema-level
+  rules to `02-schemas.md` by name on its own last line.
+- 2026-08-15 — Bug-hunt round 45: one confirmed substantive defect, one
+  refuted, one discarded on a split verdict. `transcribe.atomicConvert`
+  (`internal/transcribe/ffmpeg.go`)
+  chmod'd its temp file to the umask-masked default unconditionally before
+  renaming it over `out`, even when `out` already existed with a
+  deliberately different mode — a direct ffmpeg write over an existing file
+  leaves that file's mode untouched (`open(2)`'s mode argument is only
+  consulted on `O_CREAT`), so the rename path diverged from the very
+  behaviour its own comment claimed to reproduce. Reachable on an ordinary
+  `transcribe -audio` re-run over a session whose `audio.wav` an operator
+  had tightened to `0600`, or one copied from a machine with a different
+  umask: the recording came back group/world-readable (and the reverse,
+  `0666` silently narrowed to `0644`), unlike `session.WriteFileAtomicNoFollow`'s
+  matching guarantee for the offset sidecar. Fixed by `Lstat`-ing `out`
+  first and, when it is already a regular file, preserving its mode across
+  the rename instead of reapplying the umask-derived default. Refuted:
+  `internal/demo/assets/index.html`'s rrweb CDN `<script>` tag lacking a
+  Subresource Integrity hash — real and unmitigated, but both refuters
+  independently killed it as an in-round fix: round 9 already disclosed
+  the CDN fetch and deferred the vendoring decision as a standing,
+  human-owned tradeoff, the tag is pinned to an exact immutable npm
+  version rather than a floating one, and an unverifiable hash computed
+  without network access to the CDN (blocked in this environment) risks
+  a silent false pin worse than no pin — recorded for whoever takes the
+  vendoring decision rather than fixed here; and `.abcd/development/specs/
+  open/spc-2-analysis-findings.md`'s finding-schema table omitting the
+  64-id evidence cap every sibling reference page states — split verdict
+  (one refuter found spc-2's table uniformly stale across five
+  post-dated ingest rules, not a single unswept gap, and that its own
+  schema-move note delegates the canonical table to `05-internals/
+  02-schemas.md`; the other found the omission real but nitpick-tier) —
+  discarded per the loop's tie-breaking rule.
+
+- 2026-08-16 — Bug-hunt round 46: three confirmed nitpicks, zero refuted.
+  `install_ffmpeg_local`'s Linux branch (`install.sh`) downloaded and
+  verified the johnvansickle static ffmpeg tarball, which bundles
+  `ffprobe` alongside `ffmpeg`, but only ever installed `ffmpeg` —
+  `ffprobe` was extracted and discarded. `transcribe -audio`'s offset
+  derivation shells out to `ffprobe` to read a recording's `creation_time`
+  tag; without it on PATH (guaranteed by getting-started.md's documented
+  no-Homebrew "local" install path on Linux), every external recording
+  silently fell back to a 0 offset, indistinguishable from a genuinely
+  missing or unreadable tag — and `docs/explanation/how-alignment-works.md`
+  and `docs/reference/cli.md` named only the tag-based causes. Fixed by
+  installing `ffprobe` from the already-downloaded tarball alongside
+  `ffmpeg`, and naming the missing-binary cause in both docs pages; the
+  macOS local-install branch still lacks `ffprobe` (evermeet publishes it
+  as a separate signed download this round did not add, to avoid an
+  unverified new network path) and is now accurately reflected as the
+  residual gap rather than being the whole story. Separately,
+  `resolveModel`'s not-found guidance (`internal/transcribe/whispercpp.go`)
+  and its mirror in `docs/how-to/transcribe-a-recording.md` both printed a
+  `curl -L --create-dirs` model-download recipe omitting `-f`/`--fail`;
+  without it, an HTTP error response (a moved or withdrawn model asset)
+  is written into the destination `.bin` file at exit 0 instead of failing
+  the download, so a reader gets a "successful" download that only fails,
+  confusingly, at whisper-cli load time — `install.sh`'s own equivalent
+  guidance already used `curl -fL` for the identical recipe; both sites
+  now match it, pinned by a new test. And the released `[0.2.0]`
+  `CHANGELOG.md` entry for `testimony analyze` closed with "The CLI holds
+  no API keys and makes no network calls" — a CLI-wide *and* unqualified
+  claim, unlike every other occurrence of this phrase family: three
+  scope the subject to `analyze` (`README.md`, `docs/reference/cli.md`,
+  `docs/how-to/analyse-a-session.md`) and three keep "The CLI" as
+  subject but qualify the predicate to "adds no network dependency"
+  rather than "makes no network calls" (`AGENTS.md`,
+  `internal/analyze/analyze.go`, `.abcd/work/CONTEXT.md`) — a narrower,
+  still-true claim about the analysis layer's own design rather than a
+  claim of zero runtime network activity anywhere in the CLI, which the
+  demo page's rrweb CDN load (already present at v0.2.0's release) and
+  transcribe's ASR model fetch both falsify. Adversarial review of this
+  round's own PR caught an earlier draft of this entry overclaiming that
+  "every other occurrence uses the scoped `analyze`-only form" — false,
+  since three of the six use "The CLI" as subject; corrected here to
+  name the qualifier that actually distinguishes them. Rescoped the
+  CHANGELOG bullet's subject to `analyze`, true of it, without altering
+  the historical record's substance.
+- 2026-08-16 — Bug-hunt round 47: one confirmed nitpick, four refuted, two
+  discarded on split verdicts. Round 46's `install.sh` ffprobe-install fix
+  and the `curl -fL` model-download recipe fix had no `CHANGELOG.md` entry
+  anywhere (the round's only edit to that file was an unrelated rescope of
+  an existing `[0.2.0]` bullet); matching this repo's established practice
+  of backfilling exactly this gap (round 27's own entry, and round 31's
+  PR #47 backfilling round 30's fix), a bullet was added to `[Unreleased]`'s
+  "Checks and installer:" group. Four candidates
+  were refuted: `record`'s Ctrl+C handling during macOS device probing (the
+  ordering is a documented, tested, deliberate fix for a worse defect, and
+  the claimed misdiagnosis is a pre-existing gap unrelated to the probe
+  window); `demo`'s case-sensitive `loopbackHost` "localhost" match (no real
+  caller — browser and Node URL parsers lowercase hosts before any header is
+  written); `WriteFileAtomicNoFollow` replacing a non-regular file its
+  sibling refuses (already adjudicated refuted in round 30 — `rename(2)`
+  never opens the target, so the hazard the sibling's stricter check guards
+  against is absent by construction; a planted FIFO/socket carries no real
+  threat and the sidecar's own repair path depends on the replace
+  succeeding); and the `[0.4.0]` CHANGELOG entry's `audio.wav` file-mode
+  claim being made stale by round 45's existing-file mode preservation (both
+  refuters held that a released section's entry is only corrected when it
+  was already wrong at release time — round 46's own precedent for editing a
+  released entry — and this one was true on the day it was written). Two
+  candidates were discarded on split verdicts (per the loop's tie-breaking
+  rule): `transcribe-a-recording.md` omitting `ffprobe` as a dependency
+  (Homebrew's `ffmpeg` formula bundles it, narrowing the exposed population
+  to the tutorial's no-Homebrew macOS path); and the same macOS `install.sh`
+  branch lacking a residual-gap warning message (round 46's own commit
+  called the branch "untouched" as a considered decision, but the
+  message-only fix was judged separately fixable by the other refuter).

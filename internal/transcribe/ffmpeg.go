@@ -106,6 +106,22 @@ var convertRunner = func(ffmpeg, in, tmpPath string) error {
 // beforeFinalise, when non-nil, is the caller's last refusal: it runs
 // immediately before the rename, and its error aborts with out untouched.
 func atomicConvert(out string, produce func(tmpPath string) error, beforeFinalise func() error) error {
+	// A rename over an EXISTING out (checkPlainOutput already refused a symlink
+	// or other non-regular target, so a Lstat hit here is a regular file) must
+	// preserve that file's own mode: a direct ffmpeg write reopens an existing
+	// path with O_TRUNC, which open(2) honours by leaving the current mode
+	// alone (the mode argument is only consulted when O_CREAT actually
+	// creates the file), so the rename path has to match it rather than
+	// reapply the umask-masked default below.
+	// Without this, re-running `transcribe -audio` over a session whose
+	// audio.wav an operator had deliberately chmod 600'd — or one copied from
+	// a machine with a different umask — silently widens (or narrows) that
+	// mode instead of leaving it exactly as found, unlike every sibling
+	// atomic writer (session.WriteFileAtomicNoFollow's identical guarantee).
+	priorPerm, havePrior := os.FileMode(0), false
+	if fi, err := os.Lstat(out); err == nil && fi.Mode().IsRegular() {
+		priorPerm, havePrior = fi.Mode().Perm(), true
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(out), ".audio-*.wav")
 	if err != nil {
 		return fmt.Errorf("audio convert: create temp: %w", err)
@@ -116,17 +132,22 @@ func atomicConvert(out string, produce func(tmpPath string) error, beforeFinalis
 	if err := produce(tmpPath); err != nil {
 		return err
 	}
-	// os.CreateTemp reserves the name at 0600; a direct ffmpeg write would instead
-	// have created audio.wav honouring the operator's umask — 0644 for the default
-	// 022, but 0600 under a restrictive umask a privacy-conscious operator sets so
-	// the microphone recording is not group/world-readable. Restore that
-	// umask-masked mode, matching the record-side audio.wav and every sibling
-	// artefact (all created through umask-masked opens); a flat 0644 would silently
-	// widen this one file past the umask. The brief syscall.Umask(0) probe is safe
-	// here — transcribe creates no other file concurrently.
-	um := syscall.Umask(0)
-	syscall.Umask(um)
-	if err := os.Chmod(tmpPath, 0o644&^os.FileMode(um)); err != nil {
+	finalPerm := priorPerm
+	if !havePrior {
+		// os.CreateTemp reserves the name at 0600; a direct ffmpeg write onto a
+		// path with no prior file would instead have created audio.wav honouring
+		// the operator's umask — 0644 for the default 022, but 0600 under a
+		// restrictive umask a privacy-conscious operator sets so the microphone
+		// recording is not group/world-readable. Restore that umask-masked mode,
+		// matching the record-side audio.wav and every sibling artefact (all
+		// created through umask-masked opens); a flat 0644 would silently widen
+		// this one file past the umask. The brief syscall.Umask(0) probe is safe
+		// here — transcribe creates no other file concurrently.
+		um := syscall.Umask(0)
+		syscall.Umask(um)
+		finalPerm = 0o644 &^ os.FileMode(um)
+	}
+	if err := os.Chmod(tmpPath, finalPerm); err != nil {
 		return fmt.Errorf("audio convert: finalise %s: %w", out, err)
 	}
 	if beforeFinalise != nil {
