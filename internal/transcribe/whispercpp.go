@@ -54,7 +54,7 @@ func runWhisperCpp(bin, wav string, opts Options) ([]segment, error) {
 		"-oj",
 		"-of", outBase,
 		"--language", opts.Language)
-	if raw, err := cmd.CombinedOutput(); err != nil {
+	if raw, err := runWithHeartbeat(cmd, opts.Log, whisperCppBinary); err != nil {
 		return nil, fmt.Errorf("%s: %w\n%s", whisperCppBinary, err, tail(raw))
 	}
 
@@ -138,5 +138,5 @@ func resolveModel(model string) (string, error) {
 			return c, nil
 		}
 	}
-	return "", fmt.Errorf("whisper.cpp model %q not found: not a file path, and %s is absent from ~/.cache/whisper.cpp, ~/.cache/whisper, ~/.local/share/whisper.cpp, and ~/models — download it, e.g.\n  curl -L --create-dirs -o ~/.cache/whisper.cpp/%s https://huggingface.co/ggerganov/whisper.cpp/resolve/main/%s\nor pass an existing ggml file path via -model", model, name, name, name)
+	return "", fmt.Errorf("whisper.cpp model %q not found: not a file path, and %s is absent from ~/.cache/whisper.cpp, ~/.cache/whisper, ~/.local/share/whisper.cpp, and ~/models — download it, e.g.\n  curl -fL --create-dirs -o ~/.cache/whisper.cpp/%s https://huggingface.co/ggerganov/whisper.cpp/resolve/main/%s\nor pass an existing ggml file path via -model", model, name, name, name)
 }

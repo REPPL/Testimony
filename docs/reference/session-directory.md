@@ -32,6 +32,8 @@ A single JSON object describing the session. `t0_epoch_ms` anchors every session
 | `tasks` | array of strings | no | tasks given to the participant |
 | `notes` | string | no | free-form notes |
 
+`manifest.json` carries a 1 MiB size limit of its own, separate from the `.jsonl` limit above: a write that would push it over the cap is refused, and a load of one already over it is refused.
+
 ```json
 {
   "session": "sample-session",
@@ -73,7 +75,7 @@ One utterance per line. Times are session-relative seconds (audio time plus the 
 | `words` | array | no | word-level alignment (WhisperX only); each element is `{"w": <word>, "t": <start seconds>}` — a word is omitted if the aligner could not time it, if its time is implausible (non-finite, or beyond ±1e9 seconds) either as engine-reported (before the session offset is added) or after adding the offset, or if its text is empty, whitespace-only, or invisible-only Unicode |
 
 ```json
-{"id":"utt-003","t0":16.0,"t1":21.0,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16.0},{"w":"feels","t":16.42}]}
+{"id":"utt-003","t0":16,"t1":21,"speaker":"P1","text":"Typing feels fine. Now I expect this save button to confirm somehow.","words":[{"w":"Typing","t":16},{"w":"feels","t":16.42}]}
 ```
 
 ## `audio.offset.json`
@@ -82,7 +84,7 @@ Written by `transcribe` only when the audio came from an external recording (a `
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `offset_seconds` | number | yes | seconds added to every audio-clock time to place it on the session clock |
+| `offset_seconds` | number | yes | seconds added to every audio-clock time to place it on the session clock; must not exceed 1e9 seconds in magnitude (`transcribe` refuses otherwise) |
 | `provenance` | string | no | how the offset was obtained, for the operator |
 
 ## `events.rrweb.jsonl`
@@ -130,7 +132,7 @@ Ingest validates every finding against the merged timeline and is the sole valid
 | `status` | string | yes | always `"unverified"` on ingest |
 
 ```json
-{"id":"F-001","t":22.0,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],"ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
+{"id":"F-001","t":22,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],"ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
 ```
 
 **Verdict record**
@@ -156,4 +158,4 @@ Human-readable Markdown rendered from the timeline and findings:
 
 - a header with session name, app, participant, duration (`MM:SS`, the latest moment on the timeline — the maximum over all entries, taking an utterance's end `t1` and an event's time), and utterance/event counts, plus the task list;
 - a **Timeline** section: each utterance as `**[MM:SS] <speaker>:** “<text>”` (curly quotes), with the events joined to it — the first utterance (in time) whose span, widened by the report's join window, contains the event — as indented bullets ``[MM:SS] <kind> `<selector>` "<text>" value="…" (<route>)`` (straight quotes, selector in its own code span); events matched by no utterance appear as standalone bullets in time order; every `MM:SS` in `report.md` (including the header's duration) carries a leading `-` for a negative time — one preceding `t0` (a recording predating it, see `t`'s note above) — except a time that rounds to zero, which renders `00:00` unsigned;
-- a **Findings** section rendering `findings.jsonl` grouped by effective status (Confirmed, Unverified, Duplicate, Rejected), each group headed with a count and each finding line carrying its id, type, severity, clock, quote, anchor, and any verdict and date. When there is no `findings.jsonl` the section is a short notice pointing at `analyze` and `review`.
+- a **Findings** section rendering `findings.jsonl` grouped by effective status (Confirmed, Unverified, Duplicate, Rejected), each group headed with a count and each finding line carrying its id, type, severity, clock, quote, anchor, and any verdict and date. When there is no `findings.jsonl` the section is a short notice pointing at `analyze` and `review`; when the file exists but cannot be read, the section instead reports that `findings.jsonl` could not be read, without the underlying error (`report` still exits `0`).

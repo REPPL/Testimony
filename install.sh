@@ -342,6 +342,15 @@ install_ffmpeg_local() {
                 || { err "could not unpack ffmpeg; skipping ffmpeg"; rm -rf "$tmp2"; return; }
             install -m 0755 "$tmp2"/ffmpeg-*-static/ffmpeg "$INSTALL_DIR/ffmpeg" \
                 || { err "could not install ffmpeg into $INSTALL_DIR; skipping ffmpeg"; rm -rf "$tmp2"; return; }
+            # The same tarball also carries ffprobe, which transcribe -audio
+            # uses to derive the audio-to-session offset from a recording's
+            # creation_time tag; install it too so that derivation does not
+            # silently fall back to 0 for lack of the binary. Best-effort:
+            # ffmpeg itself already succeeded above, so a failure here only
+            # loses offset derivation, not the conversion this function exists
+            # to provide.
+            install -m 0755 "$tmp2"/ffmpeg-*-static/ffprobe "$INSTALL_DIR/ffprobe" \
+                || err "could not install ffprobe into $INSTALL_DIR; offset derivation for transcribe -audio will fall back to 0"
             ;;
     esac
     rm -rf "$tmp2"

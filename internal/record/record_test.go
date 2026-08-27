@@ -159,7 +159,7 @@ func TestOutputTail(t *testing.T) {
 		long = append(long, 'x')
 	}
 	got := outputTail(long)
-	if len(got) > 420 || !strings.HasPrefix(got, "...") {
+	if len(got) > 420 || !strings.HasPrefix(got, "…") {
 		t.Fatalf("long output must be bounded and elided, got len %d prefix %.3q", len(got), got)
 	}
 }
