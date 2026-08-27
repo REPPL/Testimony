@@ -79,19 +79,23 @@ var deviceLine = regexp.MustCompile(`\[AVFoundation[^\]]*\]\s+\[(\d+)\]\s+(.*)`)
 
 // parseAVDevices splits ffmpeg's `-list_devices true` stderr into its video and
 // audio device lists. Pure and table-testable against captured stderr.
+//
+// The device regex runs before the section-header test: a header line never
+// carries a [N] index, but a device NAME — an OS-supplied string a crafted
+// USB/virtual-audio device can set — may legitimately contain a header phrase,
+// and testing headers first would drop that row and flip the section,
+// misclassifying every device after it. The [N] index is the discriminator.
 func parseAVDevices(stderr string) (video, audio []avDevice) {
 	section := 0 // 0 none, 1 video, 2 audio
 	for _, line := range strings.Split(stderr, "\n") {
-		switch {
-		case strings.Contains(line, "AVFoundation video devices:"):
-			section = 1
-			continue
-		case strings.Contains(line, "AVFoundation audio devices:"):
-			section = 2
-			continue
-		}
 		m := deviceLine.FindStringSubmatch(line)
 		if m == nil {
+			switch {
+			case strings.Contains(line, "AVFoundation video devices:"):
+				section = 1
+			case strings.Contains(line, "AVFoundation audio devices:"):
+				section = 2
+			}
 			continue
 		}
 		idx, err := strconv.Atoi(m[1])

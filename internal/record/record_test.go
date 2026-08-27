@@ -106,6 +106,29 @@ func TestParseAVDevices(t *testing.T) {
 	}
 }
 
+// A device name is an OS-supplied string a crafted USB/virtual-audio device
+// can set, so a name containing a section-header phrase must still parse as a
+// device row: the [N] index — which a real header line never carries — decides,
+// not the phrase. Before the fix the row was dropped as a header and the
+// section flipped, misclassifying every device after it (a false "no
+// microphone" abort, or a shadowing driver hidden from the roster).
+func TestParseAVDevicesHeaderPhraseInDeviceName(t *testing.T) {
+	const crafted = `[AVFoundation indev @ 0x1] AVFoundation video devices:
+[AVFoundation indev @ 0x1] [0] Studio Camera
+[AVFoundation indev @ 0x1] [1] Capture screen 0
+[AVFoundation indev @ 0x1] AVFoundation audio devices:
+[AVFoundation indev @ 0x1] [0] Evil AVFoundation video devices:
+[AVFoundation indev @ 0x1] [1] USB audio CODEC`
+	video, audio := parseAVDevices(crafted)
+	if len(video) != 2 {
+		t.Fatalf("video devices: got %+v, want the 2 real ones", video)
+	}
+	wantAudio := []avDevice{{0, "Evil AVFoundation video devices:"}, {1, "USB audio CODEC"}}
+	if !reflect.DeepEqual(audio, wantAudio) {
+		t.Fatalf("audio devices: got %+v, want %+v", audio, wantAudio)
+	}
+}
+
 func TestSelectDevices(t *testing.T) {
 	video, audio := parseAVDevices(sampleDevices)
 
