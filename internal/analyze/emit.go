@@ -82,11 +82,15 @@ func EmitRequest(dir string) (string, error) {
 	// The manifest is attacker-authorable — a session directory is an exchange
 	// unit, so it may have been shared or downloaded — and the request is printed
 	// to the operator's terminal before it is handed to an agent. Every
-	// manifest-derived string therefore goes through session.SafeText, matching
-	// report and review: without it an App, Participant, or task carrying ESC
-	// drives ANSI sequences in the terminal, and one carrying a newline forges
-	// Markdown structure (a fake "## " heading or extra rubric instructions) inside
-	// the request the agent is asked to obey. The timeline block below needs the
+	// manifest-derived string therefore goes through session.SafeInline, matching
+	// report.md's rendering of the identical fields: SafeText's layer stops an
+	// App, Participant, or task carrying ESC from driving ANSI sequences in the
+	// terminal and one carrying a newline from forging BLOCK structure (a fake
+	// "## " heading or extra rubric instructions) inside the request the agent is
+	// asked to obey; the inline-escape layer stops the constructs that need no
+	// newline — these fields render as list items outside any code fence, so an
+	// unescaped `[x](http://…)` or image form survives as an active link or a
+	// tracking/exfil beacon the moment a saved request.md is previewed. The timeline block below needs the
 	// same treatment for a narrower reason: json.Marshal escapes the C0 controls
 	// and ESC, but it passes the Unicode Bidi_Control set through as raw bytes, so
 	// an exchanged session's transcript or event text could still smuggle a
@@ -106,7 +110,7 @@ func EmitRequest(dir string) (string, error) {
 	// task" instruction, and a task list that disagrees with report.md's.
 	var tasks []string
 	for _, t := range man.Tasks {
-		if rendered := session.SafeText(t); strings.TrimSpace(rendered) != "" {
+		if rendered := session.SafeInline(t); strings.TrimSpace(rendered) != "" {
 			tasks = append(tasks, rendered)
 		}
 	}
@@ -145,13 +149,19 @@ func EmitRequest(dir string) (string, error) {
 	return b.String(), nil
 }
 
-// safeOrNone applies session.SafeText and falls back to "(none)" when the
+// safeOrNone applies session.SafeInline and falls back to "(none)" when the
 // result renders as nothing (empty or whitespace-only): a manifest field is
 // operator-supplied and unvalidated by session.SaveManifest, so a
 // whitespace-only or invisible-only value must not survive SafeText's Cf
 // stripping and print as a blank field with the "(none)" placeholder skipped.
+// SafeInline rather than bare SafeText: these fields render as Markdown list
+// items outside any code fence, so the inline triggers SafeText passes through
+// must be escaped — the same neutralisation report.md applies to the identical
+// fields — or an attacker-authored manifest value survives into the request as
+// a live image beacon or link. The escapes only ever precede a visible
+// trigger rune, so they cannot turn a renders-as-nothing value non-blank.
 func safeOrNone(s string) string {
-	t := session.SafeText(s)
+	t := session.SafeInline(s)
 	if strings.TrimSpace(t) == "" {
 		return "(none)"
 	}

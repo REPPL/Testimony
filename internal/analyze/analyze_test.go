@@ -664,6 +664,44 @@ func TestEmitRequestSanitisesManifestText(t *testing.T) {
 	}
 }
 
+// TestEmitRequestEscapesInlineMarkdown is the inline-Markdown sibling of
+// TestEmitRequestSanitisesManifestText: SafeText strips control/format bytes
+// and the newlines that forge BLOCK structure, but it passes the inline
+// triggers (backtick, brackets, parens, and the rest) through, and App,
+// Participant, and Tasks render as plain Markdown list items outside any code
+// fence. Pre-fix an attacker-authored manifest value survived as live inline
+// Markdown — a tracking/exfil image beacon or an active link the moment
+// request.md is previewed — the exact construct report.md already neutralises
+// for the identical fields via its inline escaping.
+func TestEmitRequestEscapesInlineMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{
+		Session:     "fixture",
+		App:         "[x](http://attacker.example/beacon.png)",
+		Participant: "P1",
+		Tasks:       []string{"Explore [y](http://attacker.example/t.png)"},
+	}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(timelineFixture), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+
+	got, err := EmitRequest(dir)
+	if err != nil {
+		t.Fatalf("EmitRequest: %v", err)
+	}
+	if strings.Contains(got, "- App: [x](http://attacker.example/beacon.png)") {
+		t.Fatalf("emitted request carries a live inline-Markdown link from the manifest App")
+	}
+	if !strings.Contains(got, `- App: \[x\]\(http://attacker.example/beacon.png\)`) {
+		t.Fatalf("escaped App missing from the emitted request:\n%s", got)
+	}
+	if !strings.Contains(got, `  1. Explore \[y\]\(http://attacker.example/t.png\)`) {
+		t.Fatalf("escaped task missing from the emitted request:\n%s", got)
+	}
+}
+
 // TestEmitRequestPlaceholdersInvisibleOnlyManifestFields is the emit-side
 // sibling of the report header's rendered-form fix: orNone(man.App) decided
 // presence on the raw string, then session.SafeText was applied on the way
