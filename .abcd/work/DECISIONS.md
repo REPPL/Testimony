@@ -1611,3 +1611,8 @@ Architecture-shaping decisions graduate to an ADR under
   branch lacking a residual-gap warning message (round 46's own commit
   called the branch "untouched" as a considered decision, but the
   message-only fix was judged separately fixable by the other refuter).
+- 2026-08-27 — PRs merge by squash (one PR, one purpose, one commit on main —
+  the practice recent history already shows), and PR bodies carry no AI
+  footers or session links: disclosure lives solely in the commit's
+  `Assisted-by:` trailer. Both recorded as COMMITTING rules in
+  `.abcd/rules.json` after a harness-default footer reached two PR bodies.
