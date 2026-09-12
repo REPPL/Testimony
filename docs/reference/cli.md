@@ -14,6 +14,28 @@ Running `testimony` with no command, or with an unknown command, prints the usag
 | 1 | runtime error — the message is printed to stderr as `testimony: <error>` |
 | 2 | usage error — no command, an unknown command, a stray positional argument (no command takes one), an unparseable or invalid flag value, a missing required flag, or a flag combination that is not allowed |
 
+## Session directory inference
+
+The five pipeline commands — `transcribe`, `merge`, `report`, `analyze`, and `review` — take their session directory from `-session DIR`. When `-session` is omitted and the current directory itself holds a Testimony session `manifest.json`, that directory is the session: the command operates on it exactly as `-session .` does, and prints one line to stderr naming what it inferred (`merge: using session . (inferred from the current directory)`) before it starts work, so the implicit choice is visible in the output of the run. The line goes to stderr, never stdout, so `analyze`'s emitted request stays a clean pipe. An explicit `-session` always wins, is used verbatim, and prints no such line — the current directory is not consulted at all.
+
+The marker is a session manifest, not merely the file name. `manifest.json` is one of the most common file names in software, so the file must be a regular file (a directory or a symlink at that name is not a marker) and, when it parses, must carry the `session` field every `testimony` session has (see [`manifest.json`](session-directory.md#manifestjson)). A `manifest.json` that belongs to something else leaves the command refusing rather than writing into a directory that is not a session:
+
+```
+report: -session is required (the current directory holds a manifest.json, but it is not a session manifest: no "session" field)
+```
+
+A session `manifest.json` that fails to parse still counts as the marker, so a corrupt session reports its own parse error rather than a claim that there is no session here.
+
+Inference covers the exact current directory only: no parent directory is searched, so a directory *inside* a session (or above one) is not a session. An explicitly empty `-session` (an unset shell variable spliced into the flag) is a usage error rather than an omission. With neither an explicit `-session` nor a session manifest in the current directory, the command exits 2 naming both:
+
+```
+report: -session is required (no -session flag, and the current directory holds no regular manifest.json file)
+```
+
+Resolution is the last of a command's invocation checks, so a run refused for any other flag reports only that flag and announces no session.
+
+`record` and `demo` are unaffected: they create sessions rather than operate on an existing one, and their `-out` root is a different flag with a different meaning.
+
 ## `testimony demo`
 
 Serves the instrumented demo app and captures a session.
@@ -41,16 +63,16 @@ The loopback remote-peer requirement means an explicit non-loopback `-addr` host
 Transcribes a voice recording into `transcript.jsonl` using a local ASR engine.
 
 ```
-testimony transcribe -session DIR [-audio FILE]
-                    [-engine auto|whisperx|whispercpp] [-model large-v3-turbo]
-                    [-language en] [-offset SECONDS]
-                    [-device auto|cpu|cuda] [-compute_type auto|int8|float16|…]
-                    [-vad auto|silero|pyannote]
+testimony transcribe [-session DIR] [-audio FILE]
+                     [-engine auto|whisperx|whispercpp] [-model large-v3-turbo]
+                     [-language en] [-offset SECONDS]
+                     [-device auto|cpu|cuda] [-compute_type auto|int8|float16|…]
+                     [-vad auto|silero|pyannote]
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-session` | *(required)* | session directory |
+| `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
 | `-audio` | *(optional)* | voice recording (`.m4a`, `.mov`, or `.wav`) to convert into the session's `audio.wav`. Omit to reuse an `audio.wav` already in the session (as a `testimony record` session has); required only when the session has none |
 | `-engine` | `auto` | ASR engine: `auto`, `whisperx`, or `whispercpp`. `auto` prefers `whisperx` on PATH, then `whisper-cli` |
 | `-model` | `large-v3-turbo` | Whisper model name, or (whispercpp) a ggml model file path. A whispercpp model name resolves to `ggml-<name>.bin` searched in `~/.cache/whisper.cpp`, `~/.cache/whisper`, `~/.local/share/whisper.cpp`, and `~/models` |
@@ -75,12 +97,12 @@ It then prints `transcribed N utterances → <path>`. With an `-audio` that name
 Merges the transcript and interaction stream into `timeline.jsonl`.
 
 ```
-testimony merge -session DIR
+testimony merge [-session DIR]
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-session` | *(required)* | session directory |
+| `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
 
 Behaviour: reads `manifest.json` (required), `transcript.jsonl`, and `interactions.jsonl`; converts interaction epoch-millisecond times to session-relative seconds via `t0_epoch_ms`; writes the time-sorted `timeline.jsonl`; prints `merged N utterances + M events → <path>`. A missing `transcript.jsonl` or `interactions.jsonl` counts as zero records rather than an error, so a default audio-only `record` session (which never writes `interactions.jsonl`) still merges to a speech-only timeline. If the two sources together yield zero entries — missing, empty, or both — and a `timeline.jsonl` from an earlier merge already exists and is non-empty, merge refuses rather than truncate it to zero entries; a session with no timeline yet, or one already empty, still merges to an empty one. When interactions are present, `t0_epoch_ms` is required: without it their epoch-millisecond times cannot be placed on the session clock, so merge fails rather than write a corrupt timeline.
 
@@ -89,12 +111,12 @@ Behaviour: reads `manifest.json` (required), `transcript.jsonl`, and `interactio
 Renders `timeline.jsonl` as a Markdown report.
 
 ```
-testimony report -session DIR [-window 2.5]
+testimony report [-session DIR] [-window 2.5]
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-session` | *(required)* | session directory |
+| `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
 | `-window` | `2.5` | utterance-to-event join window, in seconds |
 
 Behaviour: reads `manifest.json` (required) and `timeline.jsonl`, plus `findings.jsonl` when present (the Findings section; without the file it is a short notice pointing at `analyze` and `review`; if the file exists but cannot be read, the section reports that instead, and the command still exits `0`). A timeline entry whose `src` is neither `speech` nor `event` is refused rather than silently omitted from the rendered record. Attaches each event to the first utterance whose span, widened by the window on both sides, contains it; events matched by no utterance appear as standalone lines. Writes `report.md` into the session directory and prints `wrote <path>`.
@@ -139,13 +161,13 @@ On platforms other than macOS, audio and screen capture are unavailable, and the
 The first-pass analysis layer. `analyze` never calls a model, holds no keys, and adds no network dependency: it *emits* a self-contained analysis request that any assistant (or a human) runs, then *ingests* and validates the JSON answer into `findings.jsonl`.
 
 ```
-testimony analyze -session DIR [-out FILE]        # emit the request
-testimony analyze -session DIR -ingest FILE       # validate the answer → findings.jsonl
+testimony analyze [-session DIR] [-out FILE]      # emit the request
+testimony analyze [-session DIR] -ingest FILE     # validate the answer → findings.jsonl
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-session` | *(required)* | session directory |
+| `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
 | `-out` | *(stdout)* | emit mode: write the request to `FILE` instead of stdout |
 | `-ingest` | *(off)* | ingest mode: validate the answer JSON at `FILE` (or `-` for stdin) into `findings.jsonl` |
 
@@ -160,13 +182,13 @@ Ingest behaviour: reads the answer from `FILE` (or stdin when `-`), accepting a 
 Records a human verdict on each candidate finding, appended to `findings.jsonl` without ever rewriting a finding in place — the finding's birth state and the full verdict history are retained as the precision measure.
 
 ```
-testimony review -session DIR
-testimony review -session DIR -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
+testimony review [-session DIR]
+testimony review [-session DIR] -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-session` | *(required)* | session directory |
+| `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
 | `-finding` | *(interactive)* | non-interactive: the finding to judge (`F-NNN`) |
 | `-verdict` | *(interactive)* | non-interactive: `confirmed`, `rejected`, or `duplicate-of-F-NNN` |
 

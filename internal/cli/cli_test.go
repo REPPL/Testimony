@@ -288,6 +288,11 @@ func TestUsageListsEveryFlagAndCommand(t *testing.T) {
 // genuinely could not be read, while the sibling usage errors — no command, an
 // unknown command, a flag-parse failure — all exited 2.
 func TestMissingSessionIsAUsageError(t *testing.T) {
+	// Run from a directory that is certainly not a session: without this the
+	// refusal depends on the package directory happening to hold no
+	// manifest.json, which is no longer merely incidental now that its
+	// absence is what sends these invocations down the refusal path.
+	chdir(t, t.TempDir())
 	for _, cmd := range []string{"merge", "report", "transcribe", "analyze", "review"} {
 		var code int
 		stderr := captureStderr(t, func() { code = Run([]string{cmd}) })
@@ -320,5 +325,361 @@ func TestMissingSessionIsAUsageError(t *testing.T) {
 	})
 	if code != 1 {
 		t.Errorf("merge on an unreadable session: exit %d, want 1 (runtime error)", code)
+	}
+}
+
+// chdir makes dir the process working directory for the duration of the test
+// and restores the old one afterwards, so the session-inference tests can run
+// "from inside a session" the way an operator does. (testing.T.Chdir would say
+// this in one line, but it postdates the language version in go.mod.)
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+}
+
+// manifestOnlySession writes a session holding nothing but manifest.json — the
+// marker inference keys on, and enough for merge to write an empty timeline.
+func manifestOnlySession(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", App: "app", Participant: "P1"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	return dir
+}
+
+// TestSessionInferredFromCurrentDirectory is the itd-12 acceptance case: with a
+// manifest.json in the current directory and no -session flag, a pipeline
+// command operates on that directory exactly as `-session .` does, and says on
+// stderr which session it inferred — the implicit choice has to be visible, or
+// an operator who mistook which directory they were in has nothing in the
+// output of the run that misfired to tell them so.
+func TestSessionInferredFromCurrentDirectory(t *testing.T) {
+	t.Run("merge", func(t *testing.T) {
+		dir := manifestOnlySession(t)
+		chdir(t, dir)
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{"merge"}) })
+		if code != 0 {
+			t.Fatalf("merge from inside a session: exit %d, want 0 (stderr %q)", code, stderr)
+		}
+		if want := "merge: using session . (inferred from the current directory)"; !strings.Contains(stderr, want) {
+			t.Errorf("want %q on stderr, got %q", want, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(dir, session.TimelineFile)); err != nil {
+			t.Errorf("merge wrote no timeline into the inferred session: %v", err)
+		}
+	})
+
+	t.Run("report", func(t *testing.T) {
+		dir := miniSession(t)
+		chdir(t, dir)
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{"report"}) })
+		if code != 0 {
+			t.Fatalf("report from inside a session: exit %d, want 0 (stderr %q)", code, stderr)
+		}
+		if want := "report: using session . (inferred from the current directory)"; !strings.Contains(stderr, want) {
+			t.Errorf("want %q on stderr, got %q", want, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(dir, session.ReportFile)); err != nil {
+			t.Errorf("report wrote no report.md into the inferred session: %v", err)
+		}
+	})
+}
+
+// TestExplicitSessionWinsOverInference pins the second acceptance case: an
+// explicit -session is used verbatim from any directory and the current
+// directory is not consulted at all — even when it is itself a session, which
+// is the case that would otherwise be ambiguous. The explicit invocation also
+// stays silent: the inference line reports an implicit choice, and there is
+// none to report here.
+func TestExplicitSessionWinsOverInference(t *testing.T) {
+	decoy := miniSession(t)  // the current directory: a session that must stay untouched
+	target := miniSession(t) // the session actually named
+	chdir(t, decoy)
+	var code int
+	stderr := captureStderr(t, func() { code = Run([]string{"report", "-session", target}) })
+	if code != 0 {
+		t.Fatalf("report -session from inside another session: exit %d, want 0 (stderr %q)", code, stderr)
+	}
+	if strings.Contains(stderr, "inferred") {
+		t.Errorf("explicit -session printed an inference line: %q", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(target, session.ReportFile)); err != nil {
+		t.Errorf("report did not render into the named session: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(decoy, session.ReportFile)); !os.IsNotExist(err) {
+		t.Errorf("report rendered into the current directory instead of the named session (err=%v)", err)
+	}
+}
+
+// TestNoSessionAndNoManifestIsAUsageError pins the third acceptance case: with
+// neither an explicit flag nor a manifest.json in the current directory, the
+// command refuses at the usage status (2, as a missing required flag always
+// has) with a message naming both things that were checked — "-session is
+// required" alone left an operator standing one directory above a session with
+// no hint that the current directory had been consulted at all.
+func TestNoSessionAndNoManifestIsAUsageError(t *testing.T) {
+	chdir(t, t.TempDir())
+	for _, cmd := range []string{"merge", "report", "transcribe", "analyze", "review"} {
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{cmd}) })
+		if code != 2 {
+			t.Errorf("%s with no -session and no manifest: exit %d, want 2 (usage error)", cmd, code)
+		}
+		want := "testimony: " + cmd + ": -session is required (no -session flag, and the current directory holds no regular manifest.json file)"
+		if !strings.Contains(stderr, want) {
+			t.Errorf("%s with no -session and no manifest: want %q on stderr, got %q", cmd, want, stderr)
+		}
+	}
+}
+
+// TestEmptySessionIsAUsageErrorNotInference keeps an explicitly-empty -session
+// in the wrong-invocation class it shares with analyze's -ingest/-out and
+// transcribe's -audio (an unset shell variable spliced into the flag), rather
+// than letting it fall through to inference: `merge -session "$SESSION"` with
+// SESSION unset must refuse, not silently run against whatever directory the
+// caller happened to be standing in — which is exactly the wrong-session
+// hazard the inference line exists to surface.
+func TestEmptySessionIsAUsageErrorNotInference(t *testing.T) {
+	dir := miniSession(t)
+	chdir(t, dir)
+	for _, cmd := range []string{"merge", "report", "transcribe", "analyze", "review"} {
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{cmd, "-session", ""}) })
+		if code != 2 {
+			t.Errorf("%s -session \"\": exit %d, want 2 (usage error)", cmd, code)
+		}
+		if want := "testimony: " + cmd + ": -session must not be empty"; !strings.Contains(stderr, want) {
+			t.Errorf("%s -session \"\": want %q on stderr, got %q", cmd, want, stderr)
+		}
+		if strings.Contains(stderr, "inferred") {
+			t.Errorf("%s -session \"\" fell through to inference: %q", cmd, stderr)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.ReportFile)); !os.IsNotExist(err) {
+		t.Errorf("report -session \"\" rendered into the current directory anyway (err=%v)", err)
+	}
+}
+
+// captureStdout is captureStderr's sibling for the one stream that is a
+// contract: `analyze` in emit mode writes the request to stdout for a pipe to
+// carry, so anything the command has to say about its own invocation has to
+// stay off it.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	read := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		read <- string(b)
+	}()
+	fn()
+	os.Stdout = old
+	w.Close()
+	got := <-read
+	r.Close()
+	return got
+}
+
+// TestForeignManifestIsNotASession keeps inference off directories that merely
+// hold a file of that name. manifest.json is one of the most common file names
+// in software — a web app manifest, a browser-extension manifest, a package
+// manifest — so keying on the name alone made a bare `merge` in an unrelated
+// project's root write timeline.jsonl into it, and a bare `report` overwrite a
+// hand-written report.md there, both at exit 0. The marker is a Testimony
+// session manifest: a regular file carrying the `session` field session.Create
+// always writes.
+func TestForeignManifestIsNotASession(t *testing.T) {
+	dir := t.TempDir()
+	// A browser-extension manifest: valid JSON, every field foreign.
+	foreign := `{"manifest_version":3,"name":"Some Extension","version":"1.0.0"}`
+	if err := os.WriteFile(filepath.Join(dir, session.ManifestFile), []byte(foreign), 0o644); err != nil {
+		t.Fatalf("write foreign manifest: %v", err)
+	}
+	hand := filepath.Join(dir, session.ReportFile)
+	if err := os.WriteFile(hand, []byte("# hand-written\n"), 0o644); err != nil {
+		t.Fatalf("seed report.md: %v", err)
+	}
+	chdir(t, dir)
+	for _, cmd := range []string{"merge", "report"} {
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{cmd}) })
+		if code != 2 {
+			t.Errorf("%s in a foreign-manifest directory: exit %d, want 2 (usage error)", cmd, code)
+		}
+		want := "testimony: " + cmd + `: -session is required (the current directory holds a manifest.json, but it is not a session manifest: no "session" field)`
+		if !strings.Contains(stderr, want) {
+			t.Errorf("%s in a foreign-manifest directory: want %q on stderr, got %q", cmd, want, stderr)
+		}
+	}
+	if b, _ := os.ReadFile(hand); string(b) != "# hand-written\n" {
+		t.Errorf("report overwrote a hand-written report.md in a foreign-manifest directory: %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.TimelineFile)); !os.IsNotExist(err) {
+		t.Errorf("merge wrote a timeline into a foreign-manifest directory (err=%v)", err)
+	}
+}
+
+// TestNonRegularManifestIsNotASession pins the marker to a regular file, the
+// way every other manifest access goes through the no-follow guard: a
+// directory named manifest.json, or a dangling symlink at that name, satisfies
+// os.Stat's error-free path but is not a session manifest and cannot be read
+// as one.
+func TestNonRegularManifestIsNotASession(t *testing.T) {
+	t.Run("directory", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, session.ManifestFile), 0o755); err != nil {
+			t.Fatalf("mkdir manifest.json: %v", err)
+		}
+		chdir(t, dir)
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{"merge"}) })
+		if code != 2 {
+			t.Errorf("merge with a directory named manifest.json: exit %d, want 2", code)
+		}
+		if want := "holds no regular manifest.json file"; !strings.Contains(stderr, want) {
+			t.Errorf("want %q on stderr, got %q", want, stderr)
+		}
+	})
+
+	t.Run("dangling symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Symlink(filepath.Join(dir, "gone.json"), filepath.Join(dir, session.ManifestFile)); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		chdir(t, dir)
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{"merge"}) })
+		if code != 2 {
+			t.Errorf("merge with a dangling symlink named manifest.json: exit %d, want 2", code)
+		}
+		if want := "holds no regular manifest.json file"; !strings.Contains(stderr, want) {
+			t.Errorf("want %q on stderr, got %q", want, stderr)
+		}
+	})
+}
+
+// TestCorruptSessionManifestStillInfers keeps the foreign-manifest guard from
+// swallowing a real session's real problem: a manifest that cannot be parsed
+// is not evidence that this is somebody else's directory, so the command
+// infers and fails at the runtime status with the parse error itself, rather
+// than claiming at exit 2 that there is no manifest here.
+func TestCorruptSessionManifestStillInfers(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, session.ManifestFile), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write corrupt manifest: %v", err)
+	}
+	chdir(t, dir)
+	var code int
+	stderr := captureStderr(t, func() { code = Run([]string{"merge"}) })
+	if code != 1 {
+		t.Errorf("merge on a corrupt session manifest: exit %d, want 1 (runtime error)", code)
+	}
+	if want := "merge: using session . (inferred from the current directory)"; !strings.Contains(stderr, want) {
+		t.Errorf("want the inference line on stderr, got %q", stderr)
+	}
+	if want := "parse manifest"; !strings.Contains(stderr, want) {
+		t.Errorf("want the real parse error on stderr, got %q", stderr)
+	}
+}
+
+// TestInferenceLineStaysOffStdout pins the stream the inference line uses on
+// the one command where stdout is a contract: `analyze` in emit mode writes
+// the analysis request to stdout for a pipe to carry into an assistant, so a
+// line about how the session was resolved must not be spliced into it.
+func TestInferenceLineStaysOffStdout(t *testing.T) {
+	dir := miniSession(t)
+	chdir(t, dir)
+	var code int
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() { code = Run([]string{"analyze"}) })
+	})
+	if code != 0 {
+		t.Fatalf("analyze from inside a session: exit %d, want 0 (stderr %q)", code, stderr)
+	}
+	if want := "analyze: using session . (inferred from the current directory)"; !strings.Contains(stderr, want) {
+		t.Errorf("want %q on stderr, got %q", want, stderr)
+	}
+	if strings.Contains(stdout, "inferred") {
+		t.Errorf("the inference line reached stdout, which carries the analysis request: %q", stdout)
+	}
+	if !strings.HasPrefix(stdout, "Testimony analysis rubric: testimony-analysis/") {
+		t.Errorf("stdout is not the request it was before inference existed: %.80q", stdout)
+	}
+}
+
+// TestReviewInfersSessionNonInteractively covers the inferred success path on
+// the one command that never loads the manifest for its own work: review
+// resolves the session the same way as the rest, and a verdict recorded from
+// inside the session lands in that session's findings.jsonl.
+func TestReviewInfersSessionNonInteractively(t *testing.T) {
+	dir := miniSession(t)
+	finding := `{"id":"F-001","t":0,"type":"bug","severity":3,"mode":"A","quote":"hi","evidence":["utt-001"],"status":"unverified"}` + "\n"
+	path := filepath.Join(dir, session.FindingsFile)
+	if err := os.WriteFile(path, []byte(finding), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	chdir(t, dir)
+	var code int
+	stderr := captureStderr(t, func() {
+		code = Run([]string{"review", "-finding", "F-001", "-verdict", "confirmed"})
+	})
+	if code != 0 {
+		t.Fatalf("review from inside a session: exit %d, want 0 (stderr %q)", code, stderr)
+	}
+	if want := "review: using session . (inferred from the current directory)"; !strings.Contains(stderr, want) {
+		t.Errorf("want %q on stderr, got %q", want, stderr)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if !strings.Contains(string(b), `"kind":"verdict"`) {
+		t.Errorf("review appended no verdict to the inferred session's findings.jsonl: %q", b)
+	}
+}
+
+// TestRefusedInvocationAnnouncesNoSession keeps the inference line to runs that
+// actually use the inferred session: resolution is the last invocation check,
+// so a command refused for some other flag says only what is wrong with the
+// flag — it never first announces a session it went on to not use.
+func TestRefusedInvocationAnnouncesNoSession(t *testing.T) {
+	dir := miniSession(t)
+	chdir(t, dir)
+	cases := [][]string{
+		{"report", "-window", "NaN"},
+		{"transcribe", "-engine", "bogus"},
+		{"transcribe", "-offset", "NaN"},
+		{"analyze", "-out", "req.md", "-ingest", "-"},
+		{"review", "-finding", "F-001"},
+	}
+	for _, args := range cases {
+		var code int
+		stderr := captureStderr(t, func() { code = Run(args) })
+		if code != 2 {
+			t.Errorf("%v: exit %d, want 2 (usage error)", args, code)
+		}
+		if strings.Contains(stderr, "inferred") {
+			t.Errorf("%v announced an inferred session before refusing: %q", args, stderr)
+		}
 	}
 }
