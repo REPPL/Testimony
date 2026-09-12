@@ -12,6 +12,38 @@ break an existing invocation is called out in the entry that records it.
 
 ### Added
 
+- `testimony draft-tests` turns a **confirmed** finding into a proposed
+  regression test case, and `testimony review -kind tests` records the human
+  accept / edit / reject pass over each draft. The oracle stays host-delegated,
+  exactly as for `analyze`: `draft-tests -session DIR` emits one self-contained
+  drafting request — a versioned rubric plus, for each confirmed finding, that
+  finding's record and its **event window** from `timeline.jsonl` (`-window`
+  defaults to 10 seconds, wide enough to hold a repro's lead-up and aftermath) —
+  and `draft-tests -session DIR -ingest FILE` is the validation boundary, forcing
+  every draft to `status: proposed`, requiring its `rationale_quote` and
+  `severity` to equal the source finding's, and refusing any draft of a finding
+  that is not currently confirmed. Drafts and decisions live in a new
+  `tests.jsonl` session artefact, append-only in both directions: a decision is a
+  new line, and its `edit` object is a closed `{title, steps, expected,
+  observed}` subset, so no human edit can re-point a draft at a different finding
+  or session. `draft-tests -session DIR -render` renders the accepted drafts as
+  Markdown test-case blocks a docs-as-code test plan can hold, each naming the
+  finding and session it came from. A session with no confirmed finding, or a plan
+  with no accepted draft, is staged loudly: the counts by status, nothing written,
+  exit 1.
+- The two dangerous session-file writes now live once in `internal/session`, as
+  `AppendRecord` (one appended record: the no-follow open, the exclusive lock, the
+  line- and total-size pre-flights, the newline framing over an unterminated last
+  line, an optional under-lock target re-check, the partial-write rollback, and
+  the returned `Close` error) and `CommitRecords` (a guarded whole-file
+  replacement, buffered before the truncate and rolled back to empty on a short
+  write). `analyze -ingest` and `testimony review` write through them with no
+  change in behaviour: the two size refusals and the verdict-overwrite guard are
+  byte-for-byte the messages they always were, and the drafting layer shares the
+  primitives rather than carrying a second copy of a subtle write path. One
+  message does change — a failure while writing `findings.jsonl` is now prefixed
+  `write findings.jsonl:` rather than `write findings:`, so every failure on that
+  path names the file the same way.
 - `transcribe` prints an elapsed-time status line every 5 seconds while the
   ASR engine is still running, instead of staying silent between the offset
   line and completion — a CPU-only `whisperx`/`whisper-cli` run can take

@@ -14,48 +14,6 @@ import (
 	"github.com/REPPL/Testimony/internal/session"
 )
 
-// failAfterWriter is a findingsFile whose Write fails, recording whether the
-// caller truncated back to 0 *after* the failed write — the rollback writeFindings
-// must perform so a partial write never bricks findings.jsonl against its own
-// recovery. The post-write ordering matters: writeFindings also truncates to 0
-// before writing, so only a truncate that follows the write attempt proves the
-// rollback ran.
-type failAfterWriter struct {
-	wrote      bool
-	rolledBack bool
-}
-
-func (w *failAfterWriter) Write(p []byte) (int, error) {
-	w.wrote = true
-	return 0, errors.New("no space left on device")
-}
-func (w *failAfterWriter) Truncate(size int64) error {
-	if w.wrote && size == 0 {
-		w.rolledBack = true
-	}
-	return nil
-}
-func (w *failAfterWriter) Seek(offset int64, whence int) (int64, error) { return 0, nil }
-
-// TestWriteFindingsRollsBackOnWriteError is the corrupt-on-failure regression for
-// commitFindings. It runs f.Truncate(0) before writing, so a short write (ENOSPC)
-// used to leave a truncated JSON fragment that not only broke every reader but
-// blocked the recovery path — the next analyze -ingest's holdsVerdicts errors on
-// the fragment before it can rewrite. writeFindings must roll the file back to
-// empty (parseable, re-ingestable) on any write error. Pre-fix (neutralise the
-// `f.Truncate(0)` in writeFindings' error path to demonstrate) no truncate follows
-// the failed write and this fails.
-func TestWriteFindingsRollsBackOnWriteError(t *testing.T) {
-	w := &failAfterWriter{}
-	err := writeFindings(w, []Finding{{ID: "F-001", T: 1, Type: "bug", Severity: 3, Quote: "x", Evidence: []string{"utt-001"}, Status: "unverified"}})
-	if err == nil {
-		t.Fatal("writeFindings returned nil on a failing write; want the write error")
-	}
-	if !w.rolledBack {
-		t.Fatal("writeFindings did not truncate back to empty after the failed write; a partial line would survive and brick re-ingest")
-	}
-}
-
 // TestIngestRejectsQuoteThatSanitisesToEmpty is the verbatim-bypass regression. A
 // quote of only stripped characters (a lone U+202E) is raw-non-empty but SafeText
 // reduces it to "", and strings.Contains(text, "") is always true, so pre-fix the
@@ -834,8 +792,8 @@ func TestIngestRejectsOversizedAnswer(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "refusing to ingest") {
 		t.Fatalf("expected an over-size refusal, got %v", err)
 	}
-	if r.read > maxAnswerBytes+64*1024 {
-		t.Fatalf("read %d bytes; the cap (%d) was not enforced", r.read, maxAnswerBytes)
+	if r.read > session.MaxAnswerBytes+64*1024 {
+		t.Fatalf("read %d bytes; the cap (%d) was not enforced", r.read, session.MaxAnswerBytes)
 	}
 }
 
@@ -986,7 +944,7 @@ func TestIngestOversizedFindingLeavesPriorFileIntact(t *testing.T) {
 // TestWriteFindingsRollsBackOnWriteError tests writeFindings), not through
 // Ingest, for a small and exactly predictable byte count: see
 // TestIngestRejectsOversizedFindingsTotal for the equivalent reachable
-// through the public API at a fraction of maxAnswerBytes. Six findings, each
+// through the public API at a fraction of session.MaxAnswerBytes. Six findings, each
 // ~3.4 MiB (under the 4 MiB line cap) via 64 citations of one long id, sum to
 // ~20 MiB (over the 16 MiB file cap).
 func TestOversizedFindingsRejectsOversizedTotal(t *testing.T) {
@@ -1019,7 +977,7 @@ func TestOversizedFindingsRejectsOversizedTotal(t *testing.T) {
 }
 
 // TestIngestRejectsOversizedFindingsTotal is the total-size regression
-// reached through the public API, at a fraction of maxAnswerBytes rather than
+// reached through the public API, at a fraction of session.MaxAnswerBytes rather than
 // near it: writeFindings and oversizedFindings both encode with Go's default
 // HTML-escaping JSON encoder (deliberately not session.jsonlEncoder, so the
 // two agree with each other, but they disagree with the answer an operator's
@@ -1028,7 +986,7 @@ func TestOversizedFindingsRejectsOversizedTotal(t *testing.T) {
 // \uXXXX escape in the line oversizedFindings measures and writeFindings
 // would persist. Five findings each quoting a ~600,000-byte run of '<' encode
 // to ~17 MiB once written, comfortably over the 16 MiB MaxJSONLBytes total,
-// from a ~3 MiB answer — under a fifth of maxAnswerBytes, so the read-side
+// from a ~3 MiB answer — under a fifth of session.MaxAnswerBytes, so the read-side
 // cap cannot be relied on to keep this path from ever executing.
 func TestIngestRejectsOversizedFindingsTotal(t *testing.T) {
 	longText := strings.Repeat("<", 600000)
@@ -1042,8 +1000,8 @@ func TestIngestRejectsOversizedFindingsTotal(t *testing.T) {
 			i, longText))
 	}
 	answer := `{"findings":[` + strings.Join(findings, ",") + `]}`
-	if len(answer) >= maxAnswerBytes {
-		t.Fatalf("test setup: answer is %d bytes, at or over maxAnswerBytes (%d); the read-side cap would refuse it before this test's own check runs", len(answer), maxAnswerBytes)
+	if len(answer) >= session.MaxAnswerBytes {
+		t.Fatalf("test setup: answer is %d bytes, at or over session.MaxAnswerBytes (%d); the read-side cap would refuse it before this test's own check runs", len(answer), session.MaxAnswerBytes)
 	}
 
 	_, err := Ingest(dir, strings.NewReader(answer))

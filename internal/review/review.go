@@ -1,10 +1,15 @@
-// Package review records human verdicts on candidate findings. A verdict is
-// appended to findings.jsonl as a separate, non-destructive record (never an
-// in-place rewrite of the finding), so the finding's birth state and the full
-// verdict history survive as the precision measure the method stands on
-// (architecture note §2; itd-2 press release). Interactive review is gated on
-// stdin being a character device so a redirected or piped run (CI) never
-// blocks; a single verdict can also be recorded non-interactively.
+// Package review is the pipeline's one human-decision surface, across both
+// record families. Its own half records verdicts on candidate findings: a
+// verdict is appended to findings.jsonl as a separate, non-destructive record
+// (never an in-place rewrite of the finding), so the finding's birth state and
+// the full verdict history survive as the precision measure the method stands on
+// (architecture note §2; itd-2 press release). Options.Kind dispatches the tests
+// half to internal/drafttests, which records an accept / edit / reject decision
+// on each drafted regression test the same appended way — one verb for the whole
+// pipeline, with the vocabularies kept per-kind because "edited" carries a
+// payload no verdict ever does (ADR 0001). Interactive review is gated on stdin
+// being a character device so a redirected or piped run (CI) never blocks; a
+// single decision can also be recorded non-interactively on either side.
 package review
 
 import (
@@ -19,9 +24,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 
 	"github.com/REPPL/Testimony/internal/analyze"
+	"github.com/REPPL/Testimony/internal/drafttests"
 	"github.com/REPPL/Testimony/internal/session"
 )
 
@@ -31,21 +36,77 @@ import (
 // range on an attacker-authored findings.jsonl time.
 const maxClockSeconds = 1e9
 
-// Options configures a review run.
-type Options struct {
-	Dir     string    // session directory
-	Finding string    // non-interactive: the finding to judge (F-NNN)
-	Verdict string    // non-interactive: confirmed | rejected | duplicate-of-F-NNN
-	In      io.Reader // interactive input
-	Out     io.Writer // status and prompts
-	IsTTY   bool      // whether In is an interactive terminal
-	Today   string    // ISO date stamped onto verdicts (YYYY-MM-DD)
+// The record families review can walk. An empty Kind means KindFindings, so a
+// caller that predates the tests side keeps the findings behaviour unchanged.
+const (
+	KindFindings = "findings"
+	KindTests    = "tests"
+)
+
+// ParseKindFlag validates a -kind flag value against the closed set, so the CLI
+// can refuse an unknown record family as a wrong invocation rather than let it
+// reach a dispatch that has no case for it. An empty value is the documented
+// default.
+func ParseKindFlag(s string) (string, error) {
+	switch s {
+	case "", KindFindings:
+		return KindFindings, nil
+	case KindTests:
+		return KindTests, nil
+	}
+	return "", fmt.Errorf("invalid kind %q (want findings|tests)", s)
 }
 
-// Run records verdicts for the session. With -finding/-verdict it records one
-// verdict non-interactively; otherwise it walks the unverified findings
+// Options configures a review run. The Finding/Verdict pair belongs to
+// KindFindings and the Test/Decision/EditIn set to KindTests; the CLI refuses a
+// flag from the other family at the usage status, and Run refuses it too, so the
+// pairing is a property of this API rather than of one caller's invariants.
+type Options struct {
+	Dir      string    // session directory
+	Kind     string    // record family: "findings" (the default) or "tests"
+	Finding  string    // non-interactive: the finding to judge (F-NNN)
+	Verdict  string    // non-interactive: confirmed | rejected | duplicate-of-F-NNN
+	Test     string    // non-interactive, -kind tests: the draft to decide (T-NNN)
+	Decision string    // non-interactive, -kind tests: accepted | edited | rejected
+	EditIn   io.Reader // -kind tests, with Decision "edited": the replacement fields as a JSON object
+	In       io.Reader // interactive input
+	Out      io.Writer // status and prompts
+	IsTTY    bool      // whether In is an interactive terminal
+	Today    string    // ISO date stamped onto verdicts and decisions (YYYY-MM-DD)
+}
+
+// Run records human decisions for the session. With -kind tests it delegates to
+// the drafting layer's walk; otherwise, with -finding/-verdict it records one
+// verdict non-interactively, and with neither it walks the unverified findings
 // interactively (skipping cleanly when stdin is not a terminal).
 func Run(opts Options) error {
+	kind, err := ParseKindFlag(opts.Kind)
+	if err != nil {
+		return err
+	}
+	// A flag belonging to the other record family is a wrong invocation, not a
+	// silently ignored one: a caller who typed -verdict against -kind tests meant
+	// something this walk cannot do, and recording nothing while exiting 0 would
+	// let a script believe the decision landed.
+	if kind == KindTests {
+		if opts.Finding != "" || opts.Verdict != "" {
+			return fmt.Errorf("-finding and -verdict apply to -kind findings, not -kind tests")
+		}
+		return drafttests.Review(drafttests.ReviewOptions{
+			Dir:      opts.Dir,
+			Test:     opts.Test,
+			Decision: opts.Decision,
+			EditIn:   opts.EditIn,
+			In:       opts.In,
+			Out:      opts.Out,
+			IsTTY:    opts.IsTTY,
+			Today:    opts.Today,
+		})
+	}
+	if opts.Test != "" || opts.Decision != "" || opts.EditIn != nil {
+		return fmt.Errorf("-test, -decision and -edit apply to -kind tests, not -kind findings")
+	}
+
 	// analyze.Load reads dir/findings.jsonl, so a session directory that does
 	// not exist at all satisfies fs.ErrNotExist exactly like one that exists
 	// but has simply never been through `analyze -ingest` — and review,
@@ -291,114 +352,60 @@ func ParseVerdictFlag(s string) (verdict, of string, err error) {
 // AppendVerdict appends one verdict record to findings.jsonl without touching
 // any existing line (append-only; latest verdict wins for display).
 //
+// The dangerous part of the write — the no-follow open, the exclusive lock, the
+// two size pre-flights, the newline framing over an unterminated last line, the
+// partial-write rollback, and returning the Close error — lives once in
+// session.AppendRecord, shared with the decision records tests.jsonl holds. This
+// function supplies only the vocabulary: the verdict's encoding, the labels the
+// two size errors name it by, and the target re-check below.
+//
 // expect, when non-nil, is the finding the analyst was shown when they made this
-// decision. AppendVerdict re-reads the current findings under its lock and
-// refuses if the targeted id is gone or now names a different finding — see
-// verifyTarget. Callers pass nil only when there is no snapshot to bind against
-// (there are none in production; the review paths always pass the judged
-// finding).
+// decision. session.AppendRecord runs the Verify closure over the current
+// findings under its lock, and it refuses if the targeted id is gone or now names
+// a different finding — see verifyTarget. Callers pass nil only when there is no
+// snapshot to bind against (there are none in production; the review paths always
+// pass the judged finding).
 func AppendVerdict(dir string, v analyze.Verdict, expect *analyze.Finding) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	// Hold the verdict to MaxJSONLLine, the shared read-side invariant every other
-	// JSONL writer respects (session.WriteJSONL, analyze.oversizedFindings,
-	// demo.tooLongForJSONL). A verdict carries its finding id verbatim, and in an
-	// exchanged or hand-edited findings.jsonl that id can be just under the 4 MiB
-	// scanner cap — small enough that the finding line loads, large enough that the
-	// verdict's own framing tips the line over it. Appending it would durably brick
-	// the verdict history this package exists to protect: every later analyze.Load,
-	// review, report, and holdsVerdicts would fail with "token too long".
-	if len(b)+1 > session.MaxJSONLLine {
-		return fmt.Errorf("verdict for %s encodes to %d bytes, over the %d-byte %s line limit",
-			session.SafeText(v.Finding), len(b)+1, session.MaxJSONLLine, session.FindingsFile)
+	a := session.Append{
+		Path:   filepath.Join(dir, session.FindingsFile),
+		Record: b,
+		// The finding id is attacker-authorable in an exchanged session and the
+		// label reaches the operator's terminal through cli.fail, so it is
+		// sanitised here rather than inside the shared primitive, which never sees
+		// an id as such.
+		Label: "verdict for " + session.SafeText(v.Finding),
+		Kind:  "verdict",
 	}
-	path := filepath.Join(dir, session.FindingsFile)
-	// O_RDWR rather than O_WRONLY because the record cannot be framed correctly
-	// without first reading the byte already at the end of the file.
-	f, err := session.OpenFileNoFollow(path, os.O_APPEND|os.O_RDWR, 0o644)
-	if err != nil {
-		return err
-	}
-	// Take an exclusive advisory lock across the probe → write → rollback sequence.
-	// Two `testimony review` processes appending to one session's findings.jsonl
-	// would otherwise race: A measures the end, B appends a full verdict past it, A's
-	// write fails part-way (ENOSPC — the case the rollback exists for), and A's
-	// Truncate then cuts the file back below B's committed record, deleting it.
-	// writeVerdict re-measuring the end only shrinks that window; the lock closes it,
-	// so the length A rolls back to is the true end before A's own bytes. The lock
-	// releases with the descriptor on Close.
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return err
-	}
-	// Hold the file to MaxJSONLBytes, the total-size invariant ParseRecords
-	// enforces and every other JSONL writer (session.WriteJSONL,
-	// analyze.oversizedFindings) already pre-flights before appending. A
-	// findings.jsonl built by analyze -ingest can legally sit right at the cap;
-	// without this check, the next verdict recorded against it would land findings
-	// past MaxJSONLBytes, and every later analyze.Load, review, and report would
-	// refuse it — including the verdict just appended, and any recorded before it.
-	// holdsVerdicts (analyze.Ingest's re-ingest guard) is the one reader that does
-	// NOT refuse an over-total file: it bounds only a per-line scan, not the total,
-	// so it still finds the verdict and blocks re-ingest as a repair path.
-	// Measured under the lock, after the file is open, so a
-	// concurrent append cannot land between this check and the write below. writeVerdict
-	// is called with append(b, '\n') below — len(b)+1 bytes — but writeVerdict itself
-	// prepends a second leading newline when the file is non-empty and its last byte
-	// is not already '\n' (an exchanged or hand-edited findings.jsonl can end
-	// unterminated), so the worst case it actually writes is len(b)+2, not len(b)+1;
-	// budgeting only +1 here let a file at exactly the cap minus (len(b)+1) pass this
-	// check and still land one byte over MaxJSONLBytes.
-	info, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return err
-	}
-	if info.Size()+int64(len(b))+2 > session.MaxJSONLBytes {
-		f.Close()
-		return fmt.Errorf("%s is %d bytes; appending this verdict would push it past the %d-byte JSONL file limit; refusing to write a session no command could read back",
-			session.FindingsFile, info.Size(), session.MaxJSONLBytes)
-	}
-	// Under the lock, confirm the verdict still targets the finding the analyst
-	// judged. review.Run snapshots findings once (analyze.Load) and then blocks on
-	// the operator for the whole interactive walk; a concurrent `analyze -ingest`
-	// can truncate-and-rewrite findings.jsonl in that gap — permitted until the
-	// first verdict exists — and because finding ids restart at F-001 the verdict
-	// would otherwise attach to a different finding under the same id, silently
-	// misattributing the human decision this file exists to hold. The re-check runs
-	// under the same exclusive lock analyze.commitFindings takes, so the re-ingest
-	// is either already visible here (mismatch → refuse, no verdict written) or
-	// serialised after this append and then blocked by its own verdict-guard.
 	if expect != nil {
-		if err := verifyTarget(f, v, *expect); err != nil {
-			f.Close()
-			return err
-		}
+		// Confirm, under the append lock, that the verdict still targets the finding
+		// the analyst judged. review.Run snapshots findings once (analyze.Load) and
+		// then blocks on the operator for the whole interactive walk; a concurrent
+		// `analyze -ingest` can truncate-and-rewrite findings.jsonl in that gap —
+		// permitted until the first verdict exists — and because finding ids restart
+		// at F-001 the verdict would otherwise attach to a different finding under
+		// the same id, silently misattributing the human decision this file exists to
+		// hold. The re-check runs under the same exclusive lock the commit side
+		// takes, so the re-ingest is either already visible here (mismatch → refuse,
+		// no verdict written) or serialised after this append and then blocked by its
+		// own verdict-guard.
+		judged := *expect
+		a.Verify = func(current io.Reader) error { return verifyTarget(current, v, judged) }
 	}
-	if err := writeVerdict(f, append(b, '\n')); err != nil {
-		f.Close()
-		return err
-	}
-	// Return the Close error so a verdict is never reported recorded when its
-	// bytes did not reach disk (write-back deferred to close on NFS/full device).
-	return f.Close()
+	return session.AppendRecord(a)
 }
 
-// verifyTarget re-reads the findings currently in f (the locked findings.jsonl
-// descriptor) and confirms the verdict v still applies to the finding expect —
-// the one the analyst was shown. It refuses if the id has vanished or now names
-// a different finding, and for a duplicate verdict if the "of" target has
-// vanished. f is read via a SectionReader over ReadAt, which leaves the file
-// offset untouched, and the descriptor is O_APPEND, so the subsequent write
-// still lands at the true end of file.
-func verifyTarget(f *os.File, v analyze.Verdict, expect analyze.Finding) error {
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	findings, _, err := analyze.ParseRecords(io.NewSectionReader(f, 0, info.Size()), session.FindingsFile)
+// verifyTarget re-reads the findings currently in the locked findings.jsonl
+// (session.AppendRecord hands it a reader over the file's contents, taken under
+// the append lock) and confirms the verdict v still applies to the finding
+// expect — the one the analyst was shown. It refuses if the id has vanished or
+// now names a different finding, and for a duplicate verdict if the "of" target
+// has vanished.
+func verifyTarget(current io.Reader, v analyze.Verdict, expect analyze.Finding) error {
+	findings, _, err := analyze.ParseRecords(current, session.FindingsFile)
 	if err != nil {
 		return err
 	}
@@ -414,67 +421,6 @@ func verifyTarget(f *os.File, v analyze.Verdict, expect analyze.Finding) error {
 	if v.Verdict == "duplicate" && findByID(findings, v.Of) == nil {
 		return fmt.Errorf("duplicate target %s is no longer in %s; re-run `testimony review`",
 			session.SafeText(v.Of), session.FindingsFile)
-	}
-	return nil
-}
-
-// verdictFile is the subset of *os.File that writeVerdict needs; a fake
-// satisfies it in tests to exercise the partial-write rollback.
-type verdictFile interface {
-	io.Writer
-	io.ReaderAt
-	Seek(offset int64, whence int) (int64, error)
-	Truncate(size int64) error
-}
-
-// writeVerdict frames rec so it lands as its own physical line and writes it,
-// rolling the file back if the write only partly lands.
-//
-// A findings.jsonl need not end in a newline: it may have been hand edited,
-// produced by another tool, or left short by a crash part-way through an
-// earlier write. Appending blindly would fuse the verdict onto that
-// unterminated final line, producing one physical line holding two JSON
-// objects — which makes not just those two records but the entire file
-// unparseable to every reader. So probe the last byte and open a fresh line
-// when it is not already one. (O_APPEND still puts the write at the end,
-// whatever the seek offset; the seek is only to learn the size.)
-//
-// The write itself needs the same rollback the capture path has in
-// demo.appendRecords: os.File.Write gives no atomicity guarantee, so a full
-// disk fills the remaining space, returns a short count, and leaves a
-// truncated, newline-less fragment (e.g. `{"kind":"verdict","find`) behind.
-// That fragment would fuse with the next successful write into one malformed
-// physical line and make the whole findings.jsonl — the human verdict record
-// this package exists to protect — unparseable to every reader. So on any
-// write error the file is truncated back to the length it had immediately
-// before the write. The size is re-measured at that point rather than reusing
-// the offset the newline probe learned: the descriptor is O_APPEND, so the
-// write lands at the true end of file, which a concurrent appender (a second
-// `testimony review`, or an analyze ingest) may have moved on since the probe.
-// Truncating to the stale offset would delete that other writer's record
-// instead of only our own partial bytes.
-func writeVerdict(f verdictFile, rec []byte) error {
-	end, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		return err
-	}
-	if end > 0 {
-		var last [1]byte
-		if _, err := f.ReadAt(last[:], end-1); err != nil {
-			return err
-		}
-		if last[0] != '\n' {
-			rec = append([]byte{'\n'}, rec...)
-		}
-	}
-	before, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(rec); err != nil {
-		// Best-effort roll back any partial bytes; surface the original error.
-		f.Truncate(before)
-		return err
 	}
 	return nil
 }

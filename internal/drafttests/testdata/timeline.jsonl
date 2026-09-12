@@ -1,0 +1,13 @@
+{"t":2,"src":"speech","id":"utt-001","payload":{"speaker":"P1","t1":5.5,"text":"Session start. I'm looking at the settings prototype for the first time."}}
+{"t":8,"src":"speech","id":"utt-002","payload":{"speaker":"P1","t1":12.5,"text":"Okay, three tabs, General is open. I'll change my display name first."}}
+{"t":9.5,"src":"event","id":"ev-001","payload":{"kind":"click","route":"#general","selector":"[data-testid=display-name]","text":"Display name"}}
+{"t":14.8,"src":"event","id":"ev-002","payload":{"kind":"input","route":"#general","selector":"[data-testid=display-name]","value":"Alice"}}
+{"t":16,"src":"speech","id":"utt-003","payload":{"speaker":"P1","t1":21,"text":"Typing feels fine. Now I expect this save button to confirm somehow."}}
+{"t":19.2,"src":"event","id":"ev-003","payload":{"kind":"click","route":"#general","selector":"[data-testid=save-btn]","text":"Save"}}
+{"t":22,"src":"speech","id":"utt-004","payload":{"speaker":"P1","t1":28,"text":"Hm. I clicked save and nothing happened. No message, no spinner."}}
+{"t":24.1,"src":"event","id":"ev-004","payload":{"kind":"click","route":"#general","selector":"[data-testid=save-btn]","text":"Save"}}
+{"t":31,"src":"speech","id":"utt-005","payload":{"speaker":"P1","t1":36,"text":"I'll switch to Appearance. The tab switch is instant, that's nice."}}
+{"t":32,"src":"event","id":"ev-005","payload":{"kind":"click","route":"#general","selector":"[data-testid=tab-appearance]","text":"Appearance"}}
+{"t":38,"src":"speech","id":"utt-006","payload":{"speaker":"P1","t1":45,"text":"Oh, I like this dark mode toggle. Immediate feedback."}}
+{"t":40.5,"src":"event","id":"ev-006","payload":{"kind":"click","route":"#appearance","selector":"[data-testid=theme-toggle]","text":"Dark mode"}}
+{"t":48,"src":"speech","id":"utt-007","payload":{"speaker":"P1","t1":54,"text":"Turning it back. The label just says dark mode whether it's on or off."}}

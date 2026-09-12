@@ -79,7 +79,8 @@ The demo app contains at least one intentional usability flaw. Find it by talkin
 - [Tutorials](docs/tutorials/getting-started.md) — your first session, end to end.
 - [How-to guides](docs/how-to/) — [transcribe a recording](docs/how-to/transcribe-a-recording.md)
   (engines, languages, offsets), [analyse a session](docs/how-to/analyse-a-session.md)
-  (findings and verdicts), [instrument your own app](docs/how-to/instrument-your-own-app.md).
+  (findings and verdicts), [draft regression tests](docs/how-to/draft-regression-tests.md)
+  (drafts and decisions), [instrument your own app](docs/how-to/instrument-your-own-app.md).
 - [Reference](docs/reference/) — the [command line](docs/reference/cli.md) and the
   [session directory](docs/reference/session-directory.md).
 - [Explanation](docs/explanation/) — [how alignment works](docs/explanation/how-alignment-works.md),
@@ -100,6 +101,7 @@ sessions/<timestamp>/
   transcript.jsonl     # time-aligned utterances
   timeline.jsonl       # merged, session-relative timeline
   findings.jsonl       # analysis findings + verdicts
+  tests.jsonl          # regression-test drafts + decisions
   report.md            # human-readable aligned record
 ```
 
@@ -109,12 +111,16 @@ Exact schemas: [session directory reference](docs/reference/session-directory.md
 
 Working today: `record` (managed capture — one command starts the recorders and
 stamps the session), `demo` (instrumented capture), `transcribe` (local WhisperX
-or whisper.cpp), `merge`, `report`, and the first-pass analysis layer — `analyze`
+or whisper.cpp), `merge`, `report`, the first-pass analysis layer — `analyze`
 (emit an analysis request, then validate the answer into findings) and `review`
-(record human verdicts). `record` captures the microphone by default; screen
-video is opt-in with `-video`. Analysis is host-delegated — `analyze` never calls
-a model, holds no keys, and adds no network dependency — and every finding is
-*unverified* by default until you confirm or reject it.
+(record human verdicts) — and the regression-test drafting layer, `draft-tests`
+(turn a confirmed finding into a proposed test case, then render the accepted
+ones as a Markdown test plan) with `review -kind tests` for the accept / edit /
+reject pass. `record` captures the microphone by default; screen video is opt-in
+with `-video`. The model work is host-delegated — the CLI never calls a model,
+holds no keys, and adds no network dependency — every finding is *unverified*
+until you confirm or reject it, and every drafted test is a *proposal* until you
+accept it.
 
 Coming next, in user terms:
 

@@ -16,7 +16,7 @@ Running `testimony` with no command, or with an unknown command, prints the usag
 
 ## Session directory inference
 
-The five pipeline commands — `transcribe`, `merge`, `report`, `analyze`, and `review` — take their session directory from `-session DIR`. When `-session` is omitted and the current directory itself holds a Testimony session `manifest.json`, that directory is the session: the command operates on it exactly as `-session .` does, and prints one line to stderr naming what it inferred (`merge: using session . (inferred from the current directory)`) before it starts work, so the implicit choice is visible in the output of the run. The line goes to stderr, never stdout, so `analyze`'s emitted request stays a clean pipe. An explicit `-session` always wins, is used verbatim, and prints no such line — the current directory is not consulted at all.
+The six pipeline commands — `transcribe`, `merge`, `report`, `analyze`, `draft-tests`, and `review` — take their session directory from `-session DIR`. When `-session` is omitted and the current directory itself holds a Testimony session `manifest.json`, that directory is the session: the command operates on it exactly as `-session .` does, and prints one line to stderr naming what it inferred (`merge: using session . (inferred from the current directory)`) before it starts work, so the implicit choice is visible in the output of the run. The line goes to stderr, never stdout, so `analyze`'s emitted request stays a clean pipe. An explicit `-session` always wins, is used verbatim, and prints no such line — the current directory is not consulted at all.
 
 The marker is a session manifest, not merely the file name. `manifest.json` is one of the most common file names in software, so the file must be a regular file (a directory or a symlink at that name is not a marker) and, when it parses, must carry the `session` field every `testimony` session has (see [`manifest.json`](session-directory.md#manifestjson)). A `manifest.json` that belongs to something else leaves the command refusing rather than writing into a directory that is not a session:
 
@@ -177,26 +177,91 @@ Emit behaviour: writes a single self-contained prompt — the rubric version hea
 
 Ingest behaviour: reads the answer from `FILE` (or stdin when `-`), accepting a top-level object with a `findings` array (optionally a `rubric`, which must be a known version) or a bare array. Ingest is the sole validation boundary and never trusts the model. Each finding is decoded with unknown fields disallowed, then checked against every schema rule (see [session directory reference](session-directory.md#findingsjsonl)): id format and uniqueness, `t` within the session, the `type`, `severity`, and `mode` enums, non-empty `evidence` of at most 64 ids with every id real and at least one spoken `utt-*` anchor, a `quote` that is a verbatim substring of one *cited* evidence utterance, and any `ui` selector/route matching a real event. Validation is transactional — all errors are reported at once and nothing is written on any failure. On success every finding is forced to `status: unverified`, `findings.jsonl` is written, and the command prints `validated N findings → <path> (all unverified)`. An answer with no findings (a bare `[]`, `{"findings":[]}`, or a truncated file) is refused rather than written, so it cannot erase a prior `findings.jsonl`; an answer whose findings would together push `findings.jsonl` past the session's 16 MiB total-size limit is refused the same way (see [`session-directory.md`](session-directory.md)). Ingest refuses to overwrite a `findings.jsonl` that already holds verdict records — counting any `kind:"verdict"` line, even one whose value is outside the closed enum.
 
-## `testimony review`
+## `testimony draft-tests`
 
-Records a human verdict on each candidate finding, appended to `findings.jsonl` without ever rewriting a finding in place — the finding's birth state and the full verdict history are retained as the precision measure.
+The regression-test drafting layer. Like `analyze`, `draft-tests` never calls a model, holds no keys, and adds no network dependency: it *emits* a self-contained drafting request that any assistant (or a human) runs, then *ingests* and validates the JSON answer into `tests.jsonl`. A third mode *renders* the accepted drafts as Markdown test cases. The step sits downstream of verification, so only a finding a person already confirmed can be drafted from.
 
 ```
-testimony review [-session DIR]
-testimony review [-session DIR] -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
+testimony draft-tests [-session DIR] [-window 10] [-out FILE]   # emit the request
+testimony draft-tests [-session DIR] -ingest FILE               # validate the answer → tests.jsonl
+testimony draft-tests [-session DIR] -render [-out FILE]        # render the accepted drafts
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
-| `-finding` | *(interactive)* | non-interactive: the finding to judge (`F-NNN`) |
-| `-verdict` | *(interactive)* | non-interactive: `confirmed`, `rejected`, or `duplicate-of-F-NNN` |
+| `-window` | `10` | emit mode: the event-window half-width in seconds around each finding's cited evidence |
+| `-out` | *(stdout)* | emit or render mode: write the document to `FILE` instead of stdout |
+| `-ingest` | *(off)* | ingest mode: validate the answer JSON at `FILE` (or `-` for stdin) into `tests.jsonl` |
+| `-render` | *(off)* | render mode: write Markdown test cases for the accepted drafts |
+
+`draft-tests` runs in exactly one mode: emit (neither `-ingest` nor `-render`), ingest (`-ingest`), or render (`-render`). `-ingest` combines with neither `-out` nor `-render`; `-out` pairs with emit or render. `-window` belongs to emit alone — ingest validates against the findings and render reads only what is on disk — so passing it with `-ingest` or `-render` is a usage error rather than a silently ignored flag. A non-finite `-window` is a usage error too, as it is for `report`; a negative one is legitimate and narrows the window.
+
+Emit reads `manifest.json`, `findings.jsonl`, and `timeline.jsonl`; ingest reads `manifest.json` and `findings.jsonl` only, because drafts are validated against the *findings* rather than re-derived from the timeline; render reads `manifest.json`, `findings.jsonl`, and `tests.jsonl`. Emit hints to run `merge` first when the timeline is missing; every mode hints to run `analyze -ingest` first when there is no `findings.jsonl`, and ingest, render, and `review -kind tests` hint to run `draft-tests -ingest` first when there is no `tests.jsonl`.
+
+**Eligibility.** A finding may be drafted from when its effective status is `confirmed` and its `mode` is not `B`. Effective status is the same computation `review` and `report` use, so a later verdict overriding an earlier one is honoured: a finding confirmed and then rejected is not eligible, and one rejected and then confirmed is. `unverified`, `rejected`, and `duplicate` findings are never eligible — including a `duplicate` whose target is confirmed, since the canonical finding carries the evidence. The finding's `type` is *not* filtered: the request carries it so the model can calibrate, and a draft with nothing to regress against is what the reject decision is for.
+
+Emit behaviour: writes a single self-contained prompt — the rubric version header (`testimony-testdraft/v1`), the proposal stance, the per-field instructions, the rubric body (the field definitions, how to read each finding record, and the hard constraints ingest enforces), the session context (session, app, participant, tasks), then, per eligible finding in id order, a prose header naming its id, type, severity, clock and the date of the verdict that confirmed it, its own record verbatim in a ```jsonl fence, and its event window in a second fence, followed by the required output shape with a worked example. Nothing in the session directory is mutated. With `-out FILE` the prompt goes to a file and the command prints `wrote <path>`; otherwise it prints to stdout.
+
+The **event window** is the only material the steps may be reconstructed from. For each finding it is every timeline entry whose time falls between the earliest cited evidence entry's start minus `-window` and the latest cited entry's end plus `-window`, in time order, speech and events together — the utterances carry the expected behaviour and the events carry the steps. The default half-width is 10 seconds rather than `report`'s 2.5, because a reproduction needs the lead-up and the aftermath and not only the moment: on the bundled sample, 2.5 seconds excludes the one utterance in which the participant states what they expected. A finding whose evidence resolves to no entry falls back to the window around its own `t`. The steps are stated to end at the last cited evidence event at or before the finding's `t`; a cited event after it belongs in `observed`.
+
+Ingest behaviour: reads the answer from `FILE` (or stdin when `-`), accepting a top-level object with a `tests` array (optionally a `rubric`, which must be a known version) or a bare array. Ingest is the sole validation boundary and never trusts the model. Each draft is decoded with unknown fields disallowed, then checked against every schema rule (see [session directory reference](session-directory.md#testsjsonl)): id format and uniqueness, a `finding` that is currently confirmed and not mode `B`, a `session` equal to the manifest's, a non-empty `title` of at most 200 characters, non-empty `steps` of at most 32 non-empty entries, non-empty `expected` and `observed`, a `rationale_quote` equal to the source finding's `quote` byte for byte, and a `severity` equal to the source finding's. Validation is transactional — all errors are reported at once and nothing is written on any failure. On success every draft is forced to `status: proposed`, `tests.jsonl` is written, and the command prints `validated N test drafts → <path> (all proposed)`. An answer with no drafts (a bare `[]`, `{"tests":[]}`, or a truncated file) is refused rather than written, so it cannot erase a prior `tests.jsonl`; so is an answer whose drafts would together push `tests.jsonl` past the session's 16 MiB total-size limit. Ingest refuses to overwrite a `tests.jsonl` that already holds decision records — counting any `kind:"decision"` line, even one whose value is outside the closed enum.
+
+Render behaviour: writes one Markdown test-case block per draft whose effective status is `accepted` or `edited`, in id order, with the latest `edited` decision's fields applied over the draft. `proposed` and `rejected` drafts are omitted: a proposal is not a test, and a rejected draft stays in `tests.jsonl` for the record rather than for the plan. Each block names the source finding and session, the decision and its date, the numbered steps, the expected and observed behaviour, and the participant's quote as the rationale. With `-out FILE` the plan goes to a file and the command prints `wrote <path>`; otherwise it prints to stdout, which is the default because Testimony never writes into the application's repository — where a docs-as-code test plan lives is the operator's choice.
+
+**Loud staging.** Two states are refused at exit 1 — a well-formed invocation whose work cannot be done — with the counts by status and nothing written:
+
+```
+testimony: no confirmed findings to draft tests from (5 findings: 0 confirmed, 2 unverified, 1 duplicate, 2 rejected); confirm one with `testimony review -session sessions/x` first
+testimony: no accepted test drafts to render (3 drafts: 0 accepted, 0 edited, 2 proposed, 1 rejected); accept one with `testimony review -session sessions/x -kind tests` first
+```
+
+The first applies to emit and to ingest, and on ingest it fires before a byte of the answer is read: with no eligible finding, every draft in the answer would fail the same rule. The second keeps `-out FILE` from truncating an existing test plan into an empty document.
+
+## `testimony review`
+
+The one human-decision verb, across both record families. With `-kind findings` (the default) it records a verdict on each candidate finding; with `-kind tests` it records an accept / edit / reject decision on each drafted regression test. Either way the decision is *appended* — to `findings.jsonl` or to `tests.jsonl` — without ever rewriting the machine record in place, so the record's birth state and the full decision history are retained as the precision measure.
+
+```
+testimony review [-session DIR] [-kind findings|tests]
+testimony review [-session DIR] -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
+testimony review [-session DIR] -kind tests -test T-NNN -decision accepted|rejected
+testimony review [-session DIR] -kind tests -test T-NNN -decision edited -edit FILE
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
+| `-kind` | `findings` | which record family to review: `findings` or `tests` |
+| `-finding` | *(interactive)* | non-interactive: the finding to judge (`F-NNN`), `-kind findings` only |
+| `-verdict` | *(interactive)* | non-interactive: `confirmed`, `rejected`, or `duplicate-of-F-NNN`, `-kind findings` only |
+| `-test` | *(interactive)* | non-interactive: the test draft to decide (`T-NNN`), `-kind tests` only |
+| `-decision` | *(interactive)* | non-interactive: `accepted`, `edited`, or `rejected`, `-kind tests` only |
+| `-edit` | *(off)* | with `-decision edited`: the replacement fields as a JSON object at `FILE` (or `-` for stdin) |
+
+A flag belonging to the other record family is a usage error, not a silently ignored value: `-finding` or `-verdict` with `-kind tests`, and `-test`, `-decision` or `-edit` with `-kind findings`, each exit 2. So do an unknown `-kind`, a `-test` that is not `T-NNN`, a `-decision` outside the enum, `-decision edited` without `-edit`, and `-edit` alongside any other decision.
+
+### `-kind findings` (the default)
 
 Behaviour: loads findings and existing verdicts (hinting to run `analyze -ingest` first when there is no `findings.jsonl`) and computes each finding's effective status (every finding starts `unverified`; the last verdict for a finding wins).
 
 Interactive (`review -session DIR`): walks the `unverified` findings in id order, printing each finding's id, type, severity, clock, quote, and anchor, then prompting `[c]onfirm [r]eject [d]uplicate-of [s]kip [q]uit`; `d` asks for the canonical `F-NNN`. Each decision appends a verdict record stamped with today's date. Interactive mode is gated on stdin being a character device — true for an interactive terminal, but also for `/dev/null`, so this is not simply "not a terminal". When stdin is a pipe or a redirected regular file, `review` prints a one-line notice and exits 0 instead of walking, so CI never blocks; redirected from `/dev/null` (`< /dev/null`) it still enters the walk and immediately reaches end of input, since redirection makes stdin the character device itself rather than a pipe reading from it.
 
 Non-interactive (`-finding F-003 -verdict confirmed`, or `-verdict duplicate-of-F-002`): validates that the finding exists, the verdict parses, and any duplicate target exists and differs; appends one verdict record and prints a one-line confirmation. A verdict may be appended even when one already exists (append-only correction; the latest wins), unless appending it would push `findings.jsonl` past the session's 16 MiB total-size limit, which both interactive and non-interactive `review` refuse (see [`session-directory.md`](session-directory.md)). The stored verdict enum is exactly `confirmed | rejected | duplicate`; `duplicate-of-F-NNN` is stored as `verdict: "duplicate"` with `of: "F-NNN"`.
+
+### `-kind tests`
+
+Behaviour: loads the test drafts and existing decisions (hinting to run `draft-tests -ingest` first when there is no `tests.jsonl`) and computes each draft's effective status — every draft starts `proposed`, decision records apply in file order, and the last one for a draft wins. A decision naming an unknown draft, or carrying a value outside the closed enum, is ignored rather than applied, so a draft never vanishes from both the walk and the plan.
+
+Interactive (`review -session DIR -kind tests`): walks the `proposed` drafts in id order, printing each draft's id, its source finding with that finding's type, severity and clock, the title, the numbered steps, the expected and observed behaviour, and the participant's quote, then prompting `[a]ccept [e]dit [r]eject [s]kip [q]uit`. `e` asks for each editable field in turn showing the current value; a blank answer keeps it, and `steps` are read one per line until a blank line. A pass through the prompts that changes nothing prints `no changes; recorded as accepted.` and records `accepted`, because an `edited` decision with an empty edit records a change that did not happen. The character-device gate is the same as the findings walk's.
+
+Non-interactive (`-kind tests -test T-001 -decision accepted`): validates that the draft exists and the decision parses, appends one decision record, and prints `recorded: T-001 accepted (<date>)`. `-decision edited` requires `-edit FILE` (or `-` for stdin), a JSON object holding the replacement fields — a subset of `title`, `steps`, `expected`, and `observed` with at least one member, each held to the draft's own rule for that field:
+
+```json
+{"title":"Saving a display name gives no confirmation","steps":["Open #general.","Click Save."]}
+```
+
+The `edit` object is closed: one naming `id`, `finding`, `session`, `severity`, or `rationale_quote` is an error rather than a silently dropped key, so no edit can re-point a draft at different evidence. The only way to change the link is to reject the draft and ingest a new one. A decision may be appended even when one already exists (append-only correction; the latest wins), and the accepted and edited drafts are what [`draft-tests -render`](#testimony-draft-tests) puts in the test plan.
 
 ## `testimony version`
 

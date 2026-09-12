@@ -12,10 +12,15 @@ Testimony captures usability evidence, on the record. A Go CLI
 `demo`, `transcribe`, `merge`, and `report` working end-to-end, plus the
 first-pass analysis layer — `analyze` (emit a host-delegated analysis
 request, then validate the answer into `findings.jsonl`) and `review`
-(record human verdicts, appended non-destructively). The oracle is
+(record human verdicts, appended non-destructively) — and the
+regression-test drafting layer, `draft-tests` (emit a drafting request
+carrying each confirmed finding and its event window, validate the answer
+into `tests.jsonl`, render the accepted drafts as a Markdown test plan)
+with `review -kind tests` for the accept / edit / reject pass. The oracle is
 host-delegated: the CLI never calls a model, holds no keys, and adds no
-network dependency; every finding is born `unverified` and ingest is the sole
-validation boundary. Next is codebase mapping (itd-3), then Mode B / the
+network dependency; every finding is born `unverified`, every drafted test is
+born `proposed`, and each ingest is the sole validation boundary for its own
+answer. Next is codebase mapping (itd-3), then Mode B / the
 pattern library (itd-4). Command and file contracts in
 [`../../docs/reference/cli.md`](../../docs/reference/cli.md) and
 [`../../docs/reference/session-directory.md`](../../docs/reference/session-directory.md).

@@ -1617,3 +1617,28 @@ Architecture-shaping decisions graduate to an ADR under
   footers or session links: disclosure lives solely in the commit's
   `Assisted-by:` trailer. Both recorded as COMMITTING rules in
   `.abcd/rules.json` after a harness-default footer reached two PR bodies.
+- 2026-09-12 — The regression-test drafting step (itd-9) is host-delegated
+  emit/ingest, exactly as `analyze` is: `draft-tests` emits one self-contained
+  request carrying each confirmed finding and its event window (`-window`
+  defaulting to 10 s, not `report`'s 2.5, so the repro's lead-up and aftermath are
+  both in scope), and `draft-tests -ingest` is the sole validation boundary, with
+  every draft forced to `status: "proposed"`. The CLI still never calls a model,
+  holds no keys, and adds no network dependency.
+- 2026-09-12 — Drafted tests live in two places with the boundary drawn
+  explicitly: the record is `tests.jsonl` alongside the session, append-only and
+  linked to its finding, and the hand-off is `draft-tests -render`, whose Markdown
+  the operator places wherever their docs-as-code test plan lives. Testimony never
+  writes into the application's repository, so the rendered plan defaults to stdout
+  and gets no session constant.
+- 2026-09-12 — A human decision on a draft is an appended `kind:"decision"`
+  record, never an in-place rewrite, and its `edit` object is a closed
+  `{title, steps, expected, observed}` subset decoded with
+  `DisallowUnknownFields`: an `edit` naming `id`, `finding`, `session`,
+  `severity`, or `rationale_quote` is a hard error, so no edit can re-point a
+  draft at different evidence. Changing the link means rejecting the draft and
+  ingesting a new one.
+- 2026-09-12 — A draft carries its source finding's `severity` and `quote`
+  through, and ingest equality-checks both: triage order is a human product and
+  not the model's to choose, and requiring the quote byte for byte makes the
+  drafting step structurally incapable of introducing evidence the human never
+  vouched for.

@@ -1,0 +1,11 @@
+{"rubric":"testimony-testdraft/v1","tests":[
+  {"id":"T-001","finding":"F-001","session":"fixture-session",
+   "title":"Saving gives no confirmation",
+   "steps":["Open #general in the settings prototype.",
+            "Change the display name to Alice.",
+            "Click the Save button ([data-testid=save-btn])."],
+   "expected":"The save is confirmed on screen — a toast, or the button briefly disabled.",
+   "observed":"Nothing visibly changes, so there is no way to tell the save landed.",
+   "rationale_quote":"I clicked save and nothing happened",
+   "severity":3,"status":"accepted"}
+]}

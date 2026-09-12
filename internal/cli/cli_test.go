@@ -174,6 +174,7 @@ func TestStrayPositionalIsAUsageError(t *testing.T) {
 		{"transcribe", "-session", dir, "junk", "-offset", "99"},
 		{"analyze", "-session", dir, "junk", "-out", "x", "-ingest", "-"},
 		{"review", "-session", dir, "junk", "-finding", "F-001", "-verdict", "confirmed"},
+		{"draft-tests", "-session", dir, "junk", "-render"},
 		{"record", "-out", t.TempDir(), "junk", "-participant", "P9"},
 		{"version", "junk"},
 		{"help", "junk"},
@@ -254,6 +255,28 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 		{[]string{"review", "-session", dir, "-finding", "", "-verdict", ""}, `review: -finding must not be empty`},
 		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", ""}, `review: -verdict must not be empty`},
 		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", "duplicate-of-F-001"}, `review: -finding cannot be a duplicate of itself`},
+		{[]string{"draft-tests", "-session", dir, "-ingest", ""}, `draft-tests: -ingest must not be empty`},
+		{[]string{"draft-tests", "-session", dir, "-out", ""}, `draft-tests: -out must not be empty`},
+		{[]string{"draft-tests", "-session", dir, "-out", "f.md", "-ingest", "-"}, `draft-tests: -out and -ingest cannot be combined`},
+		{[]string{"draft-tests", "-session", dir, "-render", "-ingest", "-"}, `draft-tests: -render and -ingest cannot be combined`},
+		{[]string{"draft-tests", "-session", dir, "-window", "NaN"}, `draft-tests: -window must be a finite number of seconds`},
+		{[]string{"draft-tests", "-session", dir, "-window", "+Inf"}, `draft-tests: -window must be a finite number of seconds`},
+		{[]string{"draft-tests", "-session", dir, "-window", "20", "-ingest", "-"}, `draft-tests: -window applies to the emit mode only`},
+		{[]string{"draft-tests", "-session", dir, "-window", "20", "-render"}, `draft-tests: -window applies to the emit mode only`},
+		{[]string{"review", "-session", dir, "-kind", ""}, `review: -kind must not be empty`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-test", ""}, `review: -test must not be empty`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-decision", ""}, `review: -decision must not be empty`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-edit", ""}, `review: -edit must not be empty`},
+		{[]string{"review", "-session", dir, "-kind", "verdicts"}, `review: invalid kind "verdicts"`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-test", "T-01", "-decision", "accepted"}, `review: invalid -test "T-01"`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-test", "T-001", "-decision", "maybe"}, `review: invalid decision "maybe"`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-test", "T-001"}, `review: -decision is required with -test`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-decision", "accepted"}, `review: -test is required with -decision`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-test", "T-001", "-decision", "edited"}, `review: -edit is required with -decision edited`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-test", "T-001", "-decision", "accepted", "-edit", "e.json"}, `review: -edit applies only to -decision edited`},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-finding", "F-001", "-verdict", "confirmed"}, `review: -finding and -verdict apply to -kind findings, not -kind tests`},
+		{[]string{"review", "-session", dir, "-test", "T-001", "-decision", "accepted"}, `review: -test, -decision and -edit apply to -kind tests, not -kind findings`},
+		{[]string{"review", "-session", dir, "-edit", "e.json"}, `review: -test, -decision and -edit apply to -kind tests, not -kind findings`},
 	}
 	for _, c := range cases {
 		var code int
@@ -274,7 +297,9 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 // documented invocation surface: record's -commit flag and the help command
 // are part of docs/reference/cli.md but were absent from `testimony help`.
 func TestUsageListsEveryFlagAndCommand(t *testing.T) {
-	for _, want := range []string{"-commit HASH", "testimony help"} {
+	for _, want := range []string{"-commit HASH", "testimony help",
+		"testimony draft-tests", "-window 10", "-kind findings|tests", "-decision edited -edit FILE",
+		"transcribe, merge, report, analyze, draft-tests, or review"} {
 		if !strings.Contains(usage, want) {
 			t.Errorf("usage text does not mention %q", want)
 		}
@@ -293,7 +318,7 @@ func TestMissingSessionIsAUsageError(t *testing.T) {
 	// manifest.json, which is no longer merely incidental now that its
 	// absence is what sends these invocations down the refusal path.
 	chdir(t, t.TempDir())
-	for _, cmd := range []string{"merge", "report", "transcribe", "analyze", "review"} {
+	for _, cmd := range []string{"merge", "report", "transcribe", "analyze", "draft-tests", "review"} {
 		var code int
 		stderr := captureStderr(t, func() { code = Run([]string{cmd}) })
 		if code != 2 {
@@ -681,5 +706,328 @@ func TestRefusedInvocationAnnouncesNoSession(t *testing.T) {
 		if strings.Contains(stderr, "inferred") {
 			t.Errorf("%v announced an inferred session before refusing: %q", args, stderr)
 		}
+	}
+}
+
+// --- draft-tests ------------------------------------------------------------
+
+// draftableSession writes a session the drafting layer can work on: a manifest,
+// a two-entry timeline, and a findings.jsonl whose F-001 carries a confirmed
+// verdict — the one state `draft-tests` is allowed to draft from.
+func draftableSession(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", App: "app", Participant: "P1"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	tl := `{"t":0,"src":"speech","id":"utt-001","payload":{"speaker":"P1","t1":5,"text":"I clicked save and nothing happened"}}` + "\n" +
+		`{"t":1,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"[data-testid=save-btn]","route":"#general"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	fnd := `{"id":"F-001","t":0,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-001","ev-001"],"status":"unverified"}` + "\n" +
+		`{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-09-12"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(fnd), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	return dir
+}
+
+// goodCLIAnswer is a schema-clean answer for draftableSession's F-001.
+const goodCLIAnswer = `{"rubric":"testimony-testdraft/v1","tests":[` +
+	`{"id":"T-001","finding":"F-001","session":"s","title":"Saving gives no confirmation",` +
+	`"steps":["Open #general.","Click Save."],"expected":"The save is confirmed.",` +
+	`"observed":"Nothing visibly changes.","rationale_quote":"I clicked save and nothing happened",` +
+	`"severity":3,"status":"accepted"}]}`
+
+// TestDraftTestsLoudStagingExitsOne pins both loud-staging refusals at exit 1 —
+// a well-formed invocation whose work cannot be done — with the counts by status
+// on stderr, and nothing written. A caller cannot tell these from a mistyped flag
+// if they share exit 2, and cannot tell them from success if they exit 0.
+func TestDraftTestsLoudStagingExitsOne(t *testing.T) {
+	// No confirmed finding: emit and ingest both refuse, naming the counts.
+	dir := draftableSession(t)
+	fnd := `{"id":"F-001","t":0,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-001"],"status":"unverified"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(fnd), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	// The ingest case passes "-" deliberately: the refusal comes before a byte of
+	// the answer is read, so it fires with nothing on stdin at all.
+	for _, args := range [][]string{
+		{"draft-tests", "-session", dir},
+		{"draft-tests", "-session", dir, "-ingest", "-"},
+	} {
+		var code int
+		stderr := captureStderr(t, func() { code = Run(args) })
+		if code != 1 {
+			t.Errorf("%v: exit %d, want 1 (runtime refusal)", args, code)
+		}
+		want := "testimony: no confirmed findings to draft tests from (1 findings: 0 confirmed, 1 unverified, 0 duplicate, 0 rejected); confirm one with `testimony review -session " + dir + "` first"
+		if !strings.Contains(stderr, want) {
+			t.Errorf("%v: want %q on stderr, got %q", args, want, stderr)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.TestsFile)); !os.IsNotExist(err) {
+		t.Errorf("a refused draft-tests wrote %s (err=%v)", session.TestsFile, err)
+	}
+
+	// No accepted draft: render refuses, and -out writes nothing, so an existing
+	// test plan cannot be truncated into an empty document.
+	dir2 := draftableSession(t)
+	seed := filepath.Join(t.TempDir(), "answer.json")
+	if err := os.WriteFile(seed, []byte(goodCLIAnswer), 0o644); err != nil {
+		t.Fatalf("write answer: %v", err)
+	}
+	if code := Run([]string{"draft-tests", "-session", dir2, "-ingest", seed}); code != 0 {
+		t.Fatalf("seed ingest: exit %d", code)
+	}
+	out := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(out, []byte("PRIOR PLAN\n"), 0o644); err != nil {
+		t.Fatalf("seed plan: %v", err)
+	}
+	var code int
+	stderr := captureStderr(t, func() { code = Run([]string{"draft-tests", "-session", dir2, "-render", "-out", out}) })
+	if code != 1 {
+		t.Errorf("render with no accepted draft: exit %d, want 1", code)
+	}
+	want := "testimony: no accepted test drafts to render (1 drafts: 0 accepted, 0 edited, 1 proposed, 0 rejected); accept one with `testimony review -session " + dir2 + " -kind tests` first"
+	if !strings.Contains(stderr, want) {
+		t.Errorf("render refusal: want %q on stderr, got %q", want, stderr)
+	}
+	if b, err := os.ReadFile(out); err != nil || string(b) != "PRIOR PLAN\n" {
+		t.Errorf("a refused render truncated the prior plan: %q (err=%v)", b, err)
+	}
+}
+
+// TestDraftTestsHintsMissingArtefacts: each mode names the command that produces
+// what it is missing, rather than surfacing a bare filesystem error.
+func TestDraftTestsHintsMissingArtefacts(t *testing.T) {
+	cases := []struct {
+		name string
+		prep func(t *testing.T, dir string)
+		args func(dir string) []string
+		want string
+	}{
+		{
+			"no tests.jsonl to render",
+			func(t *testing.T, dir string) {},
+			func(dir string) []string { return []string{"draft-tests", "-session", dir, "-render"} },
+			"no tests.jsonl (run `testimony draft-tests -ingest` first)",
+		},
+		{
+			"no tests.jsonl to review",
+			func(t *testing.T, dir string) {},
+			func(dir string) []string {
+				return []string{"review", "-session", dir, "-kind", "tests", "-test", "T-001", "-decision", "accepted"}
+			},
+			"no tests.jsonl (run `testimony draft-tests -ingest` first)",
+		},
+		{
+			"no findings.jsonl",
+			func(t *testing.T, dir string) {
+				if err := os.Remove(filepath.Join(dir, session.FindingsFile)); err != nil {
+					t.Fatalf("remove findings: %v", err)
+				}
+			},
+			func(dir string) []string { return []string{"draft-tests", "-session", dir} },
+			"no findings.jsonl (run `testimony analyze -ingest` first)",
+		},
+		{
+			"no timeline.jsonl",
+			func(t *testing.T, dir string) {
+				if err := os.Remove(filepath.Join(dir, session.TimelineFile)); err != nil {
+					t.Fatalf("remove timeline: %v", err)
+				}
+			},
+			func(dir string) []string { return []string{"draft-tests", "-session", dir} },
+			"run `testimony merge` first",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := draftableSession(t)
+			c.prep(t, dir)
+			var code int
+			stderr := captureStderr(t, func() { code = Run(c.args(dir)) })
+			if code != 1 {
+				t.Errorf("exit %d, want 1", code)
+			}
+			if !strings.Contains(stderr, c.want) {
+				t.Errorf("want %q on stderr, got %q", c.want, stderr)
+			}
+		})
+	}
+}
+
+// TestDraftTestsRoundTripThroughTheCLI drives the whole drafting layer the way an
+// operator does: emit the request, ingest a known-good answer, record all three
+// decisions, and render the plan — asserting the printed lines, that the draft
+// line survives every decision byte-for-byte, and that findings.jsonl is never
+// written to.
+func TestDraftTestsRoundTripThroughTheCLI(t *testing.T) {
+	dir := draftableSession(t)
+	findingsBefore, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+
+	// Emit: to stdout, and the inference notice never contaminates it.
+	req := captureStdout(t, func() {
+		if code := Run([]string{"draft-tests", "-session", dir}); code != 0 {
+			t.Errorf("emit: exit %d, want 0", code)
+		}
+	})
+	for _, want := range []string{
+		"Testimony regression-test drafting rubric: testimony-testdraft/v1",
+		"Finding F-001 — bug, severity 3, at [00:00], confirmed by human verdict on 2026-09-12:",
+		"Event window:",
+	} {
+		if !strings.Contains(req, want) {
+			t.Fatalf("emitted request is missing %q:\n%s", want, req)
+		}
+	}
+
+	// Emit to a file.
+	reqPath := filepath.Join(t.TempDir(), "request.md")
+	stdout := captureStdout(t, func() {
+		if code := Run([]string{"draft-tests", "-session", dir, "-out", reqPath}); code != 0 {
+			t.Errorf("emit -out: exit %d, want 0", code)
+		}
+	})
+	if want := "wrote " + reqPath; !strings.Contains(stdout, want) {
+		t.Errorf("emit -out: want %q on stdout, got %q", want, stdout)
+	}
+	if b, err := os.ReadFile(reqPath); err != nil || !strings.Contains(string(b), "testimony-testdraft/v1") {
+		t.Errorf("emit -out wrote no request (err=%v)", err)
+	}
+
+	// Ingest a known-good answer from a file.
+	answerPath := filepath.Join(t.TempDir(), "answer.json")
+	if err := os.WriteFile(answerPath, []byte(goodCLIAnswer), 0o644); err != nil {
+		t.Fatalf("write answer: %v", err)
+	}
+	stdout = captureStdout(t, func() {
+		if code := Run([]string{"draft-tests", "-session", dir, "-ingest", answerPath}); code != 0 {
+			t.Errorf("ingest: exit %d, want 0", code)
+		}
+	})
+	if want := "validated 1 test drafts → " + filepath.Join(dir, session.TestsFile) + " (all proposed)"; !strings.Contains(stdout, want) {
+		t.Errorf("ingest: want %q on stdout, got %q", want, stdout)
+	}
+	draftLine := testsDraftLine(t, dir)
+	// The answer claimed "accepted"; ingest launders it.
+	if !strings.Contains(draftLine, `"status":"proposed"`) {
+		t.Errorf("ingest did not force the draft to proposed: %q", draftLine)
+	}
+
+	// Three decisions, each appended.
+	editPath := filepath.Join(t.TempDir(), "edit.json")
+	if err := os.WriteFile(editPath, []byte(`{"title":"Saving a display name gives no confirmation"}`), 0o644); err != nil {
+		t.Fatalf("write edit: %v", err)
+	}
+	today := time.Now().Format("2006-01-02")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"review", "-session", dir, "-kind", "tests", "-test", "T-001", "-decision", "accepted"}, "recorded: T-001 accepted (" + today + ")"},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-test", "T-001", "-decision", "edited", "-edit", editPath}, "recorded: T-001 edited (" + today + ")"},
+	} {
+		stdout = captureStdout(t, func() {
+			if code := Run(c.args); code != 0 {
+				t.Errorf("%v: exit %d, want 0", c.args, code)
+			}
+		})
+		if !strings.Contains(stdout, c.want) {
+			t.Errorf("%v: want %q on stdout, got %q", c.args, c.want, stdout)
+		}
+	}
+
+	// Render: the latest edit is applied, and the draft line is untouched.
+	plan := captureStdout(t, func() {
+		if code := Run([]string{"draft-tests", "-session", dir, "-render"}); code != 0 {
+			t.Errorf("render: exit %d, want 0", code)
+		}
+	})
+	for _, want := range []string{
+		"# Regression tests — s",
+		"## T-001 — Saving a display name gives no confirmation",
+		"- **Source:** finding `F-001` (bug, severity 3) in session `s`, at [00:00]",
+		"- **Decision:** edited (" + today + ")",
+		"1. Open #general.",
+		"**Expected:** The save is confirmed.",
+		"“I clicked save and nothing happened”",
+		"1 of 1 drafts accepted.",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Fatalf("rendered plan is missing %q:\n%s", want, plan)
+		}
+	}
+	if got := testsDraftLine(t, dir); got != draftLine {
+		t.Errorf("the draft line changed across the decisions:\n got %q\nwant %q", got, draftLine)
+	}
+
+	// A rejection removes it from the plan again.
+	stdout = captureStdout(t, func() {
+		if code := Run([]string{"review", "-session", dir, "-kind", "tests", "-test", "T-001", "-decision", "rejected"}); code != 0 {
+			t.Errorf("reject: exit %d, want 0", code)
+		}
+	})
+	if want := "recorded: T-001 rejected (" + today + ")"; !strings.Contains(stdout, want) {
+		t.Errorf("reject: want %q on stdout, got %q", want, stdout)
+	}
+	if code := Run([]string{"draft-tests", "-session", dir, "-render"}); code != 1 {
+		t.Errorf("render after the rejection: exit %d, want 1", code)
+	}
+
+	// findings.jsonl is a different record family and is never written to.
+	after, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if string(after) != string(findingsBefore) {
+		t.Error("the drafting pipeline modified findings.jsonl")
+	}
+}
+
+// testsDraftLine returns the single draft (non-decision) line of tests.jsonl, so
+// the append-only property can be asserted byte-for-byte across decisions.
+func testsDraftLine(t *testing.T, dir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, session.TestsFile))
+	if err != nil {
+		t.Fatalf("read tests: %v", err)
+	}
+	for _, l := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+		if !strings.Contains(l, `"kind":"decision"`) {
+			return l
+		}
+	}
+	t.Fatalf("tests.jsonl holds no draft line: %q", b)
+	return ""
+}
+
+// TestDraftTestsInfersSession: draft-tests joins the commands that take their
+// session from the current directory, announcing the inference on stderr and
+// keeping it off stdout, where the emitted request has to stay a clean pipe.
+func TestDraftTestsInfersSession(t *testing.T) {
+	dir := draftableSession(t)
+	chdir(t, dir)
+	var code int
+	var req string
+	stderr := captureStderr(t, func() {
+		req = captureStdout(t, func() { code = Run([]string{"draft-tests"}) })
+	})
+	if code != 0 {
+		t.Fatalf("draft-tests with an inferred session: exit %d, want 0", code)
+	}
+	if want := "draft-tests: using session . (inferred from the current directory)"; !strings.Contains(stderr, want) {
+		t.Errorf("want %q on stderr, got %q", want, stderr)
+	}
+	if !strings.Contains(req, "testimony-testdraft/v1") {
+		t.Errorf("the inferred run emitted no request: %q", req)
+	}
+	if strings.Contains(req, "inferred") {
+		t.Errorf("the inference notice reached stdout: %q", req)
 	}
 }
