@@ -35,6 +35,27 @@ break an existing invocation is called out in the entry that records it.
 
 ### Fixed
 
+- `demo` and `record` refuse a capture post that misses an endpoint path
+  instead of answering it with the demo page: the page handler matched every
+  path no endpoint claimed, so a post to `/api/interactions/`,
+  `/api/interaction`, or `/api/events/` — a trailing slash or a typo in an
+  operator's own instrumentation — got `200` and the HTML page, appended
+  nothing, and, because it never reached the refusal helper, said nothing on
+  stderr, the only channel a `sendBeacon` client has; the silence surfaced
+  when `merge` counted 0 events after the participant had gone. Any other
+  `/api/…` path now answers `404`, naming the unknown path on stderr, and any
+  other path serves the page to GET and HEAD only, answering `405` with
+  `Allow: GET, HEAD` to anything else. The two exact endpoints and their `204`
+  are unchanged.
+- The demo page's rrweb `<script>` tag, and the same snippet in the
+  instrumentation how-to, carry the script's Subresource Integrity hash and
+  `crossorigin="anonymous"`: the version was pinned but the bytes were not, so
+  a compromised or substituted CDN file executed in the participant's browser
+  on the same origin as the capture page, with reach over the session's DOM and
+  the loopback write endpoints. A browser now refuses any script whose bytes
+  differ from the pinned ones, and the page degrades to the documented
+  no-rrweb case — interaction capture unaffected, the archival replay stream
+  empty.
 - `transcribe` bounds what it retains of its subprocesses' output, as
   `record`'s sinks already do: the ffmpeg conversion and both whisper engine
   runs keep an 8 KiB trailing window (at most an 800-byte tail was ever
