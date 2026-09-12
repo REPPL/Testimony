@@ -1611,6 +1611,7 @@ Architecture-shaping decisions graduate to an ADR under
   branch lacking a residual-gap warning message (round 46's own commit
   called the branch "untouched" as a considered decision, but the
   message-only fix was judged separately fixable by the other refuter).
+- 2026-08-26: Committed name-guard hooks are the abcd v0.6.6 scaffold plus security hardening (function-shadow pin incl. read/echo/exit/test/[, inherited-function sweep, gitlink path scan, control-byte scrub) — adversarially reviewed twice; matching generator fix sits in the abcd source checkout, unreleased. Do not 'heal' the hooks back to stock templates.
 - 2026-08-27 — PRs merge by squash (one PR, one purpose, one commit on main —
   the practice recent history already shows), and PR bodies carry no AI
   footers or session links: disclosure lives solely in the commit's
