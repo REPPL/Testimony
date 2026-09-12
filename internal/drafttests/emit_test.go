@@ -35,7 +35,7 @@ func TestEmitCarriesConfirmedFindingsAndWindows(t *testing.T) {
 		"1. Change your display name and save it",
 		"2. Try the appearance settings",
 		"## Confirmed findings",
-		"Finding F-001 — bug, severity 3, at [00:22]:",
+		"Finding F-001 — bug, severity 3, at [00:22], confirmed by human verdict on 2026-09-12:",
 		"Event window:",
 		"## Answer",
 		`{"rubric":"testimony-testdraft/v1","tests":[ … ]}`,
@@ -268,5 +268,112 @@ func TestEmitPlaceholdersInvisibleOnlyManifestFields(t *testing.T) {
 	}
 	if !strings.Contains(got, "  1. Real task\n") || strings.Contains(got, "  2. ") {
 		t.Fatalf("a blank task was numbered:\n%s", got)
+	}
+}
+
+// TestEmitResolvesTheStatusContradiction is the self-contradicting-request
+// regression a host model found when it answered the real thing. The per-finding
+// record is shown verbatim as stored, so its `status` field reads "unverified" —
+// the birth state every finding this tool writes carries — while the section
+// heading says every finding below is confirmed and the hard constraints say an
+// unverified finding is ineligible. Left unexplained, the request contradicts
+// itself and the model has to guess which claim to believe. The record is still
+// shown byte-for-byte (the model copies `quote` and `severity` out of it, so
+// rewriting a field would make the shown record differ from the one ingest
+// validates against); the header names the verdict that confirmed it and the
+// rubric says what `status` is.
+func TestEmitResolvesTheStatusContradiction(t *testing.T) {
+	dir := writeSession(t)
+	got, err := EmitRequest(dir, 10)
+	if err != nil {
+		t.Fatalf("EmitRequest: %v", err)
+	}
+	// The record is unaltered: status still reads its birth state.
+	if !strings.Contains(got, `"status":"unverified"`) {
+		t.Fatalf("the finding record was rewritten rather than explained:\n%s", got)
+	}
+	// The header says what made it eligible, with the verdict's own date.
+	if !strings.Contains(got, "confirmed by human verdict on 2026-09-12:") {
+		t.Fatalf("the per-finding header does not name the verdict behind it:\n%s", got)
+	}
+	// The rubric says what the status field is, and what mode is.
+	for _, want := range []string{
+		"`status` is the finding's **birth state**",
+		"It is *not* the finding's current status.",
+		"`mode` is the capture mode",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the rubric does not explain %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestEmitVerdictDateFallsBackWhenAbsent: a verdict record in an exchanged or
+// hand-edited findings.jsonl need not carry a date, and one that renders as
+// nothing must drop the clause rather than print a dangling "on".
+func TestEmitVerdictDateFallsBackWhenAbsent(t *testing.T) {
+	findings := `{"id":"F-001","t":22,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-004"],"status":"unverified"}
+{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"  "}
+`
+	dir := writeSession(t, session.FindingsFile, findings)
+	got, err := EmitRequest(dir, 10)
+	if err != nil {
+		t.Fatalf("EmitRequest: %v", err)
+	}
+	if !strings.Contains(got, "confirmed by human verdict:") {
+		t.Fatalf("a dateless verdict did not fall back cleanly:\n%s", got)
+	}
+	if strings.Contains(got, "verdict on :") || strings.Contains(got, "verdict on  ") {
+		t.Fatalf("a dateless verdict printed a dangling \"on\":\n%s", got)
+	}
+}
+
+// TestEmitStatesWhereTheStepsEnd is the first of two ambiguity regressions from
+// the same live run. "ends at the moment the finding is anchored to" did not say
+// which anchor, and a cited evidence event *after* the finding's t (the second
+// Save click at ev-004 in the sample) had no stated home — so the model could
+// legitimately have made it a step or dropped it. The rule is stated: steps end
+// at the last cited evidence event at or before the finding's t, and a later one
+// belongs in observed.
+func TestEmitStatesWhereTheStepsEnd(t *testing.T) {
+	dir := writeSession(t)
+	got, err := EmitRequest(dir, 10)
+	if err != nil {
+		t.Fatalf("EmitRequest: %v", err)
+	}
+	for _, want := range []string{
+		"ends at the last cited evidence event at or before the finding's `t`**",
+		"it belongs in `observed`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the instructions do not state the steps-end rule (%q):\n%s", want, got)
+		}
+	}
+}
+
+// TestEmitLicensesOneOrientationStep is the second. The worked example's first
+// step ("Open #general…") corresponds to no event in the sample window, so the
+// example licensed an invented step against the stance paragraph's "never invent
+// a step". Rather than weaken the example — every real repro needs to say where
+// it starts — the request states where that step may legitimately come from, and
+// bounds it to one.
+func TestEmitLicensesOneOrientationStep(t *testing.T) {
+	dir := writeSession(t)
+	got, err := EmitRequest(dir, 10)
+	if err != nil {
+		t.Fatalf("EmitRequest: %v", err)
+	}
+	for _, want := range []string{
+		"The `route` on the window's first event names where the participant already is",
+		"You may derive **one** opening orientation step from it",
+		"every other step must correspond to an event or an utterance that is actually in the window",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the instructions do not license the orientation step (%q):\n%s", want, got)
+		}
+	}
+	// The worked example's opening step is the one the licence covers.
+	if !strings.Contains(got, `"Open #general in the settings prototype."`) {
+		t.Fatalf("the worked example lost its orientation step:\n%s", got)
 	}
 }

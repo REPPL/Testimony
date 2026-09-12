@@ -72,7 +72,14 @@ func EmitRequest(dir string, window float64) (string, error) {
 	b.WriteString("Draft one or more test cases per confirmed finding, in finding-id order. For each draft:\n\n")
 	b.WriteString("- **`steps`** — the reproduction, in time order. Each entry is one imperative " +
 		"action a developer can follow, naming the selector or the route where the window names " +
-		"it, and the sequence ends at the moment the finding is anchored to.\n")
+		"it. The sequence **ends at the last cited evidence event at or before the finding's `t`**: " +
+		"that event is the action the finding is anchored to. A cited evidence event *after* the " +
+		"finding's `t` is not a step — it is part of what the participant did in response, so it " +
+		"belongs in `observed`.\n")
+	b.WriteString("- The `route` on the window's first event names where the participant already " +
+		"is when the window opens. You may derive **one** opening orientation step from it (for " +
+		"example \"Open #general\"); every other step must correspond to an event or an utterance " +
+		"that is actually in the window.\n")
 	b.WriteString("- **`expected`** — the behaviour the participant expected, grounded in their own utterances in the window.\n")
 	b.WriteString("- **`observed`** — what the system actually did, grounded in the window's events and utterances.\n")
 	b.WriteString("- **`title`** — one line naming the defect.\n\n")
@@ -87,6 +94,14 @@ func EmitRequest(dir string, window float64) (string, error) {
 	b.WriteString("- `expected`, `observed` — non-empty prose.\n")
 	b.WriteString("- `rationale_quote` — the finding's own `quote`, copied byte for byte.\n")
 	b.WriteString("- `severity` — the finding's own `severity`, copied unchanged.\n\n")
+	b.WriteString("Reading each finding record below — two of its fields are about the record, not about your draft:\n\n")
+	b.WriteString("- `status` is the finding's **birth state**, and it reads `unverified` on every " +
+		"finding this tool writes: a finding is born a candidate. It is *not* the finding's current " +
+		"status. The human verdict records that confirmed these findings live alongside them and are " +
+		"not shown here; every finding below is confirmed, and its header names the date the verdict " +
+		"was recorded.\n")
+	b.WriteString("- `mode` is the capture mode: `A` is the application under test, `B` is reference " +
+		"capture of a third-party app. Only mode `A` findings are eligible, so every finding below is mode `A`.\n\n")
 	b.WriteString("Hard constraints (each is enforced when your answer is ingested):\n\n")
 	b.WriteString("- `rationale_quote` must **equal** the source finding's `quote` — byte for byte, not a re-derivation from the utterance. The drafting step carries evidence forward; it never introduces any.\n")
 	b.WriteString("- `severity` must equal the source finding's `severity`. Triage order is a human product and is not yours to choose.\n")
@@ -136,11 +151,20 @@ func EmitRequest(dir string, window float64) (string, error) {
 
 	b.WriteString("## Confirmed findings\n\n")
 	b.WriteString("Each finding below is confirmed by a human and eligible. Its own record is given " +
-		"first (copy `quote` and `severity` from it byte for byte), then its event window: the " +
-		"timeline entries around it, in time order, which are the only source for the steps.\n\n")
+		"first, verbatim as it is stored (copy `quote` and `severity` from it byte for byte; its " +
+		"`status` is the birth state, see the rubric above), then its event window: the timeline " +
+		"entries around it, in time order, which are the only source for the steps.\n\n")
+	// The verdict date comes from the same effective-status computation eligibility
+	// does, so the header cannot claim a confirmation the eligible set did not agree
+	// with. It is rendered rather than the record's own status field being rewritten:
+	// the model must copy `quote` and `severity` out of this line byte for byte, and
+	// substituting one field would make the record it is shown differ from the record
+	// ingest validates against — the shown-vs-validated gap this package closes
+	// everywhere else.
+	eff := analyze.EffectiveStatus(findings, verdicts)
 	for _, f := range confirmed {
-		fmt.Fprintf(&b, "Finding %s — %s, severity %d, at [%s]:\n\n",
-			session.SafeInline(f.ID), safeOrDash(f.Type), f.Severity, clock(f.T))
+		fmt.Fprintf(&b, "Finding %s — %s, severity %d, at [%s], %s:\n\n",
+			session.SafeInline(f.ID), safeOrDash(f.Type), f.Severity, clock(f.T), confirmedOn(eff[f.ID]))
 		line, err := json.Marshal(f)
 		if err != nil {
 			return "", err
@@ -196,4 +220,19 @@ func safeOrDash(s string) string {
 		return "—"
 	}
 	return t
+}
+
+// confirmedOn renders the human verdict behind an eligible finding, so the
+// request never shows a record whose `status` field reads "unverified" without
+// saying in the same line what actually made it eligible. The date is
+// attacker-authorable (a verdict in an exchanged session is unvalidated text) and
+// renders outside any code fence, so it goes through SafeInline; a verdict
+// carrying no date — or one that renders as nothing — drops the clause rather
+// than printing a dangling "on".
+func confirmedOn(st analyze.Status) string {
+	at := session.SafeInline(st.At)
+	if strings.TrimSpace(at) == "" {
+		return "confirmed by human verdict"
+	}
+	return "confirmed by human verdict on " + at
 }

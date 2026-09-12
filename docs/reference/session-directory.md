@@ -157,7 +157,7 @@ A finding's effective status starts `unverified`; verdict records apply in file 
 
 The regression-test drafting layer's output, written by `testimony draft-tests -ingest` and appended to by `testimony review -kind tests`. Two record kinds share the file, one per line: a **draft** line (no `kind` field) and a **decision** line (`kind: "decision"`). Decisions are appended, never written in place, so a draft's original state and the full decision history are retained. Blank lines are ignored.
 
-Ingest validates every draft against `findings.jsonl` and is the sole validation boundary — it never trusts the model. Unknown fields are rejected (the shape is closed), and `status` is forced to `"proposed"` on ingest regardless of the answer JSON, so a draft can never be born accepted. A draft may only ever reference a finding whose effective status is `confirmed`.
+Ingest validates every draft against `findings.jsonl` and is the sole validation boundary — it never trusts the model. Each draft object is closed: an unknown field in one is rejected rather than dropped, as is an unknown field in a decision's `edit` object. The top-level answer container is not closed — a key beside `rubric` and `tests` is tolerated, mirroring `analyze` — so strictness lands on the records themselves. `status` is forced to `"proposed"` on ingest regardless of the answer JSON, so a draft can never be born accepted. A draft may only ever reference a finding whose effective status is `confirmed`.
 
 **Draft record**
 
@@ -172,7 +172,7 @@ Ingest validates every draft against `findings.jsonl` and is the sole validation
 | `observed` | string | yes | what the system did; non-empty |
 | `rationale_quote` | string | yes | **equal** to the source finding's `quote`, byte for byte — the drafting step carries evidence forward and never introduces any |
 | `severity` | integer | yes | **equal** to the source finding's `severity`, so triage order survives the hand-off unaltered |
-| `status` | string | no | always `"proposed"` on ingest, whatever the answer claims |
+| `status` | string | yes | always `"proposed"` on ingest, whatever the answer claims (the answer may omit it; the written record always carries it) |
 
 ```json
 {"id":"T-001","finding":"F-001","session":"sample-session","title":"Saving gives no confirmation","steps":["Open #general in the settings prototype.","Change the display name to Alice.","Click the Save button ([data-testid=save-btn])."],"expected":"The save is confirmed on screen — a toast, or the button briefly disabled.","observed":"Nothing visibly changes, so there is no way to tell the save landed.","rationale_quote":"I clicked save and nothing happened","severity":3,"status":"proposed"}

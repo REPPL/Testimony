@@ -50,11 +50,13 @@ Testimony captures usability evidence, on the record.
 
 ## Current state
 
-v0.4.0. A Go CLI (`testimony`, standard library only) whose seven pipeline
+v0.4.0. A Go CLI (`testimony`, standard library only) whose eight pipeline
 commands are all implemented and dispatched from `internal/cli` behind the
 `cmd/testimony` entry point: `record` and `demo`
-(capture), `transcribe`, `merge`, `report`, and the analysis layer `analyze`
-and `review` — plus `version` and `help`. The model work is host-delegated —
+(capture), `transcribe`, `merge`, `report`, the analysis layer `analyze`
+and `review`, and the regression-test drafting layer `draft-tests` (with
+`review -kind tests` for its human pass) — plus `version` and `help`. The model
+work is host-delegated —
 the CLI never calls a model, holds no keys, and adds no network dependency. The user-facing documentation
 is [`docs/README.md`](docs/README.md); the exact command and file contracts are
 [`docs/reference/cli.md`](docs/reference/cli.md) and
@@ -73,8 +75,10 @@ go vet ./...                            # static checks
 go test ./...                           # unit tests
 go test -race ./...                     # race-enabled
 go test -run TestEventsNearWindow ./internal/timeline/   # a single test
+./testimony draft-tests -render -session examples/sample-session   # needs no timeline
 ./testimony merge  -session examples/sample-session   # pipeline smoke:
 ./testimony report -session examples/sample-session   #   writes timeline.jsonl + report.md
+./testimony draft-tests -session examples/sample-session   # emit the drafting request (after merge)
 sh -n install.sh && bash -n install.sh  # installer syntax
 ```
 

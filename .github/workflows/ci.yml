@@ -121,6 +121,11 @@ jobs:
       - name: Pipeline smoke test
         run: |
           set -euo pipefail
+          # draft-tests -render first: it reads manifest.json, findings.jsonl and
+          # tests.jsonl only, so it needs no merged timeline and proves the bundled
+          # tests.jsonl still renders the accepted plan before merge writes anything.
+          ./testimony draft-tests -render -session examples/sample-session | tee /tmp/tests-plan.md
+          grep -q "T-001" /tmp/tests-plan.md
           ./testimony merge -session examples/sample-session
           ./testimony report -session examples/sample-session
           test -s examples/sample-session/timeline.jsonl
@@ -141,6 +146,11 @@ jobs:
           # updating them here and in release.yml.
           grep -q "\*\*Utterances:\*\* 10 · \*\*Events:\*\* 10" examples/sample-session/report.md
           grep -q "data-testid=save-btn" examples/sample-session/report.md
+          # The drafting request needs the merged timeline (each confirmed finding
+          # carries its event window), so it runs after merge: exit 0 proves the
+          # sample still has a confirmed finding to draft from.
+          ./testimony draft-tests -session examples/sample-session > /tmp/tests-request.md
+          grep -q "testimony-testdraft/v1" /tmp/tests-request.md
           # The counts line above catches events going missing from the merge,
           # but not a windowing/attachment regression: report's header counts are
           # raw entry counts, computed before the join, so they stay "10 · 10"

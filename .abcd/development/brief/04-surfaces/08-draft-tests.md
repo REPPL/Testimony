@@ -31,7 +31,9 @@ See the schemas page ([`../05-internals/02-schemas.md`](../05-internals/02-schem
 
 `draft-tests` runs in exactly one mode, extending `analyze`'s emit-or-ingest rule
 by one: emit (neither `-ingest` nor `-render`), ingest (`-ingest`), or render
-(`-render`). `-ingest` combines with neither `-out` nor `-render`. Emit reads
+(`-render`). `-ingest` combines with neither `-out` nor `-render`, and `-window` is refused
+outside emit mode (`-window applies to the emit mode only`) rather than silently
+ignored. Emit reads
 `manifest.json`, `findings.jsonl`, and `timeline.jsonl`; ingest reads
 `manifest.json` and `findings.jsonl` only (drafts are validated against the
 *findings*, never re-derived from the timeline); render reads `manifest.json`,
@@ -181,7 +183,7 @@ Both refusals write nothing and exit 1 (a well-formed invocation whose work
 cannot be done), naming the counts so the operator can see *why* they are empty:
 
 ```
-testimony: no confirmed findings to draft tests from (5 findings: 0 confirmed, 2 unverified, 1 duplicate, 1 rejected); confirm one with `testimony review -session sessions/x` first
+testimony: no confirmed findings to draft tests from (5 findings: 0 confirmed, 2 unverified, 1 duplicate, 2 rejected); confirm one with `testimony review -session sessions/x` first
 testimony: no accepted test drafts to render (3 drafts: 0 accepted, 0 edited, 2 proposed, 1 rejected); accept one with `testimony review -session sessions/x -kind tests` first
 ```
 

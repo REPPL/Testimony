@@ -77,7 +77,14 @@ testimony review -session DIR -kind tests -test T-NNN -decision edited -edit FIL
 `draft-tests` runs in exactly one mode, mirroring `analyze`'s emit-or-ingest
 rule and extending it by one: emit (neither `-ingest` nor `-render`), ingest
 (`-ingest`), or render (`-render`). `-ingest` combines with neither `-out` nor
-`-render`. `-out` pairs with emit or render. Every flag follows the CLI's
+`-render` (each refused by its own message: `-out and -ingest cannot be combined`,
+`-render and -ingest cannot be combined`). `-out` pairs with emit or render.
+`-window` belongs to emit alone — ingest validates against the findings and
+render reads only what is already on disk — so passing it with `-ingest` or
+`-render` is refused (`-window applies to the emit mode only`) rather than
+silently ignored, which would let a caller who meant to widen the window believe
+they had. Set-ness is detected with `fs.Visit`, like the empty-value guards, so
+the default never trips the check. Every flag follows the CLI's
 existing exit-2 gauntlet: `-session` required; an explicitly-empty `-out`,
 `-ingest`, or `-kind` refused as a wrong invocation (the unset-shell-variable
 case); a non-finite `-window` refused (the `report -window` precedent); no
@@ -102,16 +109,24 @@ positional arguments (`rejectArgs`).
 
 `-finding`/`-verdict` are refused with `-kind tests`, and `-test`/`-decision`/
 `-edit` with `-kind findings`, at exit 2 — a flag that belongs to the other
-record family is a wrong invocation, not a silently ignored one. `-kind
+record family is a wrong invocation, not a silently ignored one. The pairing is
+checked twice on purpose: in `internal/cli`, where it takes the usage status and
+is refused before the session is resolved or a file is read, and again in
+`review.Run`, so the rule is a property of the API rather than of one caller's
+invariants. `-kind` is parsed through `review.ParseKindFlag` against the closed
+set `{findings, tests}` (`review.KindFindings`/`review.KindTests`), `-test`
+through `drafttests.IsDraftID`, and `-decision` through
+`drafttests.ParseDecisionFlag`. `-edit` is refused both when `-decision edited`
+lacks it and when it accompanies any other decision. `-kind
 findings` is byte-for-byte the behaviour `review` has today.
 
 Reads by mode: emit reads `manifest.json`, `timeline.jsonl`, and
 `findings.jsonl`; ingest reads `manifest.json` and `findings.jsonl` only (drafts
 are validated against the *findings*, never re-derived from the timeline);
 render reads `manifest.json`, `findings.jsonl`, and `tests.jsonl`. Emit hints to
-run `merge` first when the timeline is missing (reusing `analyze`'s
-`loadTimeline`, so a duplicated entry id or an unknown `src` is refused there
-too); every mode hints to run `analyze -ingest` first when there is no
+run `merge` first when the timeline is missing (reusing `analyze`'s timeline
+reader, which is exported as `analyze.LoadTimeline` for exactly this caller, so a
+duplicated entry id or an unknown `src` is refused there too); every mode hints to run `analyze -ingest` first when there is no
 `findings.jsonl`, and ingest/render/`review -kind tests` hint to run
 `draft-tests -ingest` first when there is no `tests.jsonl`.
 
@@ -134,6 +149,19 @@ evidence resolves to no entry — impossible after `analyze -ingest`, reachable 
 a hand-edited `findings.jsonl` — falls back to `[f.T - window, f.T + window]`.
 Speech and event entries are both included: the utterances around the moment are
 what carry the *expected* behaviour, and the events are what carry the *steps*.
+`Window` returns the entries in time order — it sorts its own result rather than
+trusting the caller, so a hand-edited or exchanged `timeline.jsonl` cannot hand
+the model a repro in the wrong order.
+
+**Where the steps stop.** The instructions state the boundary rather than leaving
+it to be inferred: the steps end at the **last cited evidence event at or before
+the finding's `t`**, and a cited evidence event *after* the finding's `t` belongs
+in `observed`, as part of what the participant did in response. On the sample,
+F-001's `t` is 22 s, so the steps end at `ev-003` (the first Save click at
+19.2 s) and `ev-004` (the second click at 24.1 s) is observed behaviour. A live
+run against a real host model found the unqualified phrasing ambiguous on exactly
+this point — the second click had no stated home — which is why the rule is
+written out.
 
 `-window` defaults to **10 seconds**, not `report`'s 2.5: `report`'s window
 joins an event to the utterance it accompanies, whereas a repro needs the lead-up
@@ -168,20 +196,57 @@ Structure, in order, mirroring `analyze.EmitRequest`:
 3. **Instructions** — one or more drafts per confirmed finding, in finding-id
    order; `steps` in time order, each one imperative action a developer can
    follow, naming the selector or route where the window names it, ending at the
-   moment the finding is anchored to; `expected` the behaviour the participant
-   expected, grounded in their utterances; `observed` what the system actually
-   did, grounded in the window's events and utterances; `title` one line naming
-   the defect.
-4. **Rubric body** — the field definitions and the hard constraints restated as
-   the rules ingest enforces (quote copied byte-for-byte from the finding's
-   `quote`; `severity` and `session` copied unchanged; `finding` naming the
-   finding the draft came from; `steps` non-empty).
+   last cited evidence event at or before the finding's `t` (a later cited event
+   belongs in `observed`); `expected` the behaviour the participant expected,
+   grounded in their utterances; `observed` what the system actually did,
+   grounded in the window's events and utterances; `title` one line naming the
+   defect. The instructions also license **one** opening orientation step derived
+   from the `route` on the window's first event, with every other step required to
+   correspond to an entry actually in the window — see "the orientation step"
+   below.
+4. **Rubric body** — the field definitions, how to read each finding record, and
+   the hard constraints restated as the rules ingest enforces (quote copied
+   byte-for-byte from the finding's `quote`; `severity` and `session` copied
+   unchanged; `finding` naming the finding the draft came from; `steps`
+   non-empty). Two fields of the record the model *reads* are defined there
+   because neither is a field it writes: `status` (see "the status field" below)
+   and `mode` (`A` is the application under test, `B` is reference capture of a
+   third-party app; only `A` is eligible, so every finding shown is `A`).
 5. **Session context** — manifest `app`, `participant`, and the ordered `tasks`.
 6. **Confirmed findings** — per eligible finding, in id order: a prose line
-   naming its id, `type`, `severity` and clock, then the finding's own JSON line
-   in a ```jsonl fence (so the `quote` bytes the model must copy are
-   unambiguous), then its event window as a ```jsonl fence of timeline entries in
-   time order.
+   naming its id, `type`, `severity`, clock, **and the date of the verdict that
+   confirmed it**, then the finding's own JSON line in a ```jsonl fence (so the
+   `quote` bytes the model must copy are unambiguous), then its event window as a
+   ```jsonl fence of timeline entries in time order.
+
+   **The status field.** The finding's record is shown *verbatim as stored*, so
+   its `status` reads `unverified` — the birth state every finding this tool
+   writes carries. Against a heading that says every finding below is confirmed,
+   and hard constraints that say an unverified finding is ineligible, that reads
+   as a self-contradiction; a live run against a real host model reported it as
+   one. Two repairs were available: substitute the effective status into the
+   rendered line, or leave the record alone and explain it. **The record is left
+   alone and explained**, because the model must copy `quote` and `severity` out
+   of that line byte-for-byte — rewriting one of its fields would make the record
+   the model is shown differ from the record ingest validates against, which is
+   the shown-vs-validated gap this package closes everywhere else
+   (`indexTimeline`'s SafeText reasoning). So the per-finding header carries
+   `confirmed by human verdict on <date>` (the date from the same
+   `EffectiveStatus` computation eligibility uses, sanitised through `SafeInline`,
+   and the clause degrades to `confirmed by human verdict` when the verdict
+   carries no renderable date), and the rubric states that `status` is the birth
+   state, that it is not the finding's current status, and that the verdict
+   records that confirmed these findings are not shown.
+
+   **The orientation step.** The worked example's first step ("Open #general…")
+   corresponds to no event in the sample window, so on its own it licensed an
+   invented step against the stance paragraph's "never invent a step" — the same
+   live run flagged this. Rather than weaken the example (every followable repro
+   has to say where it starts), the instructions state where that step may come
+   from: the `route` on the window's first event names where the participant
+   already is, **one** opening orientation step may be derived from it, and every
+   other step must correspond to an event or utterance that is actually in the
+   window.
 7. **Required output shape + worked example** —
 
    > Answer with a single JSON document: `{"rubric":"testimony-testdraft/v1","tests":[ … ]}`.
@@ -230,7 +295,7 @@ schema is closed (`DisallowUnknownFields`).
 | `observed` | string | yes | non-empty after `SafeText`+trim |
 | `rationale_quote` | string | yes | **equals** the source finding's `quote` (compared in `SafeText` form) |
 | `severity` | int | yes | **equals** the source finding's `severity` |
-| `status` | string | no | **ignored on input and forced to `"proposed"`** on ingest, whatever the JSON says |
+| `status` | string | no on input, always present on disk | **ignored on input and forced to `"proposed"`** on ingest, whatever the JSON says; the written record therefore always carries it, as `findings.jsonl`'s `status` does |
 
 The field is `finding`, not `finding_id`: the verdict record in `findings.jsonl`
 already names its referent `finding`, and the decision record below names its
@@ -279,6 +344,10 @@ and ingest refuses any restatement that disagrees.
 6. Commit through `session.CommitRecords` (below) with a guard that refuses to
    overwrite a `tests.jsonl` already holding any `kind:"decision"` line — the
    retained human record, protected exactly as `findings.jsonl`'s verdicts are.
+   `holdsDecisions(r io.Reader, path string) (bool, error)` mirrors
+   `analyze.holdsVerdicts` exactly, including its shape, and `commitDrafts` turns
+   a true into the refusal message so the `Guard func(io.Reader) error` seam stays
+   as narrow as the primitive declares it.
 7. Print `validated N test drafts → <path> (all proposed)`.
 
 An answer with an empty `tests` array (a bare `[]`, `{"tests":[]}`, or a
@@ -398,14 +467,17 @@ type Append struct {
     Verify func(current io.Reader) error // optional re-check of the file's contents, run under the lock
 }
 
-// AppendRecord appends a.Record as its own physical line: it opens Path under
-// the no-follow guard (O_APPEND|O_RDWR), takes an exclusive advisory lock,
-// pre-flights the record against MaxJSONLLine and the file against
-// MaxJSONLBytes, runs a.Verify over the current contents, frames the record
-// with a leading newline when the file does not already end in one, writes it,
-// truncates back to the pre-write length on a short write, and returns the
-// Close error so a record is never reported written when its bytes did not
-// reach disk.
+// AppendRecord appends a.Record as its own physical line: it pre-flights the
+// record against MaxJSONLLine *before* the open (an unwritable record is a fact
+// about the record alone, so the refusal must name it whether or not the file
+// exists yet — ordering it after the open reports a missing file, and its joined
+// path, in place of the limit the caller can act on), then opens Path under the
+// no-follow guard (O_APPEND|O_RDWR), takes an exclusive advisory lock,
+// pre-flights the file against MaxJSONLBytes, runs a.Verify over the current
+// contents, frames the record with a leading newline when the file does not
+// already end in one, writes it, truncates back to the pre-write length on a
+// short write, and returns the Close error so a record is never reported written
+// when its bytes did not reach disk.
 func AppendRecord(a Append) error
 
 // Commit is a whole-file replacement of a session JSONL file.
@@ -420,7 +492,12 @@ type Commit struct {
 // the whole set into one buffer before truncating, writes it as a single Write,
 // rolls the file back to empty on a short write (an empty JSONL file is
 // parseable and re-ingestable, so the failure state does not foreclose its own
-// repair), and returns the Close error.
+// repair), and returns the Close error. Commit carries no Label — a whole-file
+// replacement names no single record — so a write or Close failure is wrapped
+// with the file's base name (`write findings.jsonl: …`, `write tests.jsonl: …`)
+// rather than the caller's own phrasing. Callers encode their records with
+// json.Marshal, the same encoder their oversized-record pre-flight measures
+// with, so the bytes written are exactly the bytes that passed the check.
 func CommitRecords(c Commit) error
 ```
 
@@ -428,11 +505,14 @@ Callers after the extraction:
 
 - `review.AppendVerdict` → `session.AppendRecord` with
   `Label: "verdict for " + SafeText(v.Finding)`, `Kind: "verdict"`, and
-  `Verify` wrapping the existing `verifyTarget` logic. `review.writeVerdict` and
-  its `verdictFile` interface are deleted; their behaviour and their two size
+  `Verify` wrapping the existing `verifyTarget` logic (whose signature narrows
+  from `*os.File` to the `io.Reader` the primitive hands it). `review.writeVerdict`
+  and its `verdictFile` interface are deleted; their behaviour and their two size
   error messages move verbatim (the `Label`/`Kind` parameters and
   `filepath.Base(Path)` reproduce today's strings byte-for-byte, so review's
-  existing message assertions keep passing unchanged).
+  existing message assertions keep passing unchanged). The one string that does
+  change is the commit path's write/Close wrapper, from `write findings: …` to
+  `write findings.jsonl: …`; nothing asserts it.
 - `analyze.commitFindings`/`writeFindings` → `session.CommitRecords` with
   `Guard: holdsVerdicts` and its existing refusal message. The
   `findingsFile` interface is deleted.
@@ -484,10 +564,26 @@ participant `P1`). 2 of 3 drafts accepted.
 **Rationale (participant, [00:22]):** “I clicked save and nothing happened”
 ```
 
-Every inserted value goes through `session.SafeInline` — the one shared home for
-the escape set that `report.md` and the emitted request already use — so an
-attacker-authored draft cannot forge Markdown structure, an active link, or an
-image beacon in a document the operator pastes into their own repository. The
+Every inserted value goes through the one shared home for the escape set that
+`report.md` and the emitted request already use, so an attacker-authored draft
+cannot forge Markdown structure, an active link, or an image beacon in a document
+the operator pastes into their own repository. Which of its two forms applies
+depends on the context, exactly as in `report.md`: a value rendered as prose goes
+through `session.SafeInline`, while the four rendered **inside a code span**
+(`session`, `app`, `participant`, and the finding id) go through the
+backtick-stripping form `report.mdCode` uses. A backslash escape does not apply
+inside a code span — `SafeInline` would escape a backtick to `\`` and the
+backtick would still close the span, leaving the tail as active markup — so the
+span content has its backticks stripped instead. Ordinary input is byte-identical
+under either form.
+
+The Markdown block above shows the plan as a **viewer renders it**. In the source
+bytes, a step such as `Click the Save button ([data-testid=save-btn]).` is written
+`Click the Save button \(\[data-testid=save-btn\]\).` — `SafeInline` escapes the
+bracket and parenthesis triggers, which is what stops an `[x](http://…)` payload
+in a draft field from becoming a live link, and is what `report.md` already does
+to the identical text. The counts sentence is emitted as one physical line; it is
+wrapped above only to fit the page. The
 clock is rendered `[MM:SS]` from the *finding's* `t`, with a leading `-` for a
 negative time, matching `report`. Render writes nothing into the session
 directory unless `-out` names a path there; the artefact is a hand-off copy, so
@@ -505,28 +601,53 @@ Both refusals write nothing and exit 1 (a well-formed invocation whose work
 cannot be done), naming the counts so the operator can see *why* they are empty:
 
 ```
-testimony: no confirmed findings to draft tests from (5 findings: 0 confirmed, 2 unverified, 1 duplicate, 1 rejected); confirm one with `testimony review -session sessions/x` first
+testimony: no confirmed findings to draft tests from (5 findings: 0 confirmed, 2 unverified, 1 duplicate, 2 rejected); confirm one with `testimony review -session sessions/x` first
 testimony: no accepted test drafts to render (3 drafts: 0 accepted, 0 edited, 2 proposed, 1 rejected); accept one with `testimony review -session sessions/x -kind tests` first
 ```
 
 The first applies to emit **and** ingest (with no eligible finding there is
-nothing a draft could legally reference). The second keeps `-out FILE` from
-truncating an existing test plan into an empty document, which is the same
-reasoning behind `analyze -ingest`'s empty-answer refusal.
+nothing a draft could legally reference), and on ingest it fires *before a byte of
+the answer is read*: every draft would fail the same rule, so the operator should
+read the one fact that explains them rather than a wall of per-draft errors. The
+second keeps `-out FILE` from truncating an existing test plan into an empty
+document, which is the same reasoning behind `analyze -ingest`'s empty-answer
+refusal. Each wraps a package sentinel (`ErrNoConfirmedFindings`,
+`ErrNoAcceptedDrafts`) so a caller can tell a staged-empty session from a genuine
+failure; both map to exit 1, the status a well-formed invocation whose work cannot
+be done already takes.
+
+The counts are rendered with an unconditional plural noun, so a single-record
+session reads `1 findings` / `1 drafts`. That is deliberate: the strings above are
+the contract, and `analyze -ingest`'s own `validated N findings` has read the same
+way since itd-2. Pluralising here alone would make the two commands disagree.
 
 ### Package layout & session constants
 
-- **`internal/drafttests`** (new) — `Draft` and `Decision` types, `RubricVersion`,
-  `Load`/`ParseRecords`, `EffectiveStatus`, `SameIdentity`, `Window`,
-  `EmitRequest`, `Ingest`, `Render`, `Review` (the walk and the single-decision
-  path), `AppendDecision`, and the unexported `validate`/`oversizedDrafts`/
-  `holdsDecisions`. Imports `analyze`, `session`, `timeline`.
-- **`internal/review`** — gains the `-kind` dispatch (`Options.Kind`); its
-  findings path is unchanged except that `AppendVerdict` now calls
-  `session.AppendRecord`.
+- **`internal/drafttests`** (new) — `Draft`, `Decision`, `Edit` and `Status`
+  types, `RubricVersion`, `IsDraftID`, `ParseDecisionFlag`, `Load`/`ParseRecords`,
+  `EffectiveStatus`, `Edit.Apply`, `SameIdentity`, `Window`, `EmitRequest`,
+  `Ingest`, `Render`, `Review`/`ReviewOptions` (the walk and the single-decision
+  path), `ParseEdit`, `AppendDecision`, the loud-staging sentinels
+  `ErrNoConfirmedFindings`/`ErrNoAcceptedDrafts`, and the unexported
+  `validate`/`oversizedDrafts`/`holdsDecisions`/`commitDrafts`. Imports `analyze`,
+  `session`, `timeline`. `ReviewOptions` mirrors `review.Options` field for field
+  except that the replacement fields arrive as `EditIn io.Reader` rather than a
+  decoded object: the CLI opens `-edit FILE` (or stdin for `-`) through
+  `session.OpenFileNoFollowRead` exactly as it opens `-ingest`, and `ParseEdit`
+  decodes it, so the no-follow guard sits at the same layer for both paths.
+  `Status` carries the winning decision's `Edit`, which is how the render reaches
+  "the last `edited` decision's edit" without a second pass over the decisions.
+- **`internal/review`** — gains the `-kind` dispatch (`Options.Kind`, with
+  `Test`/`Decision`/`EditIn` alongside `Finding`/`Verdict`), the closed-set parser
+  `ParseKindFlag` and the `KindFindings`/`KindTests` constants, and the
+  cross-family flag refusals; `Run` delegates `-kind tests` to
+  `drafttests.Review`. Its findings path is otherwise unchanged except that
+  `AppendVerdict` now calls `session.AppendRecord`.
 - **`internal/analyze`** — `commitFindings` now calls `session.CommitRecords`;
   `maxAnswerBytes` moves to `session.MaxAnswerBytes` (16 MiB) beside
-  `MaxJSONLLine`/`MaxJSONLBytes`, where the shared caps already live.
+  `MaxJSONLLine`/`MaxJSONLBytes`, where the shared caps already live; and
+  `loadTimeline` is exported as `LoadTimeline` so `drafttests` can read the
+  timeline under the same refusals rather than duplicating them.
 - **`internal/session`** — gains `TestsFile = "tests.jsonl"`,
   `MaxAnswerBytes`, `Append`/`AppendRecord`, and `Commit`/`CommitRecords`.
 - **`internal/cli`** — the `draft-tests` case, `review`'s new flags, and the
@@ -559,9 +680,11 @@ event window, the expected and observed behaviour, and the participant's quote.*
   **required**, and ingest refuses a draft missing any of them or whose quote is
   not the finding's quote byte-for-byte.
 - *Tests:* `TestEmitCarriesConfirmedFindingsAndWindows`,
-  `TestWindowSpansEvidenceWidenedByWindow`, `TestIngestRequiresSteps`,
-  `TestIngestRequiresExpectedAndObserved`,
-  `TestIngestRejectsQuoteThatIsNotTheFindingsQuote`, and the round-trip golden.
+  `TestWindowSpansEvidenceWidenedByWindow`, and — as subtests of the one
+  rule-per-case table `TestIngestValidationFailures` —
+  `absent_steps`, `empty_steps`, `whitespace-only_step`, `empty_expected`,
+  `empty_observed` and `quote_off_by_one_byte`; plus the round-trip golden
+  (`TestRoundTripGolden`).
 - **Flagged, as itd-2's AC3 was:** the CLI guarantees that a draft *contains*
   steps and that the request it came from carried *only* the event window. It
   cannot verify that a given step was in fact derived from the window — `steps`
@@ -581,12 +704,12 @@ drafting step runs, then no test case is drafted for it.*
   hand-written or stale answer cannot smuggle one in. Effective status comes
   from `analyze.EffectiveStatus`, so a later verdict overriding an earlier one is
   honoured.
-- *Tests:* `TestEmitOmitsUnverifiedRejectedAndDuplicateFindings`,
-  `TestIngestRejectsDraftOfUnverifiedFinding`,
-  `TestIngestRejectsDraftOfRejectedFinding`,
-  `TestIngestRejectsDraftOfDuplicateFinding`,
-  `TestEligibilityHonoursLastVerdict` (confirmed-then-rejected excluded,
-  rejected-then-confirmed included), `TestEmitRefusesWithNoConfirmedFindings`.
+- *Tests:* `TestEmitOmitsUnverifiedRejectedAndDuplicateFindings`; the
+  `TestIngestValidationFailures` subtests `unverified_finding`,
+  `rejected_finding`, `duplicate_finding`, `mode_B_finding` and
+  `unknown_finding`; `TestEligibilityHonoursLastVerdict`
+  (confirmed-then-rejected excluded, rejected-then-confirmed included); and
+  `TestEmitRefusesWithNoConfirmedFindings`.
 
 **AC3** — *Given a drafted test case, when a human accepts or rejects it, then
 the decision is retained and the draft remains linked to its source finding and
@@ -600,10 +723,10 @@ session.*
   `AppendDecision` re-checks the target under its lock.
 - *Tests:* `TestDecisionIsAppendedAndDraftLinesUnchanged` (byte-for-byte),
   `TestEditCannotNameFindingOrSessionOrSeverityOrQuoteOrID`,
-  `TestEffectiveStatusLastDecisionWins`,
-  `TestIngestRejectsSessionMismatch`,
+  `TestEffectiveStatusLastDecisionWins`, the `TestIngestValidationFailures`
+  subtest `session_mismatch`,
   `TestAppendDecisionRefusesWhenDraftChangedUnderTheLock`, and the interactive
-  walk tests for `a`/`e`/`r`.
+  walk tests for `a`/`e`/`r` (`TestInteractiveWalk`).
 
 **Scope bullet 4** — *Emitting the draft in a form the docs-as-code manual test
 records can hold.* Met by `draft-tests -render` (one Markdown test-case block per
@@ -794,8 +917,12 @@ edit another, render the plan, and read it; fix what it exposes before the PR.
   5 render the test plan and where to put it. Closes with pointers to the two
   reference pages.
 - `docs/README.md` — the new how-to added to the How-to guides line.
-- `README.md` — "Status and roadmap": `draft-tests` moved into "working today",
-  and the regression-test bullet out of "Coming next".
+- `docs/reference/cli.md` also updates its "Session directory inference" section
+  where it enumerates the commands that infer (five → six), since `draft-tests`
+  adopts `resolveSession` like the rest of the pipeline.
+- `README.md` — "Status and roadmap": `draft-tests` moved into "working today".
+  ("Coming next" carries no regression-test bullet to remove — the three bullets
+  there are codebase mapping, reference capture, and the macOS app.)
 
 **Durable record (`.abcd/development/`, not user-facing).**
 

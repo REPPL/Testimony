@@ -545,22 +545,30 @@ func TestEditRoundTripsThroughJSON(t *testing.T) {
 // against the limit rather than silently truncated at 32 with the rest of the
 // operator's typing consumed as the next prompt's answer.
 func TestInteractiveEditRefusesTooManySteps(t *testing.T) {
-	dir := ingestThree(t)
-	lines := []string{"e", ""} // edit, then a blank title (keep it)
-	for i := 0; i <= maxSteps; i++ {
-		lines = append(lines, fmt.Sprintf("Step %d.", i+1))
-	}
-	lines = append(lines, "", "", "") // end the steps, then blank expected and observed
-	var out bytes.Buffer
-	if err := Review(ReviewOptions{Dir: dir, In: strings.NewReader(strings.Join(lines, "\n") + "\n"), Out: &out, IsTTY: true, Today: "2026-09-12"}); err != nil {
-		t.Fatalf("Review: %v", err)
-	}
-	want := fmt.Sprintf("steps lists %d entries, exceeding the limit of %d", maxSteps+1, maxSteps)
-	if !strings.Contains(out.String(), want) {
-		t.Fatalf("expected the over-long steps refusal (%q):\n%s", want, out.String())
-	}
-	if _, decisions, _ := Load(dir); len(decisions) != 0 {
-		t.Fatal("a refused edit recorded a decision")
+	// The count in the message is what the operator typed, not where the slice
+	// stopped growing: the prompt reads to the terminating blank line whatever the
+	// count but holds the slice one past the cap, so reporting len(steps) told
+	// someone who typed forty steps that they had listed 33.
+	for _, typed := range []int{maxSteps + 1, 40} {
+		t.Run(fmt.Sprintf("%d steps", typed), func(t *testing.T) {
+			dir := ingestThree(t)
+			lines := []string{"e", ""} // edit, then a blank title (keep it)
+			for i := 0; i < typed; i++ {
+				lines = append(lines, fmt.Sprintf("Step %d.", i+1))
+			}
+			lines = append(lines, "", "", "") // end the steps, then blank expected and observed
+			var out bytes.Buffer
+			if err := Review(ReviewOptions{Dir: dir, In: strings.NewReader(strings.Join(lines, "\n") + "\n"), Out: &out, IsTTY: true, Today: "2026-09-12"}); err != nil {
+				t.Fatalf("Review: %v", err)
+			}
+			want := fmt.Sprintf("steps lists %d entries, exceeding the limit of %d", typed, maxSteps)
+			if !strings.Contains(out.String(), want) {
+				t.Fatalf("expected the over-long steps refusal (%q):\n%s", want, out.String())
+			}
+			if _, decisions, _ := Load(dir); len(decisions) != 0 {
+				t.Fatal("a refused edit recorded a decision")
+			}
+		})
 	}
 }
 

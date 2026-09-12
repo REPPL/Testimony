@@ -391,9 +391,10 @@ func clock(sec float64) string {
 // ErrNoConfirmedFindings marks the refusal that stages an empty drafting step
 // loudly: a session whose findings are all unverified, rejected, or duplicates
 // has nothing a draft could legally reference, so emit and ingest both refuse,
-// name the finding count by status, and write nothing. It is a sentinel so the
-// CLI can tell a well-formed invocation whose work cannot be done from a genuine
-// failure.
+// name the finding count by status, and write nothing. It is a sentinel so a
+// caller can tell a well-formed invocation whose work cannot be done from a
+// genuine failure; the CLI maps both to exit 1, the status such a refusal
+// already takes, and does not branch on it.
 var ErrNoConfirmedFindings = errors.New("no confirmed findings to draft tests from")
 
 // ErrNoAcceptedDrafts is its render-side twin: a plan with no accepted or edited

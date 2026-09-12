@@ -231,7 +231,7 @@ func TestRoundTripGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmitRequest: %v", err)
 	}
-	if !strings.Contains(req, "Finding F-001 — bug, severity 3, at [00:22]:") {
+	if !strings.Contains(req, "Finding F-001 — bug, severity 3, at [00:22], confirmed by human verdict on 2026-07-17:") {
 		t.Fatalf("the emitted request does not carry F-001:\n%s", req)
 	}
 

@@ -4,6 +4,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/REPPL/Testimony/internal/analyze"
 	"github.com/REPPL/Testimony/internal/demo"
+	"github.com/REPPL/Testimony/internal/drafttests"
 	"github.com/REPPL/Testimony/internal/record"
 	"github.com/REPPL/Testimony/internal/report"
 	"github.com/REPPL/Testimony/internal/review"
@@ -36,15 +38,20 @@ Usage:
   testimony report      [-session DIR] [-window 2.5]    render timeline.jsonl as a Markdown report
   testimony analyze     [-session DIR] [-out FILE]      emit the analysis request (rubric + timeline) on stdout or to FILE
   testimony analyze     [-session DIR] -ingest FILE     validate answer JSON (FILE or "-") → findings.jsonl (all findings unverified)
-  testimony review      [-session DIR]                  interactively record verdicts on unverified findings (stdin must be a character device)
+  testimony draft-tests [-session DIR] [-window 10] [-out FILE]   emit the regression-test drafting request (rubric + confirmed findings + event windows)
+  testimony draft-tests [-session DIR] -ingest FILE     validate answer JSON (FILE or "-") → tests.jsonl (all drafts proposed)
+  testimony draft-tests [-session DIR] -render [-out FILE]        render the accepted drafts as Markdown test cases
+  testimony review      [-session DIR] [-kind findings|tests]     interactively record verdicts on unverified findings, or decisions on proposed test drafts (stdin must be a character device)
   testimony review      [-session DIR] -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
+  testimony review      [-session DIR] -kind tests -test T-NNN -decision accepted|rejected
+  testimony review      [-session DIR] -kind tests -test T-NNN -decision edited -edit FILE
   testimony version
   testimony help
 
 A session directory is described in docs/reference/session-directory.md.
-Omitting -session on transcribe, merge, report, analyze, or review uses the
-current directory when it holds a Testimony session manifest.json (one with a
-session field), and names the inferred session on stderr.
+Omitting -session on transcribe, merge, report, analyze, draft-tests, or review
+uses the current directory when it holds a Testimony session manifest.json (one
+with a session field), and names the inferred session on stderr.
 `
 
 // Run executes the CLI and returns a process exit code.
@@ -394,23 +401,156 @@ func Run(args []string) int {
 		fmt.Print(prompt)
 		return 0
 
+	case "draft-tests":
+		fs := flag.NewFlagSet("draft-tests", flag.ExitOnError)
+		dir := fs.String("session", "", "session directory")
+		window := fs.Float64("window", 10, "emit mode: event-window half-width around a finding's evidence, seconds")
+		out := fs.String("out", "", "emit/render mode: write to FILE instead of stdout")
+		ingest := fs.String("ingest", "", "validate answer JSON at FILE (or \"-\" for stdin) into tests.jsonl")
+		render := fs.Bool("render", false, "render the accepted drafts as Markdown test cases")
+		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
+		outSet, ingestSet, windowSet := false, false, false
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "out":
+				outSet = true
+			case "ingest":
+				ingestSet = true
+			case "window":
+				windowSet = true
+			}
+		})
+		// An explicitly-empty -ingest or -out is a wrong invocation (an unset shell
+		// variable spliced into the flag, say), not a valid path — analyze's
+		// identical guard above. Left unchecked, an empty -ingest falls through the
+		// mode check below into emit at exit 0 (the answer is never validated), and
+		// an empty -out falls through to stdout at exit 0 instead of writing a file.
+		if ingestSet && *ingest == "" {
+			return usageErr(fmt.Errorf("draft-tests: -ingest must not be empty"))
+		}
+		if outSet && *out == "" {
+			return usageErr(fmt.Errorf("draft-tests: -out must not be empty"))
+		}
+		// draft-tests runs in exactly one mode, extending analyze's emit-or-ingest
+		// rule by one: emit (neither), ingest (-ingest), or render (-render).
+		// -ingest writes tests.jsonl and produces no document, so neither -out nor
+		// -render has any meaning alongside it; a caller who combined them meant one
+		// of the two modes and must be told which they cannot have.
+		if *ingest != "" {
+			if *out != "" {
+				return usageErr(fmt.Errorf("draft-tests: -out and -ingest cannot be combined"))
+			}
+			if *render {
+				return usageErr(fmt.Errorf("draft-tests: -render and -ingest cannot be combined"))
+			}
+		}
+		// -window sizes the event window emit puts in the request; ingest validates
+		// against the findings and render reads only what is already on disk, so in
+		// neither mode does it do anything. Silently ignored, it lets a caller who
+		// meant to widen the window believe they had — refusing names the mode they
+		// are actually in, the same class as the -out/-ingest combination above.
+		if windowSet && (*ingest != "" || *render) {
+			return usageErr(fmt.Errorf("draft-tests: -window applies to the emit mode only"))
+		}
+		// A non-finite window is not a window at all, and Window has no way to
+		// notice: every comparison against NaN is false, so a NaN window emits an
+		// empty event window for every finding — a request whose steps cannot be
+		// grounded in anything — while +Inf emits the whole timeline as every
+		// finding's window. Either way the drafting request misstates its own
+		// evidence and the command exits 0. A negative window is legitimate (it
+		// narrows the window), so only finiteness is required — the report -window
+		// precedent.
+		if math.IsNaN(*window) || math.IsInf(*window, 0) {
+			return usageErr(fmt.Errorf("draft-tests: -window must be a finite number of seconds, got %v", *window))
+		}
+		// Resolved last of the invocation checks (see report above): a run refused
+		// for another flag must not first announce an inferred session.
+		sess, err := resolveSession(fs, *dir)
+		if err != nil {
+			return usageErr(err)
+		}
+		if *ingest != "" {
+			in := os.Stdin
+			if *ingest != "-" {
+				// Read the answer through the no-follow guard, like analyze -ingest: the
+				// operator naturally saves the model's answer beside the session, and a
+				// received session can ship a FIFO at that name (plain os.Open blocks in
+				// open(2) for ever) or a symlink out of the directory.
+				f, err := session.OpenFileNoFollowRead(*ingest)
+				if err != nil {
+					return fail(err)
+				}
+				defer f.Close()
+				in = f
+			}
+			// Both loud-staging refusals (no confirmed finding to draft from, no
+			// accepted draft to render) are well-formed invocations whose work cannot
+			// be done, so they take the runtime status here rather than the usage one.
+			drafts, err := drafttests.Ingest(sess, in)
+			if err != nil {
+				return fail(err)
+			}
+			fmt.Printf("validated %d test drafts → %s (all proposed)\n",
+				len(drafts), filepath.Join(sess, session.TestsFile))
+			return 0
+		}
+		var doc string
+		if *render {
+			doc, err = drafttests.Render(sess)
+		} else {
+			doc, err = drafttests.EmitRequest(sess, *window)
+		}
+		if err != nil {
+			return fail(err)
+		}
+		if *out != "" {
+			// Write through the no-follow guard, matching analyze -out: the operator
+			// naturally directs -out at a path beside the session, and a received
+			// session can ship a symlink there that plain os.WriteFile would follow,
+			// truncating an arbitrary operator-writable file outside the session.
+			if err := session.WriteFileNoFollow(*out, []byte(doc), 0o644); err != nil {
+				return fail(err)
+			}
+			fmt.Printf("wrote %s\n", *out)
+			return 0
+		}
+		fmt.Print(doc)
+		return 0
+
 	case "review":
 		fs := flag.NewFlagSet("review", flag.ExitOnError)
 		dir := fs.String("session", "", "session directory")
+		kind := fs.String("kind", review.KindFindings, "which record family to review: findings | tests")
 		finding := fs.String("finding", "", "non-interactive: the finding to judge (F-NNN)")
 		verdict := fs.String("verdict", "", "non-interactive: confirmed | rejected | duplicate-of-F-NNN")
+		test := fs.String("test", "", "non-interactive (-kind tests): the test draft to decide (T-NNN)")
+		decision := fs.String("decision", "", "non-interactive (-kind tests): accepted | edited | rejected")
+		edit := fs.String("edit", "", "with -decision edited: the replacement fields as a JSON object at FILE (or \"-\" for stdin)")
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
 		}
 		f, v := strings.TrimSpace(*finding), strings.TrimSpace(*verdict)
+		tst, dec := strings.TrimSpace(*test), strings.TrimSpace(*decision)
 		findingSet, verdictSet := false, false
+		kindSet, testSet, decisionSet, editSet := false, false, false, false
 		fs.Visit(func(fl *flag.Flag) {
 			switch fl.Name {
 			case "finding":
 				findingSet = true
 			case "verdict":
 				verdictSet = true
+			case "kind":
+				kindSet = true
+			case "test":
+				testSet = true
+			case "decision":
+				decisionSet = true
+			case "edit":
+				editSet = true
 			}
 		})
 		// An explicitly-empty -finding or -verdict is a wrong invocation (an
@@ -424,6 +564,69 @@ func Run(args []string) int {
 		}
 		if verdictSet && v == "" {
 			return usageErr(fmt.Errorf("review: -verdict must not be empty"))
+		}
+		// The tests side gets the identical unset-shell-variable guard on each of its
+		// own flags: set-but-empty is indistinguishable from omitted, so it would
+		// otherwise fall through to the interactive walk at exit 0 rather than refuse
+		// the caller's mistake. -edit is a path, so it is not trimmed (matching
+		// -ingest/-out); -kind, -test and -decision are identifiers and are.
+		if kindSet && strings.TrimSpace(*kind) == "" {
+			return usageErr(fmt.Errorf("review: -kind must not be empty"))
+		}
+		if testSet && tst == "" {
+			return usageErr(fmt.Errorf("review: -test must not be empty"))
+		}
+		if decisionSet && dec == "" {
+			return usageErr(fmt.Errorf("review: -decision must not be empty"))
+		}
+		if editSet && *edit == "" {
+			return usageErr(fmt.Errorf("review: -edit must not be empty"))
+		}
+		// The record family is a closed set, so an unknown one is a wrong invocation
+		// rather than a silently-ignored value that would run the findings walk under
+		// a name the caller did not mean.
+		recordKind, err := review.ParseKindFlag(strings.TrimSpace(*kind))
+		if err != nil {
+			return usageErr(fmt.Errorf("review: %w", err))
+		}
+		// A flag belonging to the other record family is a wrong invocation, not a
+		// silently ignored one: a caller who typed -verdict against -kind tests meant
+		// a decision this walk cannot record, and recording nothing while exiting 0
+		// would let a script believe it landed. review.Run refuses the same pairings,
+		// so the rule holds for any caller; refusing here gives it the usage status
+		// and does so before the session is resolved or any file is read.
+		if recordKind == review.KindTests {
+			if f != "" || v != "" {
+				return usageErr(fmt.Errorf("review: -finding and -verdict apply to -kind findings, not -kind tests"))
+			}
+		} else if tst != "" || dec != "" || *edit != "" {
+			return usageErr(fmt.Errorf("review: -test, -decision and -edit apply to -kind tests, not -kind findings"))
+		}
+		// The -test/-decision pairing, the draft id's syntax, the decision enum, and
+		// -edit's pairing are all invocation facts, so they are refused here at the
+		// usage status rather than from inside the package after the drafts load.
+		if tst != "" && dec == "" {
+			return usageErr(fmt.Errorf("review: -decision is required with -test"))
+		}
+		if dec != "" && tst == "" {
+			return usageErr(fmt.Errorf("review: -test is required with -decision"))
+		}
+		if tst != "" && !drafttests.IsDraftID(tst) {
+			return usageErr(fmt.Errorf("review: invalid -test %q (want T-NNN)", tst))
+		}
+		if dec != "" {
+			if _, err := drafttests.ParseDecisionFlag(dec); err != nil {
+				return usageErr(fmt.Errorf("review: %w", err))
+			}
+		}
+		// An "edited" decision with no replacement fields is not representable, and
+		// an -edit alongside any other decision would be silently discarded, so each
+		// half of the pairing is refused from the flags alone.
+		if dec == "edited" && *edit == "" {
+			return usageErr(fmt.Errorf("review: -edit is required with -decision edited"))
+		}
+		if *edit != "" && dec != "edited" {
+			return usageErr(fmt.Errorf("review: -edit applies only to -decision edited"))
 		}
 		// The -finding/-verdict pairing and the verdict's syntax are invocation
 		// facts, so they are refused here at the usage status — reported from
@@ -461,14 +664,34 @@ func Run(args []string) int {
 		if err != nil {
 			return usageErr(err)
 		}
+		// Read the replacement fields through the no-follow guard, like every other
+		// operator-named path on a session surface: the edit is naturally saved beside
+		// the session, and a received session can ship a FIFO or a symlink at that name.
+		var editIn io.Reader
+		if *edit != "" {
+			if *edit == "-" {
+				editIn = os.Stdin
+			} else {
+				ef, err := session.OpenFileNoFollowRead(*edit)
+				if err != nil {
+					return fail(err)
+				}
+				defer ef.Close()
+				editIn = ef
+			}
+		}
 		if err := review.Run(review.Options{
-			Dir:     sess,
-			Finding: f,
-			Verdict: v,
-			In:      os.Stdin,
-			Out:     os.Stdout,
-			IsTTY:   isCharDevice(os.Stdin),
-			Today:   time.Now().Format("2006-01-02"),
+			Dir:      sess,
+			Kind:     recordKind,
+			Finding:  f,
+			Verdict:  v,
+			Test:     tst,
+			Decision: dec,
+			EditIn:   editIn,
+			In:       os.Stdin,
+			Out:      os.Stdout,
+			IsTTY:    isCharDevice(os.Stdin),
+			Today:    time.Now().Format("2006-01-02"),
 		}); err != nil {
 			return fail(err)
 		}
@@ -511,8 +734,8 @@ func rejectArgs(fs *flag.FlagSet) error {
 // resolveSession returns the session directory a pipeline command operates on:
 // the explicit -session flag when it is given, otherwise the current directory
 // when that directory itself holds a manifest.json. It is the single resolution
-// point for transcribe, merge, report, analyze, and review, so the five commands
-// cannot drift in what they accept.
+// point for transcribe, merge, report, analyze, draft-tests, and review, so the
+// six commands cannot drift in what they accept.
 //
 // Inference covers the exact current directory only — never a parent, the way
 // git searches upward for .git — because a command that operated on an ancestor

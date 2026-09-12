@@ -40,7 +40,10 @@ break an existing invocation is called out in the entry that records it.
   write). `analyze -ingest` and `testimony review` write through them with no
   change in behaviour: the two size refusals and the verdict-overwrite guard are
   byte-for-byte the messages they always were, and the drafting layer shares the
-  primitives rather than carrying a second copy of a subtle write path.
+  primitives rather than carrying a second copy of a subtle write path. One
+  message does change — a failure while writing `findings.jsonl` is now prefixed
+  `write findings.jsonl:` rather than `write findings:`, so every failure on that
+  path names the file the same way.
 - `transcribe` prints an elapsed-time status line every 5 seconds while the
   ASR engine is still running, instead of staying silent between the offset
   line and completion — a CPU-only `whisperx`/`whisper-cli` run can take

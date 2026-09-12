@@ -147,7 +147,7 @@ func commitDrafts(dir string, drafts []Draft) error {
 	for _, d := range drafts {
 		b, err := json.Marshal(d)
 		if err != nil {
-			return fmt.Errorf("write test drafts: %w", err)
+			return fmt.Errorf("write %s: %w", session.TestsFile, err)
 		}
 		records = append(records, b)
 	}

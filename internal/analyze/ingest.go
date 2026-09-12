@@ -169,7 +169,7 @@ func commitFindings(dir string, findings []Finding) error {
 	for _, f := range findings {
 		b, err := json.Marshal(f)
 		if err != nil {
-			return fmt.Errorf("write findings: %w", err)
+			return fmt.Errorf("write %s: %w", session.FindingsFile, err)
 		}
 		records = append(records, b)
 	}

@@ -311,6 +311,11 @@ func promptEdit(w io.Writer, r *bufio.Reader, d Draft) (*Edit, error) {
 
 	fmt.Fprintln(w, "  steps (one per line, blank line ends; a blank first line keeps them):")
 	var steps []string
+	// typed counts every step the operator actually entered; steps stops growing
+	// one past the cap. The two differ precisely when the input is over-long, and
+	// the refusal below reports typed — reporting len(steps) would say "33
+	// entries" to someone who typed forty, naming a number they never chose.
+	typed := 0
 	for {
 		fmt.Fprint(w, "    ")
 		line, lerr := readLine(r)
@@ -321,13 +326,19 @@ func promptEdit(w io.Writer, r *bufio.Reader, d Draft) (*Edit, error) {
 		if s == "" {
 			break
 		}
-		// Read to the terminating blank line whatever the count, but stop growing
-		// one past the cap: the overflow is then reported by checkEdit, naming the
-		// limit, rather than silently truncated at 32 with the rest of the
-		// operator's typing left to be consumed as the next prompt's answer.
+		typed++
+		// Read to the terminating blank line whatever the count, so the rest of the
+		// operator's typing is never left behind to be consumed as the next
+		// prompt's answer, but hold the slice one past the cap so an absurd paste
+		// cannot grow it without bound.
 		if len(steps) <= maxSteps {
 			steps = append(steps, s)
 		}
+	}
+	// Checked here rather than left to checkEdit, which can only see the truncated
+	// slice. The message is checkEdit's, so both paths refuse in one voice.
+	if typed > maxSteps {
+		return nil, fmt.Errorf("edit: steps lists %d entries, exceeding the limit of %d", typed, maxSteps)
 	}
 	if len(steps) > 0 {
 		e.Steps = &steps
