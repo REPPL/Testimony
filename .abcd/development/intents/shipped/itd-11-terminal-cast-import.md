@@ -83,8 +83,131 @@ Alternatives considered and set aside: plain `script(1)` is universally availabl
 
 ## Audit Notes
 
-_Empty. Populated by intent-fidelity-reviewer when intent moves to shipped/._
+<!-- abcd-review: INGESTED receipt=rcp-fcf0bc47445c -->
+Fidelity review — receipt rcp-fcf0bc47445c (verifier abcd:intent-auditor claude-opus-5[1m]).
 
+Provenance: abcd:intent-auditor@claude-opus-5[1m] · rubric_hash sha256:43133dfce85f90e6462ffcc449daa41b27c8f4fcc1975710222a5703d3d57946 · prompt_hash sha256:17b9a757f3fcc8c565c184165fadbdb48810c4c4869ddde98b9a683694b87fdb
+Input attestations: diff:origin/main..working tree (4e81f718ac5db206ebc4df960a18044331d0396c..4c3f8433e7274010ee305a4b6571e1a18df90236 plus the uncommitted working tree)@sha256:e84082ba9ba36bd43bc91d39d3a02f344c807466ab1c1a3ff049c896c1745c78; review-request:.abcd/.work.local/reviews/rcp-fcf0bc47445c.request.md@sha256:43133dfce85f90e6462ffcc449daa41b27c8f4fcc1975710222a5703d3d57946; intent:.abcd/development/intents/shipped/itd-11-terminal-cast-import.md@sha256:17b9a757f3fcc8c565c184165fadbdb48810c4c4869ddde98b9a683694b87fdb; note:.abcd/.work.local/reviews/rcp-fcf0bc47445c.request.md:1@-; gates:go.mod:1@-;
+
+Acceptance rollup: MET 7 · MET_WITH_CONCERNS 1 · NOT_MET 0 · INCONCLUSIVE 0
+
+Per-criterion verdicts:
+- ac-1 — MET: A v2 cast plus a two-utterance transcript merges into one session-relative clock: TestImportThenMergeInterleaves asserts the exact interleaved entry order and times (-2 event, -1.5 speech, -1.48 event, …) and the records carry only epoch-ms t derived from the same manifest t0 through recordTime, with no per-source offset anywhere in timeline.jsonl.
+  evidence: internal/cast/cast_test.go:962
+  evidence: internal/cast/coalesce.go:189
+  evidence: internal/cast/cast.go:274
+- ac-2 — MET: The v2/v3 difference is confined to one accumulator in parseEvent (v3 adds each interval to a running float64 sum), and TestV2AndV3Agree asserts the two fixtures describing the same recording produce a byte-identical interactions.jsonl, while TestImportThenMergeInterleaves runs the identical golden entry table over both fixtures; the operator states nothing about the format, since -cast carries no format flag.
+  evidence: internal/cast/scan.go:233
+  evidence: internal/cast/cast_test.go:210
+  evidence: internal/cast/testdata/v3.cast:1
+- ac-3 — MET: parseHeader refuses any version other than 2 or 3 naming both the file and the version as written, the refusal fires in scan step 3 before any of Run's write steps, and TestUnsupportedVersionRefuses (versions 1, "2", absent) plus TestVersion4FixtureRefuses each assert the message names the file and that assertSessionUnchanged holds a full-directory hash snapshot.
+  evidence: internal/cast/scan.go:186
+  evidence: internal/cast/cast_test.go:255
+  evidence: internal/cast/cast_test.go:246
+- ac-4 — MET: TestReportRendersTerminalEvents imports, merges and renders, asserting the utterance line at [-00:02] is accompanied by `- [-00:02] terminal\_output` and `[00:00] terminal\_output` bullets carrying the command text, and internal/report has an empty diff against origin/main, so the rendering path is the existing eventLine unchanged.
+  evidence: internal/cast/cast_test.go:993
+  evidence: internal/report/report.go:1
+  evidence: .github/workflows/ci.yml:196
+- ac-5 — MET: internal/timeline, internal/report, internal/analyze and internal/review are all absent from the delivered diffstat, the records carry only the already-documented t/kind/text fields (no new src value, no new flag), and every record is put through the exported timeline.CheckInteraction before it is written so import cannot persist anything merge would refuse.
+  evidence: internal/cast/cast.go:288
+  evidence: internal/cast/testdata/golden.interactions.jsonl:2
+  evidence: internal/timeline/timeline.go:1
+- ac-6 — MET: TestEarlyStartedCastGoesNegative sets the header timestamp 30 s before t0 and asserts merged entry times of -30 and 0 plus `[-00:30]` in report.Render's output; the record's t stays a positive epoch-ms value (t0 + offsetMS + ms) so timeline.CheckInteraction's positivity rule is satisfied and report.clock signs it exactly as it signs an early-started audio utterance.
+  evidence: internal/cast/cast_test.go:1035
+  evidence: internal/cast/cast_test.go:1041
+  evidence: .github/workflows/ci.yml:197
+- ac-7 — MET_WITH_CONCERNS: A 6 MiB output event does split: coalescer.add closes the record when the next rune would breach a per-record encoded budget and TestOversizedEventSplits asserts more than one record, every wrapped timeline entry inside session.MaxJSONLLine, a successful Merge, and that concatenating the records' text reproduces the event's data exactly (utf8.ValidString per record in the coalescer unit) — but the concern is that 'every byte preserved' is honoured at rune granularity over the string encoding/json decoded, not over the cast's raw bytes: invalid UTF-8 becomes U+FFFD in the decoder before the importer sees it, and the byte-exact artefact is the archived terminal.cast (TestCastArchivedVerbatim). The spec records this as the one place it deliberately narrows a criterion.
+  evidence: internal/cast/coalesce.go:94
+  evidence: internal/cast/cast_test.go:816
+  evidence: internal/cast/coalesce_test.go:210
+  evidence: .abcd/development/specs/closed/spc-2609120417486971-terminal-cast-import.md:841
+- ac-8 — MET: internal/record is absent from the delivered diffstat entirely — no flag, no recorder, no subprocess, no signal path touched — so Ctrl+C finalises a session exactly as before, and TestUsageListsImport asserts the usage text offers no -terminal flag anywhere while naming the new hand-off verb.
+  evidence: internal/cli/cli_test.go:895
+  evidence: internal/record/record.go:1
+  evidence: internal/cli/cli.go:36
+
+Gap audit:
+- honoured:
+  - An import step in transcribe -audio's mould: a session directory plus an asciicast file, normalised into the session's interaction stream, with the raw .cast kept as an archival artefact alongside events.rrweb.jsonl
+    evidence: internal/cast/cast.go:61
+    evidence: internal/session/session.go:55
+    evidence: docs/reference/session-directory.md:103
+  - Both asciicast v2 and v3 accepted and distinguished by the header's version field; any other version refused by name
+    evidence: internal/cast/scan.go:221
+    evidence: internal/cast/scan.go:186
+  - Clock anchoring from the header timestamp, an explicit -offset override, and a printed offset-provenance line carrying the whole-second quantisation caveat
+    evidence: internal/cast/cast.go:137
+    evidence: internal/cli/cli_test.go:797
+  - Output events larger than a JSONL line split across consecutive records at safe boundaries, never truncated
+    evidence: internal/cast/coalesce.go:178
+    evidence: internal/cast/cast_test.go:800
+  - Input (i) events dropped at import and never normalised into the interaction stream, with the drop counted and printed
+    evidence: internal/cast/cast.go:122
+    evidence: internal/cast/cast.go:319
+    evidence: .github/workflows/ci.yml:187
+  - Documenting the terminal path: the archival cast in the session-directory reference, a two-terminal how-to, and guidance-only asciinema install pointers
+    evidence: docs/how-to/record-a-terminal-session.md:10
+    evidence: docs/how-to/record-a-terminal-session.md:30
+    evidence: docs/reference/session-directory.md:12
+  - A privacy warning in the terminal how-to: review or redact the session before running analyze, and record with input capture off
+    evidence: docs/how-to/record-a-terminal-session.md:81
+    evidence: docs/how-to/record-a-terminal-session.md:65
+  - merge, report, analyze and review unchanged — the timeline schema learns no new source type
+    evidence: internal/cast/testdata/golden.interactions.jsonl:1
+    evidence: internal/timeline/timeline.go:1
+  - record wraps, spawns or supervises no terminal recorder — no -terminal flag, no pty, no change to how a session ends (the intent's fence)
+    evidence: internal/record/record.go:1
+    evidence: internal/cli/cli_test.go:895
+  - 'One extra command afterwards' — the hand-off is a single peer verb the operator runs after the fact, with an idempotent re-run
+    evidence: internal/cli/cli.go:317
+    evidence: internal/cli/cli_test.go:841
+    evidence: .github/workflows/ci.yml:190
+- diverged:
+  - 'Every byte preserved' on an oversized split: delivered as rune-exact preservation of the string encoding/json decoded, with byte-exactness held by the archived terminal.cast instead
+    evidence: internal/cast/cast_test.go:816
+    evidence: internal/cast/cast_test.go:653
+    evidence: .abcd/development/specs/closed/spc-2609120417486971-terminal-cast-import.md:836
+  - The unsupported-version refusal was specified as `asciicast version %d`; delivered as the JSON literal (`version "2"`), neutralised and clipped, so a non-integer version is named as written rather than as a decode failure
+    evidence: internal/cast/scan.go:186
+    evidence: .abcd/development/specs/closed/spc-2609120417486971-terminal-cast-import.md:239
+  - A header `timestamp` field present but not an integer is refused with -offset guidance rather than treated as the absent case the intent's scope condition describes
+    evidence: internal/cast/scan.go:192
+- missing:
+  - The live two-terminal validation the spec names as part of done for the implementing change — a real record + asciinema session on both the 2.x and 3.x CLI lines, against which the 250 ms gap and 1 s span constants were to be tuned — leaves no artefact in the delivered change (no note in DECISIONS.md, CONTEXT.md, or the CI smoke, which is hermetic and runs no recorder)
+    evidence: .abcd/development/specs/closed/spc-2609120417486971-terminal-cast-import.md:1036
+    evidence: .abcd/work/DECISIONS.md:1620
+
+Scope-condition dispositions:
+- cond-2609120432406223 — survived: The importer accepts exactly v2 and v3 as the header declares and refuses every other version by name before anything is written, so the claim covers the two formats in the wild and nothing else.
+  evidence: internal/cast/scan.go:180
+  evidence: internal/cast/testdata/bad-version.cast:1
+- cond-2609120432405024 — narrowed: An absent (or null) header timestamp does default to offset 0 with the provenance printed, and -offset always wins — but a timestamp that is present and unusable is refused rather than defaulted, so the offset-0 fallback covers less ground than the condition states.
+  narrowing: The 'placed at offset 0' fallback holds only when the header timestamp is absent or JSON null; a present but non-positive timestamp (internal/cast/cast.go:263) or a present non-integer one (internal/cast/scan.go:192) refuses the run with -offset guidance instead of assuming the recorder started at t0.
+  evidence: internal/cast/cast.go:255
+  evidence: internal/cast/cast.go:263
+  evidence: internal/cast/testdata/v3-nots.cast:1
+- cond-2609120432402714 — survived: The derived anchor is integer arithmetic over a whole-second header field, and the ±1 s bound is printed to the operator on every derived run rather than only documented.
+  evidence: internal/cast/cast.go:274
+  evidence: internal/cli/cli_test.go:797
+- cond-2609120432402423 — survived: Run resolves t0 through session.Manifest.T0 before any other work and refuses an absent or negative anchor on every path including explicit -offset, with three table cases asserting the session is left byte-identical.
+  evidence: internal/cast/cast.go:86
+  evidence: internal/cast/cast_test.go:307
+- cond-2609120432402550 — survived: Both streams are placed against the one manifest t0 with no per-source clock, which the interleaving test demonstrates end to end; nothing in the delivery contradicts the one-wall-clock-session assumption, and nothing tries to reconcile two unrelated recordings.
+  evidence: internal/cast/cast_test.go:940
+  evidence: internal/cast/coalesce.go:189
+- cond-2609120432404128 — survived: Carriage returns are kept and are explicitly not a record boundary, so a progress line's redraw frames are preserved as they arrived rather than reconstructed into the final rendering — visible verbatim in the golden record.
+  evidence: internal/cast/coalesce.go:107
+  evidence: internal/cast/testdata/golden.interactions.jsonl:4
+  evidence: docs/reference/session-directory.md:67
+- cond-2609120432407170 — survived: A re-import drops every line whose kind is the reserved terminal_output and keeps every other line byte-for-byte, so a second, different cast's records replace the first's — asserted by the replaced count and the byte-identical re-import, and stated in both the reference and the how-to.
+  evidence: internal/cast/write.go:129
+  evidence: internal/cli/cli_test.go:841
+  evidence: docs/how-to/record-a-terminal-session.md:117
+- cond-2609120432408324 — survived: The how-to tells the operator to record output only and names both opt-in input flags with the suppressed-echo hazard, while the importer drops i events unconditionally and prints the count so an operator learns their recorder captured keystrokes.
+  evidence: docs/how-to/record-a-terminal-session.md:65
+  evidence: internal/cast/cast_test.go:749
+  evidence: docs/reference/session-directory.md:107
+- cond-2609120432400428 — untested: Whether an operator actually reviews or redacts the timeline before analyze is an assumption about human behaviour that the delivery neither exercises nor contradicts; it restates the instruction in docs/how-to/record-a-terminal-session.md:85 and docs/explanation/privacy.md, and adds no code-level check, so nothing in the delivered reality tests it.
 ## Grounds
 
 - pursued: an operator-recorded asciicast (v2 or v3), anchored by its header timestamp to the session t0 and coalesced per displayed line, gives merge and report a terminal interaction stream good enough to sit a spoken stumble beside the command and output that caused it, with no change to record; what would show it wrong is real sessions where the whole-second header anchor or the line coalescing leaves output misaligned with speech beyond the join window

@@ -24,6 +24,16 @@ import (
 const (
 	fixtureV2 = "v2.cast"
 	fixtureV3 = "v3.cast"
+
+	// The tie pair is the same recording in both formats too, built so that every
+	// way a float64 clock could split the two formats apart is exercised: seven
+	// 1.5 ms keystrokes put the seventh at exactly 10.5 ms — a half-millisecond
+	// tie that rounds one way from a stated absolute time and the other from a
+	// running sum — and the eighth event sits 249.5 ms after it, so a
+	// one-millisecond disagreement falls on either side of the 250 ms coalescing
+	// gap. One record, or two.
+	fixtureV2Ties = "v2-ties.cast"
+	fixtureV3Ties = "v3-ties.cast"
 )
 
 // newSession makes a hermetic session directory holding just a manifest.
@@ -166,7 +176,9 @@ func TestRunImportsFixture(t *testing.T) {
 	for _, want := range []string{
 		"offset: -2.00s (derived: cast header timestamp − manifest t0 (whole seconds, ±1s))",
 		"dropped 2 input (i) event(s): keystrokes are never imported",
-		"dropped 3 other event(s): 1 exit (x), 1 marker (m), 1 resize (r)",
+		// Ordered by code — m, r, x — not by the formatted string, whose leading
+		// count would sort "10 resize" above "2 exit".
+		"dropped 3 other event(s): 1 marker (m), 1 resize (r), 1 exit (x)",
 		"dropped 1 record(s) that render empty",
 	} {
 		if !strings.Contains(log, want) {
@@ -194,19 +206,64 @@ func TestImportMatchesGolden(t *testing.T) {
 
 // TestV2AndV3Agree is criterion 2: the operator never states, or needs to know,
 // which format their recorder wrote.
+//
+// The tie pair is the case a float64 clock could not hold. v2 rounds a stated
+// absolute time; v3 rounds a running sum of intervals; at a half-millisecond tie
+// the two land on different milliseconds, and one millisecond is enough to flip
+// a coalescing cut. Carrying the clock on the microsecond grain is what makes
+// the two byte-identical, and this pair is what fails if that goes.
 func TestV2AndV3Agree(t *testing.T) {
-	var out [2][]byte
-	for i, name := range []string{fixtureV2, fixtureV3} {
-		dir := newSession(t, testT0)
-		mustRun(t, Options{SessionDir: dir, Cast: fixture(t, name)})
-		b, err := os.ReadFile(filepath.Join(dir, session.InteractionsFile))
-		if err != nil {
-			t.Fatal(err)
-		}
-		out[i] = b
+	pairs := []struct {
+		name        string
+		v2, v3      string
+		wantRecords int
+	}{
+		{"the fixture recording", fixtureV2, fixtureV3, 5},
+		{"half-millisecond ties", fixtureV2Ties, fixtureV3Ties, 1},
 	}
-	if !bytes.Equal(out[0], out[1]) {
-		t.Errorf("v2 and v3 of the same recording produced different records\n v2: %s\n v3: %s", out[0], out[1])
+	for _, pair := range pairs {
+		t.Run(pair.name, func(t *testing.T) {
+			var out [2][]byte
+			for i, name := range []string{pair.v2, pair.v3} {
+				dir := newSession(t, testT0)
+				n, _ := mustRun(t, Options{SessionDir: dir, Cast: fixture(t, name)})
+				if n != pair.wantRecords {
+					t.Errorf("%s produced %d records, want %d", name, n, pair.wantRecords)
+				}
+				b, err := os.ReadFile(filepath.Join(dir, session.InteractionsFile))
+				if err != nil {
+					t.Fatal(err)
+				}
+				out[i] = b
+			}
+			if !bytes.Equal(out[0], out[1]) {
+				t.Errorf("v2 and v3 of the same recording produced different records\n v2: %s\n v3: %s", out[0], out[1])
+			}
+		})
+	}
+}
+
+// TestTiesCoalesceIntoOneRecord states what the tie pair is supposed to produce,
+// so the agreement test above cannot be satisfied by both formats being wrong in
+// the same way.
+func TestTiesCoalesceIntoOneRecord(t *testing.T) {
+	for _, name := range []string{fixtureV2Ties, fixtureV3Ties} {
+		t.Run(name, func(t *testing.T) {
+			dir := newSession(t, testT0)
+			mustRun(t, Options{SessionDir: dir, Cast: fixture(t, name)})
+			recs := decodeRecords(t, filepath.Join(dir, session.InteractionsFile))
+			if len(recs) != 1 {
+				t.Fatalf("got %d records, want 1: %+v", len(recs), recs)
+			}
+			if got := recs[0].Text; got != "abcdefgh\r\n" {
+				t.Errorf("record text = %q, want the whole line", got)
+			}
+			// A record's time is its FIRST rune's: 1.5 ms on the recording clock,
+			// which rounds to 2, placed by the header's -2000 ms offset.
+			if got, want := recs[0].T-testT0, int64(-1998); got != want {
+				t.Errorf("session-relative t = %d ms, want %d", got, want)
+			}
+		})
 	}
 }
 
@@ -353,12 +410,15 @@ func TestRefusalsLeaveTheSessionUnchanged(t *testing.T) {
 			want: "holds no output events",
 		},
 		{
+			// Named apart from the no-output-events case above: this cast really is
+			// a terminal recording, it just displayed nothing legible.
 			name: "output events that all render empty",
 			setup: func(t *testing.T) (string, Options) {
 				dir := newSession(t, testT0)
-				return dir, Options{SessionDir: dir, Cast: writeCast(t, `{"version":2,"timestamp":1784300398}`, `[0,"o","\r\n"]`)}
+				return dir, Options{SessionDir: dir, Cast: writeCast(t,
+					`{"version":2,"timestamp":1784300398}`, `[0,"o","\r\n"]`, `[0.5,"o","\r\n"]`)}
 			},
-			want: "holds no output events",
+			want: "holds no importable output (2 record(s) rendered empty)",
 		},
 		{
 			name: "neither -cast nor terminal.cast",
@@ -1057,6 +1117,46 @@ func TestDropTallyIsBounded(t *testing.T) {
 	}
 	if got := strings.Count(log, "unrecognised"); got > maxDropCodes {
 		t.Errorf("printed output names %d codes, over the %d bound", got, maxDropCodes)
+	}
+}
+
+// TestInputCountSurvivesTheTallyBound is the privacy regression: the dropped-
+// keystroke count is a disclosure, not a scoping note, so a cast that fills the
+// tally with junk codes before its first `i` event must not swallow that count
+// into the anonymous overflow and leave the operator unaware their recorder
+// captured input.
+func TestInputCountSurvivesTheTallyBound(t *testing.T) {
+	dir := newSession(t, testT0)
+	lines := []string{`{"version":2,"timestamp":1784300398}`}
+	for i := 0; i < maxDropCodes; i++ {
+		lines = append(lines, fmt.Sprintf(`[%d,"c%d","x"]`, i, i))
+	}
+	lines = append(lines,
+		fmt.Sprintf(`[%d,"i","s"]`, maxDropCodes),
+		fmt.Sprintf(`[%d,"i","u"]`, maxDropCodes+1),
+		fmt.Sprintf(`[%d,"o","real output\r\n"]`, maxDropCodes+2),
+	)
+	_, log := mustRun(t, Options{SessionDir: dir, Cast: writeCast(t, lines...)})
+	if want := "dropped 2 input (i) event(s): keystrokes are never imported"; !strings.Contains(log, want) {
+		t.Errorf("want %q on stderr, got %q", want, log)
+	}
+}
+
+// TestEmptyEventCodeIsNotOverflow keeps the overflow counter off a reserved map
+// key: "" is a legitimate event code a cast can carry, so a sentinel key would
+// report a real empty-coded event as overflow and overflow as a real event.
+func TestEmptyEventCodeIsNotOverflow(t *testing.T) {
+	dir := newSession(t, testT0)
+	_, log := mustRun(t, Options{SessionDir: dir, Cast: writeCast(t,
+		`{"version":2,"timestamp":1784300398}`,
+		`[0,"","odd"]`,
+		`[1,"o","real output\r\n"]`,
+	)})
+	if want := "dropped 1 other event(s): 1 unrecognised ()"; !strings.Contains(log, want) {
+		t.Errorf("want %q on stderr, got %q", want, log)
+	}
+	if strings.Contains(log, "under further codes") {
+		t.Errorf("an empty event code was reported as overflow: %q", log)
 	}
 }
 

@@ -50,8 +50,9 @@ break an existing invocation is called out in the entry that records it.
   the `.cast` file over, exactly as `transcribe -audio` already takes an
   externally recorded voice. Both asciicast formats are read and told apart by
   the header's `version` field — v2's absolute event times and v3's intervals
-  reconstruct to the same clock, so the same recording in either format yields
-  identical records — and the cast's own header timestamp anchors it to the
+  reconstruct onto one exact integer clock, finer than either format writes, so
+  the same recording in either format yields byte-identical records — and the
+  cast's own header timestamp anchors it to the
   session's `t0`, with an explicit `-offset` always winning and the offset's
   provenance (including its whole-second precision) printed on every run.
   Output coalesces into one `terminal_output` interaction per line the terminal

@@ -30,8 +30,34 @@ func run(t *testing.T, offsetMS int64, evs ...castEvent) *coalescer {
 	return c
 }
 
+// out builds one output event at t seconds, on the microsecond grain scanCast
+// delivers.
 func out(t float64, data string) castEvent {
-	return castEvent{T: t, Code: codeOutput, Data: data}
+	return castEvent{US: int64(math.Round(t * castTimeGrain)), Code: codeOutput, Data: data}
+}
+
+// TestMicrosToMillis pins the one rounding step between the grain the clock is
+// carried on and the millisecond a record records: half away from zero, which
+// is math.Round's rule done in integers.
+func TestMicrosToMillis(t *testing.T) {
+	cases := []struct {
+		us   int64
+		want int64
+	}{
+		{0, 0},
+		{499, 0},
+		{500, 1},
+		{1499, 1},
+		{1500, 2},
+		{10500, 11}, // the half-millisecond tie the two formats used to split on
+		{-500, -1},
+		{-499, 0},
+	}
+	for _, tc := range cases {
+		if got := microsToMillis(tc.us); got != tc.want {
+			t.Errorf("microsToMillis(%d) = %d, want %d", tc.us, got, tc.want)
+		}
+	}
 }
 
 func texts(recs []timeline.Interaction) []string {

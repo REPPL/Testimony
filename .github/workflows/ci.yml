@@ -3,7 +3,8 @@ name: ci
 # Lightweight checks on every push and pull request: format, build, vet, and
 # test on Linux, a cross-compile check for the other release platforms, a
 # version-stamp ldflags check, a smoke test of the merge → report pipeline on
-# the bundled sample, installer syntax and flag-handling checks, full-history
+# the bundled sample, a smoke test of the terminal import hand-off against the
+# v2 cast fixture, installer syntax and flag-handling checks, full-history
 # secret scanning, and a workflow audit. Also runs on `merge_group` so the
 # same jobs gate each entry the merge queue builds — the queue tests every PR
 # against the exact main it will land on, and its required checks are these
@@ -161,6 +162,52 @@ jobs:
           # assert one specifically: the first Save click, joined under its
           # utterance.
           grep -q '^  - \[00:19\] click `\[data-testid=save-btn\]`' examples/sample-session/report.md
+
+      # The terminal hand-off has no bundled sample session of its own: adding
+      # terminal records to examples/sample-session would change the
+      # quickstart's golden report for every reader, to demonstrate a path the
+      # how-to already walks. So the smoke builds a throwaway session in a temp
+      # directory around the v2 fixture the unit tests already carry — hermetic,
+      # no network, no asciinema, no recorder of any kind, since `import` only
+      # ever reads a file.
+      #
+      # The assertions are the three things the unit tests cannot reach through
+      # the CLI: the stdout/stderr split (a script reads one summary line while
+      # the offset provenance and drop counts go to stderr), the archived cast
+      # being byte-identical to what was handed over, and a bare re-import —
+      # the in-place path, with no -cast to name — leaving interactions.jsonl
+      # byte-for-byte unchanged.
+      - name: Terminal import smoke test
+        run: |
+          set -euo pipefail
+          s="$(mktemp -d)"
+          trap 'rm -rf "$s"' EXIT
+          printf '{"session":"smoke","app":"a shell","participant":"P1","t0_epoch_ms":1784300400000}\n' > "$s/manifest.json"
+          ./testimony import -session "$s" -cast internal/cast/testdata/v2.cast 2> "$s/stderr.txt" > "$s/stdout.txt"
+          grep -q "imported 5 records" "$s/stdout.txt"
+          grep -q "derived: cast header timestamp" "$s/stderr.txt"
+          grep -q "dropped 2 input (i) event(s)" "$s/stderr.txt"
+          # Diagnostics stay off the stream a caller pipes.
+          ! grep -q "offset:" "$s/stdout.txt"
+          # The archive is the one place the byte-for-byte claim is made.
+          cmp internal/cast/testdata/v2.cast "$s/terminal.cast"
+          grep -q '"kind":"terminal_output"' "$s/interactions.jsonl"
+          # The keystroke-echoed command is one record, not one per keystroke.
+          grep -q 'ls --color' "$s/interactions.jsonl"
+          # An input event must never reach the derived text.
+          ! grep -q '"text":"l"' "$s/interactions.jsonl"
+          # A bare re-import reads the archived cast and rewrites the same bytes.
+          cp "$s/interactions.jsonl" "$s/first.jsonl"
+          ./testimony import -session "$s" > /dev/null 2>&1
+          cmp "$s/first.jsonl" "$s/interactions.jsonl"
+          # Downstream is untouched: the records merge and render through the
+          # existing event path, and the cast's header timestamp sits before t0,
+          # so the early records carry a signed clock.
+          ./testimony merge  -session "$s" > /dev/null
+          ./testimony report -session "$s" > /dev/null
+          grep -qF 'terminal\_output' "$s/report.md"
+          grep -qF '[-00:02]' "$s/report.md"
+          grep -q '\*\*Events:\*\* 5' "$s/report.md"
 
       # install.sh is served live from main as the documented install path, so
       # a merged syntax error breaks `curl | sh` for every new user with no

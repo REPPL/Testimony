@@ -1,6 +1,7 @@
 package cast
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,7 +82,17 @@ func TestCommitCastRenamesIntoPlace(t *testing.T) {
 	if err := os.WriteFile(src, []byte("{\"version\":2}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tmpPath, err := stageCast(dir, src)
+	f, err := os.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	// Read the descriptor to end of file first, as Run's scan leaves it, so the
+	// rewind stageCast performs is what the copy depends on.
+	if _, err := io.Copy(io.Discard, f); err != nil {
+		t.Fatal(err)
+	}
+	tmpPath, err := stageCast(dir, src, f)
 	if err != nil {
 		t.Fatalf("stageCast: %v", err)
 	}

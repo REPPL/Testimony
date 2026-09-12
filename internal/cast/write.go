@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"github.com/REPPL/Testimony/internal/session"
@@ -142,20 +143,50 @@ func readInteractionLines(path string) (priorInteractions, error) {
 	return prior, nil
 }
 
+// castIDGrowth is demo.idGrowth's twin: how many bytes longer nth — the real,
+// 1-based ordinal merge's "ev-%03d" gives an interaction at this position among
+// every interaction in the session — runs than the "ev-001" placeholder
+// timeline.EventEntry sizes an entry with. It is 0 until the 1000th
+// interaction, which is why charging a flat margin per record instead would
+// waste a real fraction of the file's capacity on growth that has not happened.
+// (demo's is unexported, so the arithmetic is restated here with the citation
+// rather than reached across the package boundary.)
+func castIDGrowth(nth int64) int64 {
+	if nth < 1000 {
+		return 0
+	}
+	return int64(len(strconv.FormatInt(nth, 10))) - 3
+}
+
 // checkMergedTimelineFits measures the timeline.jsonl this import implies —
 // every decodable interaction plus, when transcript.jsonl is present, every
 // utterance — against the same total-size cap session.WriteJSONL applies when
-// merge writes it. Like demo's running estimate, the guarantee is "as of import
-// time": a transcribe run afterwards adds speech entries this pass cannot see.
+// merge writes it.
+//
+// Each entry is charged its id growth, because timeline.EventEntry sizes every
+// entry with the placeholder id "ev-001" while merge assigns "ev-%03d" by the
+// interaction's position among every interaction in the file: past the 1000th,
+// the real id is longer than the measured one. Without the charge a session
+// sitting just under the 16 MiB cap with a few thousand interactions could pass
+// this pre-flight and still be refused by merge — the exact "import succeeds,
+// merge is permanently unable to read it back" state the pre-flight exists to
+// prevent. The ordinal is the position across the prior records and then the new
+// ones, which is the order they are written in and so the order merge numbers
+// them in.
+//
+// Like demo's running estimate, the guarantee is "as of import time": a
+// transcribe run afterwards adds speech entries this pass cannot see.
 func checkMergedTimelineFits(dir string, t0 int64, prior, records []timeline.Interaction) error {
 	total := 0
+	nth := int64(0)
 	for _, set := range [][]timeline.Interaction{prior, records} {
 		for _, rec := range set {
+			nth++
 			n, err := session.EncodedLen(timeline.EventEntry(rec, t0))
 			if err != nil {
 				return err
 			}
-			total += n
+			total += n + int(castIDGrowth(nth))
 		}
 	}
 	// An unreadable or malformed transcript is not sized, for readInteractionLines'
@@ -197,11 +228,17 @@ func encodeRecord(rec timeline.Interaction) ([]byte, error) {
 // point is that the operator hands over a file and the session becomes
 // self-contained.
 //
+// src is the descriptor the scan already read, rewound here rather than
+// re-opened by path: the archive must hold the bytes the records were derived
+// from, and between two opens of a path the operator's file can be replaced or
+// rewritten, which would leave the session asserting a byte-for-byte archive of
+// something else. name is that file's display name, for the size refusal.
+//
 // The prior-mode rule is transcribe.atomicConvert's: an existing
 // terminal.cast's own mode is reapplied, and a new file takes 0o644 &^ umask,
 // so a privacy-conscious operator's umask is honoured. The caller removes the
 // temp file on every failure path.
-func stageCast(dir, src string) (string, error) {
+func stageCast(dir, name string, src *os.File) (string, error) {
 	target := filepath.Join(dir, session.TerminalCastFile)
 	// checkPlainOutput's rule: a symlink planted at the archive name would
 	// redirect the copy outside the session, and a FIFO would block the rename's
@@ -219,11 +256,9 @@ func stageCast(dir, src string) (string, error) {
 		return "", err
 	}
 
-	in, err := os.Open(src)
-	if err != nil {
-		return "", fmt.Errorf("cast file: %w", err)
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("archive terminal cast: %w", err)
 	}
-	defer in.Close()
 
 	tmp, err := os.CreateTemp(dir, "."+session.TerminalCastFile+".tmp-*")
 	if err != nil {
@@ -238,12 +273,12 @@ func stageCast(dir, src string) (string, error) {
 	// One byte past the cap, so a file that grew past the bound between the scan
 	// and the copy is refused rather than archived truncated — the archive is the
 	// one place this design makes a byte-for-byte claim.
-	n, err := io.Copy(tmp, io.LimitReader(in, maxCastBytes+1))
+	n, err := io.Copy(tmp, io.LimitReader(src, maxCastBytes+1))
 	if err != nil {
 		return fail(fmt.Errorf("archive terminal cast: %w", err))
 	}
 	if n > maxCastBytes {
-		return fail(fmt.Errorf("%s: exceeds %d bytes; refusing to read", src, maxCastBytes))
+		return fail(fmt.Errorf("%s: exceeds %d bytes; refusing to read", name, maxCastBytes))
 	}
 	perm := priorPerm
 	if !havePrior {

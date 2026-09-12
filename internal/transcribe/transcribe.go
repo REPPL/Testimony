@@ -384,12 +384,18 @@ func checkSegmentTime(v float64) bool {
 // a sidecar readOffsetSidecar itself refuses on the next bare run. No
 // genuine offset is refused: a value past ±1e9 seconds already fails every
 // downstream reader.
+//
+// It is the one home for the rule, so `import` validates its own -offset here
+// too (cast.Run and the CLI both call it): the cast→session offset obeys the
+// same finiteness and magnitude bound for the same reason, and two copies of a
+// numeric bound are two places for it to drift. The message therefore names a
+// recording→session offset rather than an audio-specific one.
 func CheckOffset(v float64) error {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return fmt.Errorf("-offset must be a finite number of seconds, got %v", v)
 	}
 	if math.Abs(v) > maxOffsetSeconds {
-		return fmt.Errorf("-offset %g exceeds %g seconds in magnitude; no audio→session offset is that large", v, maxOffsetSeconds)
+		return fmt.Errorf("-offset %g exceeds %g seconds in magnitude; no recording→session offset is that large", v, maxOffsetSeconds)
 	}
 	return nil
 }

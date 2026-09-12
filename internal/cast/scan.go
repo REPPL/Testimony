@@ -64,6 +64,30 @@ const (
 	// mirroring timeline's maxUtteranceSeconds and transcribe's maxOffsetSeconds,
 	// so a time this importer accepts is a time merge accepts.
 	maxCastSeconds = 1e9
+
+	// castTimeGrain is the integer grain the recording clock is carried on:
+	// microseconds. It is what makes the v2 and v3 readings of one recording
+	// agree bit-for-bit, which is the whole "the operator never needs to know
+	// which format their recorder wrote" guarantee.
+	//
+	// Carrying the clock in float64 seconds does not give that. v2 rounds a
+	// stated absolute time to milliseconds; v3 rounds a float64 running sum of
+	// intervals. At a half-millisecond tie the two land on different
+	// milliseconds — seven 0.0015 s intervals sum to 0.010499999999999999 and
+	// round to 10 ms, while v2's stated 0.0105 rounds to 11 ms — and one
+	// millisecond is enough to flip a 250 ms coalescing gap, so the same
+	// recording becomes one record in one format and two in the other.
+	// Accumulating on an exact integer grain removes the class: both formats
+	// reach the identical integer, and the rounding to milliseconds happens once,
+	// at the same place, from the same number.
+	//
+	// A microsecond is exact for every time either format writes — both cap a
+	// time at six decimal places — and 1e9 seconds on this grain is 1e15, three
+	// orders of magnitude inside int64.
+	castTimeGrain = 1e6
+
+	// maxCastMicros is maxCastSeconds on that grain.
+	maxCastMicros = int64(maxCastSeconds * castTimeGrain)
 )
 
 // castHeader is the first line of a cast, reduced to the two fields this
@@ -78,13 +102,15 @@ type castHeader struct {
 	Timestamp *int64
 }
 
-// castEvent is one event line. T is always absolute seconds since recording
-// start, so the v2/v3 difference is resolved inside scanCast and nothing
-// downstream of it knows which format was read — the single seam behind the
-// "identical timeline from either format" guarantee.
+// castEvent is one event line. US is always absolute MICROSECONDS since
+// recording start, so the v2/v3 difference is resolved inside scanCast and
+// nothing downstream of it knows which format was read — the single seam behind
+// the "identical timeline from either format" guarantee. It is an integer
+// rather than a float64 of seconds because that guarantee is bit-for-bit: see
+// castTimeGrain.
 type castEvent struct {
 	Line int
-	T    float64
+	US   int64
 	Code string
 	Data string
 }
@@ -105,13 +131,13 @@ func scanCast(r io.Reader, name string, onHeader func(castHeader) error, fn func
 	sc.Buffer(make([]byte, 0, 64*1024), maxCastLine)
 	line := 0
 	var total int64
-	// v2 keeps the previous absolute time; v3 keeps the running sum of
-	// intervals. The sum stays in float64 seconds and is rounded to
-	// milliseconds once, per record, when a record's time is computed: rounding
-	// each interval before summing would let a systematic sub-millisecond bias
-	// accumulate across thousands of events, while float64's ~1e-12 s resolution
-	// over a multi-hour session is far below the millisecond a record records.
-	var clock float64
+	// v2 keeps the previous absolute time; v3 keeps the running sum of intervals.
+	// Both are microseconds (castTimeGrain), so the sum is exact and the two
+	// formats' readings of one recording cannot diverge: each event's time is
+	// rounded to the grain once, on the way in, and the rounding to the
+	// millisecond a record records happens once more, downstream, from the same
+	// integer whichever format was read.
+	var clock int64
 	haveHeader := false
 	for sc.Scan() {
 		line++
@@ -197,9 +223,9 @@ func parseHeader(raw []byte, name string, line int) (castHeader, error) {
 }
 
 // parseEvent decodes one [time, code, data] line and resolves its time onto the
-// absolute recording clock. clock carries the previous event's absolute time
-// (v2) or the running interval sum (v3) across calls.
-func parseEvent(raw []byte, name string, line, version int, clock *float64) (castEvent, error) {
+// absolute recording clock, in microseconds. clock carries the previous event's
+// absolute time (v2) or the running interval sum (v3) across calls.
+func parseEvent(raw []byte, name string, line, version int, clock *int64) (castEvent, error) {
 	malformed := fmt.Errorf("%s:%d: malformed asciicast event (expected [time, code, data])", name, line)
 	var el []json.RawMessage
 	if err := json.Unmarshal(raw, &el); err != nil || len(el) != 3 {
@@ -218,24 +244,33 @@ func parseEvent(raw []byte, name string, line, version int, clock *float64) (cas
 	if err := json.Unmarshal(el[2], &data); err != nil {
 		return castEvent{}, malformed
 	}
+	// Bound the value before it reaches the grain: int64(math.Round(x)) has no
+	// defined answer for a float past the integer range, so a 1e300 time (or
+	// interval) must be refused here rather than converted. The bound is the
+	// recording-clock bound itself, so nothing legitimate is refused earlier
+	// than it would have been after accumulating.
+	if math.Abs(t) > maxCastSeconds {
+		return castEvent{}, fmt.Errorf("%s:%d: event time %gs exceeds %g seconds; that is no recording clock", name, line, t, maxCastSeconds)
+	}
+	us := int64(math.Round(t * castTimeGrain))
 	switch version {
 	case 2:
 		// v2 times are absolute seconds since recording start.
-		if t < *clock {
-			return castEvent{}, fmt.Errorf("%s:%d: event time %g precedes the previous event's %g; asciicast v2 times must not decrease", name, line, t, *clock)
+		if us < *clock {
+			return castEvent{}, fmt.Errorf("%s:%d: event time %g precedes the previous event's %g; asciicast v2 times must not decrease", name, line, t, float64(*clock)/castTimeGrain)
 		}
-		*clock = t
+		*clock = us
 	default:
 		// v3 times are intervals since the previous event.
-		if t < 0 {
+		if us < 0 {
 			return castEvent{}, fmt.Errorf("%s:%d: event interval %g is negative; asciicast v3 intervals must not be negative", name, line, t)
 		}
-		*clock += t
+		*clock += us
 	}
-	if math.Abs(*clock) > maxCastSeconds {
-		return castEvent{}, fmt.Errorf("%s:%d: event time %gs exceeds %g seconds; that is no recording clock", name, line, *clock, maxCastSeconds)
+	if *clock > maxCastMicros || *clock < -maxCastMicros {
+		return castEvent{}, fmt.Errorf("%s:%d: event time %gs exceeds %g seconds; that is no recording clock", name, line, float64(*clock)/castTimeGrain, maxCastSeconds)
 	}
-	return castEvent{Line: line, T: *clock, Code: code, Data: data}, nil
+	return castEvent{Line: line, US: *clock, Code: code, Data: data}, nil
 }
 
 // isJSONNull reports whether a raw JSON value is the literal null, which this

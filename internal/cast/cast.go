@@ -100,7 +100,7 @@ func Run(opts Options) (int, error) {
 	defer f.Close()
 
 	co := coalescer{t0: t0}
-	drops := map[string]int{}
+	var drops dropTally
 	var offsetMS int64
 	var provenance string
 	_, err = scanCast(f, name, func(h castHeader) error {
@@ -120,7 +120,7 @@ func Run(opts Options) (int, error) {
 		// cast recorded with input capture still cannot put keystrokes into
 		// interactions.jsonl, whatever the operator's recorder did.
 		if ev.Code != codeOutput {
-			tallyDrop(drops, ev.Code)
+			drops.add(ev.Code)
 			return nil
 		}
 		return co.add(ev)
@@ -135,12 +135,20 @@ func Run(opts Options) (int, error) {
 	// The provenance line is printed on every run, so "offset 0 because the
 	// header said nothing" is never a silent assumption.
 	fmt.Fprintf(opts.Log, "offset: %+.2fs (%s)\n", float64(offsetMS)/1000, provenance)
-	reportDrops(opts.Log, drops, co.dropped)
+	drops.report(opts.Log, co.dropped)
 
 	if len(co.records) == 0 {
-		// A cast holding no importable output events would otherwise silently
-		// delete a prior import's records — the hazard transcribe's zero-utterance
-		// guard and merge's zero-entry guard both refuse.
+		// A cast holding no importable output would otherwise silently delete a
+		// prior import's records — the hazard transcribe's zero-utterance guard
+		// and merge's zero-entry guard both refuse. The two ways to get here are
+		// named apart, because they call for different remedies: a cast with no
+		// output events at all is the wrong file (or one recorded with only input
+		// capture), while a cast whose output all rendered empty is a real
+		// recording of a terminal that displayed nothing legible.
+		if co.dropped > 0 {
+			return 0, fmt.Errorf("%s holds no importable output (%d record(s) rendered empty); refusing to rewrite %s",
+				name, co.dropped, session.InteractionsFile)
+		}
 		return 0, fmt.Errorf("%s holds no output events; refusing to rewrite %s", name, session.InteractionsFile)
 	}
 	if err := checkRecords(co.records, t0); err != nil {
@@ -155,7 +163,12 @@ func Run(opts Options) (int, error) {
 	// is the archive.
 	tmpPath := ""
 	if external {
-		if tmpPath, err = stageCast(opts.SessionDir, src); err != nil {
+		// Copied from the descriptor the scan already read, rewound, rather than
+		// by re-opening the path: between the two opens the operator's file can be
+		// replaced, and the archive would then hold bytes the records did not come
+		// from — silently contradicting the one byte-for-byte claim this design
+		// makes.
+		if tmpPath, err = stageCast(opts.SessionDir, name, f); err != nil {
 			return 0, err
 		}
 		defer os.Remove(tmpPath)
@@ -292,50 +305,73 @@ func checkRecords(records []timeline.Interaction, t0 int64) error {
 	return nil
 }
 
-// maxDropCodes bounds how many distinct event codes the drop tally names, and
-// overflowCode collects the rest. A code is a single character in both formats,
-// but a crafted cast can carry a different one on every line, which would
-// otherwise grow the tally — and the line it prints — in step with the file.
-const (
-	maxDropCodes = 16
-	overflowCode = ""
-)
+// maxDropCodes bounds how many distinct event codes the drop tally names. A
+// code is a single character in both formats, but a crafted cast can carry a
+// different one on every line, which would otherwise grow the tally — and the
+// line it prints — in step with the file.
+const maxDropCodes = 16
 
-// tallyDrop counts one dropped event by its code, within that bound.
-func tallyDrop(drops map[string]int, code string) {
-	if _, seen := drops[code]; !seen && len(drops) >= maxDropCodes {
-		drops[overflowCode]++
-		return
-	}
-	drops[code]++
+// dropTally counts the events this run did not import, by code.
+//
+// The bound above is on the map's growth, and the overflow is a plain counter
+// rather than an entry under a reserved key: "" is a legitimate event code a
+// cast can carry, so a sentinel key would report a real empty-coded event as
+// overflow, and overflow as a real event.
+type dropTally struct {
+	byCode   map[string]int
+	overflow int // events whose code arrived past the bound
 }
 
-// reportDrops prints what this run did not import. Input events are named on
-// their own line because their drop is a privacy guarantee rather than a
-// scoping decision, and the count tells an operator their recorder captured
-// keystrokes.
-func reportDrops(log io.Writer, drops map[string]int, blank int) {
-	if n := drops[codeInput]; n > 0 {
+// add counts one dropped event.
+//
+// The input count is exempt from the bound. It is the one code whose count is a
+// privacy disclosure rather than a scoping note — it is how an operator learns
+// their recorder captured keystrokes — and a cast carrying sixteen junk codes
+// before its first `i` would otherwise swallow that disclosure into the
+// anonymous overflow and never print it. Exempting it cannot unbound the tally:
+// it is a single fixed key, so the map holds at most maxDropCodes+1 entries.
+func (d *dropTally) add(code string) {
+	if d.byCode == nil {
+		d.byCode = make(map[string]int, maxDropCodes)
+	}
+	if _, seen := d.byCode[code]; !seen && code != codeInput && len(d.byCode) >= maxDropCodes {
+		d.overflow++
+		return
+	}
+	d.byCode[code]++
+}
+
+// report prints what this run did not import. Input events are named on their
+// own line because their drop is a privacy guarantee rather than a scoping
+// decision, and the count tells an operator their recorder captured keystrokes.
+func (d *dropTally) report(log io.Writer, blank int) {
+	if n := d.byCode[codeInput]; n > 0 {
 		fmt.Fprintf(log, "dropped %d input (i) event(s): keystrokes are never imported\n", n)
 	}
-	others := make([]string, 0, len(drops))
-	total := 0
-	for code, n := range drops {
+	// Ordered by code, so the line is deterministic whatever order the map
+	// iterates in — and ordered by the thing the operator reads it by, rather
+	// than by the formatted string, whose leading count would otherwise sort
+	// "10 resize" before "2 exit".
+	codes := make([]string, 0, len(d.byCode))
+	total := d.overflow
+	for code, n := range d.byCode {
 		if code == codeInput {
 			continue
 		}
 		total += n
-		if code == overflowCode {
-			others = append(others, fmt.Sprintf("%d under further codes", n))
-			continue
-		}
-		// The code is echoed from the cast, so it is neutralised and clipped: it is
-		// attacker-authorable and this line reaches a terminal.
-		others = append(others, fmt.Sprintf("%d %s (%s)", n, codeName(code), clip(session.SafeText(code), 8)))
+		codes = append(codes, code)
 	}
 	if total > 0 {
-		// Sorted so the line is deterministic whatever order the map iterates in.
-		sort.Strings(others)
+		sort.Strings(codes)
+		others := make([]string, 0, len(codes)+1)
+		for _, code := range codes {
+			// The code is echoed from the cast, so it is neutralised and clipped: it
+			// is attacker-authorable and this line reaches a terminal.
+			others = append(others, fmt.Sprintf("%d %s (%s)", d.byCode[code], codeName(code), clip(session.SafeText(code), 8)))
+		}
+		if d.overflow > 0 {
+			others = append(others, fmt.Sprintf("%d under further codes", d.overflow))
+		}
 		fmt.Fprintf(log, "dropped %d other event(s): %s\n", total, strings.Join(others, ", "))
 	}
 	if blank > 0 {

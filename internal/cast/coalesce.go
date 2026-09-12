@@ -2,7 +2,6 @@ package cast
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -70,7 +69,7 @@ type coalescer struct {
 // add appends one output event's runes to the pending record, closing and
 // opening records at the boundaries above.
 func (c *coalescer) add(ev castEvent) error {
-	ms := int64(math.Round(ev.T * 1000))
+	ms := microsToMillis(ev.US)
 	if c.open && (ms-c.lastMS >= coalesceGapMS || ms-c.firstMS >= maxCoalesceSpanMS) {
 		if err := c.close(); err != nil {
 			return err
@@ -187,6 +186,20 @@ func (c *coalescer) close() error {
 // t is epoch milliseconds, so the arithmetic is integer throughout.
 func (c *coalescer) recordTime(ms int64) int64 {
 	return c.t0 + c.offsetMS + ms
+}
+
+// microsToMillis rounds a recording-clock instant from the microsecond grain
+// scanCast carries to the millisecond an interaction records, half away from
+// zero — math.Round's rule, in integers. This is the one place the rounding
+// happens, which is what keeps a v2 and a v3 reading of the same recording on
+// the same millisecond (see castTimeGrain). A recording clock never runs
+// negative, since v2 refuses a decrease from zero and v3 a negative interval,
+// but the negative case is handled rather than assumed.
+func microsToMillis(us int64) int64 {
+	if us < 0 {
+		return -((-us + 500) / 1000)
+	}
+	return (us + 500) / 1000
 }
 
 // encodedRuneLen is the number of bytes r costs once encoding/json has written

@@ -35,13 +35,14 @@ func TestScanCastV2AbsoluteTimes(t *testing.T) {
 	if hdr.Timestamp == nil || *hdr.Timestamp != 1784300398 {
 		t.Fatalf("timestamp = %v, want 1784300398", hdr.Timestamp)
 	}
-	want := []float64{0, 0.25, 12.5}
+	// Microseconds, the grain the clock is carried on, compared exactly.
+	want := []int64{0, 250_000, 12_500_000}
 	if len(got) != len(want) {
 		t.Fatalf("got %d events, want %d", len(got), len(want))
 	}
 	for i, ev := range got {
-		if ev.T != want[i] {
-			t.Errorf("event %d: t = %g, want %g", i+1, ev.T, want[i])
+		if ev.US != want[i] {
+			t.Errorf("event %d: us = %d, want %d", i+1, ev.US, want[i])
 		}
 		if ev.Line != i+2 {
 			t.Errorf("event %d: line = %d, want %d", i+1, ev.Line, i+2)
@@ -56,12 +57,17 @@ func TestScanCastV3RunningSum(t *testing.T) {
 	cases := []struct {
 		name      string
 		intervals []float64
-		want      []float64
+		want      []int64 // absolute microseconds
 	}{
-		{"simple", []float64{0, 0.5, 0.5}, []float64{0, 0.5, 1.0}},
-		{"zero intervals", []float64{0, 0, 0}, []float64{0, 0, 0}},
-		{"first interval non-zero", []float64{1.25, 0.25}, []float64{1.25, 1.5}},
-		{"millisecond tail", []float64{0.001, 0.001, 0.001, 0.001}, []float64{0.001, 0.002, 0.003, 0.004}},
+		{"simple", []float64{0, 0.5, 0.5}, []int64{0, 500_000, 1_000_000}},
+		{"zero intervals", []float64{0, 0, 0}, []int64{0, 0, 0}},
+		{"first interval non-zero", []float64{1.25, 0.25}, []int64{1_250_000, 1_500_000}},
+		{"millisecond tail", []float64{0.001, 0.001, 0.001, 0.001}, []int64{1000, 2000, 3000, 4000}},
+		// The sum is exact on the grain, so a run of half-millisecond ties lands
+		// on the same integer a v2 cast states outright — the divergence class
+		// TestV2AndV3Agree pins end to end.
+		{"half-millisecond ties", []float64{0.0015, 0.0015, 0.0015, 0.0015, 0.0015, 0.0015, 0.0015},
+			[]int64{1500, 3000, 4500, 6000, 7500, 9000, 10500}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,9 +81,10 @@ func TestScanCastV3RunningSum(t *testing.T) {
 				t.Fatalf("got %d events, want %d", len(got), len(tc.want))
 			}
 			for i, ev := range got {
-				// The sum is float64, so compare at the millisecond a record records.
-				if diff := ev.T - tc.want[i]; diff > 1e-9 || diff < -1e-9 {
-					t.Errorf("event %d: t = %g, want %g", i+1, ev.T, tc.want[i])
+				// The sum is an integer, so this is an exact comparison rather than a
+				// tolerance — which is the point of the grain.
+				if ev.US != tc.want[i] {
+					t.Errorf("event %d: us = %d, want %d", i+1, ev.US, tc.want[i])
 				}
 			}
 		})
@@ -97,9 +104,10 @@ func TestScanCastLongV3Tail(t *testing.T) {
 	if len(got) != n {
 		t.Fatalf("got %d events, want %d", len(got), n)
 	}
-	last := got[n-1].T
-	if diff := last - 5.0; diff > 1e-6 || diff < -1e-6 {
-		t.Errorf("final absolute time = %g, want 5", last)
+	// Five thousand 1 ms intervals sum to exactly five seconds, with no drift to
+	// tolerate: the accumulator is an integer.
+	if last, want := got[n-1].US, int64(5_000_000); last != want {
+		t.Errorf("final absolute time = %d us, want %d", last, want)
 	}
 }
 

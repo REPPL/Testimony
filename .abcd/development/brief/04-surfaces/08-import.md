@@ -27,8 +27,12 @@ window where the work happens, and hands the file over afterwards — the patter
 - Accepts **asciicast v2 and v3**, told apart by the header's `version` field:
   v2 event times are absolute seconds since recording start, v3 event times are
   intervals since the previous event, reconstructed by a running sum. Any other
-  version is refused by name. The difference is confined to one accumulator, so
-  the same recording in either format yields byte-identical records.
+  version is refused by name. The difference is confined to one accumulator, and
+  that accumulator runs on an exact integer grain — microseconds, finer than
+  either format writes — so the same recording in either format yields
+  byte-identical records. A `float64`-seconds clock does not give that: v2 rounds
+  a stated time while v3 rounds a running sum, and at a half-millisecond tie the
+  two land on different milliseconds, which is enough to flip a coalescing cut.
 - Resolves the cast→session offset in `transcribe`'s order: an explicit
   `-offset` wins; otherwise the offset is derived from the header's `timestamp`
   minus the manifest's `t0_epoch_ms`, in exact integer arithmetic; otherwise 0.
@@ -42,7 +46,9 @@ window where the work happens, and hands the file over afterwards — the patter
   and `merge` already refuses a session with interactions and no anchor.
 - Keeps only `o` (output) events. `i` (input), `r` (resize), `m` (marker), `x`
   (exit), and any unrecognised code are dropped and counted by code, with the
-  counts printed. Dropping input is a privacy requirement, not a
+  counts printed. The tally is bounded against a cast carrying a different code
+  on every line, but the input count is exempt from that bound: it is a privacy
+  disclosure rather than a scoping note, and must not be suppressible. Dropping input is a privacy requirement, not a
   simplification: a cast recorded with input capture still cannot put
   keystrokes into the derived text. An unrecognised code is dropped rather than
   refused, so a future asciicast revision does not make its casts unimportable.
@@ -63,10 +69,13 @@ window where the work happens, and hands the file over afterwards — the patter
   dropped, every other line is kept byte-for-byte in file order, and the new
   records are appended. So a re-import is byte-identical, a `-demo` session's
   clicks survive untouched, and an import that would yield zero records refuses
-  rather than erase. Before writing, the assembly is checked against the line
-  and file limits `session.ReadJSONL` enforces, and the merged timeline the
-  import implies is measured against the file limit too — the case only an
-  offline importer can compute rather than estimate.
+  rather than erase — naming which of the two cases it hit, no output events at
+  all or output that all rendered empty. Before writing, the assembly is checked
+  against the line and file limits `session.ReadJSONL` enforces, and the merged
+  timeline the import implies is measured against the file limit too — the case
+  only an offline importer can compute rather than estimate — with each entry
+  charged the id growth `merge` adds past the thousandth interaction, so a
+  session this pre-flight passes is one `merge` can still read back.
 - Archives the cast in two phases: the copy is staged into a temp file beside
   `terminal.cast`, the records are written, and the staged copy is renamed into
   place last. A failure anywhere before that rename leaves the session exactly

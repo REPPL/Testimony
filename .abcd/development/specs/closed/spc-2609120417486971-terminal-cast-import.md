@@ -37,9 +37,10 @@ Downstream is untouched: the records carry only the fields
 source type. The raw `.cast` is kept in the session as `terminal.cast`, the
 archival counterpart of `events.rrweb.jsonl`.
 
-New package `internal/cast` (one exported entry point, `cast.Run`), one new
-`session` file-name constant, one new `cli` verb. Standard library only; no new
-dependency, no network call, no subprocess.
+New package `internal/cast` — one exported entry point, `cast.Run`, plus the
+`cast.OutputKind` constant the reserved kind is named by — one new `session`
+file-name constant (`TerminalCastFile`), and one new `cli` verb. Standard library
+only; no new dependency, no network call, no subprocess.
 
 ## Design
 
@@ -81,26 +82,49 @@ header's `version` field is the authority on whether a file is importable, and a
 name rule would refuse a legitimately-named cast (`asciinema rec` writes whatever
 name the operator gives, and a redirected recording may carry none).
 
-One forward interaction to settle at implementation time: itd-12 makes
-`-session` inferable from the current directory for every pipeline command. If
-that has landed when this is implemented, `import` adopts the same shared rule
-rather than keeping its own required-flag refusal — `import` is a pipeline
-command like the rest, and two rules for one flag would be the defect. The
-refusal below is what applies while `-session` is required everywhere.
+`-session` obeys the shared inference rule itd-12 established for every pipeline
+command: it is resolved through `cli.resolveSession(fs, dir)` — the explicit
+flag wins; otherwise the current directory when it holds a Testimony session
+`manifest.json`; a usage error otherwise — and the resolution is the **last** of
+the command's invocation checks, so a run refused for any other flag never first
+announces a session it did not use. `import` is a pipeline command like the
+rest, and two rules for one flag would be the defect; the synopsis is therefore
+`[-session DIR]`, as on its five siblings.
 
 CLI-layer refusals, all exit 2 (the `usageErr` path), all before any work starts:
-`-session` missing; `-session` or `-cast` explicitly empty (the
+`-session` missing with no session manifest in the current directory;
+`-session` or `-cast` explicitly empty (the
 `transcribe: -audio must not be empty` precedent — an unset shell variable spliced
 into the flag, which would otherwise silently select the in-place branch); a
 stray positional (`rejectArgs`); an `-offset` that fails
 `transcribe.CheckOffset`. Everything else is a runtime failure at exit 1.
 
-The usage text gains one block, placed after `transcribe` (its analogue) and
-before `merge` (its consumer):
+The exact strings, which `internal/cli`'s tables pin:
 
 ```
-  testimony import       -session DIR [-cast FILE] [-offset SECONDS]   import an asciinema recording's output into interactions.jsonl (reuses the session's terminal.cast when -cast is omitted)
+import: -session is required (no -session flag, and the current directory holds no regular manifest.json file)
+import: -session must not be empty
+import: -cast must not be empty
+import: unexpected argument "junk" (the command takes no positional arguments)
+import: -offset must be a finite number of seconds, got NaN
+import: -offset 1e+10 exceeds 1e+09 seconds in magnitude; no recording→session offset is that large
 ```
+
+Reusing `transcribe.CheckOffset` generalises its magnitude message from
+"no audio→session offset is that large" to "no recording→session offset", so the
+one home for the rule reads correctly for both callers rather than gaining a
+second copy of the bound.
+
+The usage text gains one block, placed after `transcribe` (its analogue) and
+before `merge` (its consumer), with the continuation line `transcribe`'s own
+block already uses:
+
+```
+  testimony import      [-session DIR] [-cast FILE]     import an asciinema recording's output into interactions.jsonl (reuses the session's terminal.cast when -cast is omitted)
+                        [-offset SECONDS]
+```
+
+and the footer that lists the inferring commands gains `import`.
 
 ### Package layout
 
@@ -134,8 +158,13 @@ func Run(opts Options) (int, error)
 
 Unexported internals, each independently testable and all but two of them pure:
 
-- `scanCast(r io.Reader, name string, fn func(castEvent) error) (castHeader, error)`
-  — the streaming reader: header, then one callback per event line.
+- `scanCast(r io.Reader, name string, onHeader func(castHeader) error, fn func(castEvent) error) (castHeader, error)`
+  — the streaming reader: header, then one callback per event line. `onHeader`
+  runs after the header is decoded and **before the first event**, which is what
+  lets the caller resolve the offset — the thing the header's timestamp anchors,
+  and the thing every record's `t` needs — without buffering the events or
+  reading the file twice. A header-first callback is the whole reason the
+  signature carries two functions rather than one.
 - `castHeader{Version *int; Timestamp *int64}` — a pointer version and timestamp
   so an absent field stays distinguishable from a genuine `0`, the
   `timeline.rawInteraction.T` / `transcribe.offsetSidecar.OffsetSeconds`
@@ -143,18 +172,23 @@ Unexported internals, each independently testable and all but two of them pure:
   `command`, `title`, `duration`, `idle_time_limit`) is ignored: the importer
   needs the version and the anchor and nothing else, and unknown fields must not
   be rejected, since both formats are extensible.
-- `castEvent{Line int; T float64; Code, Data string}` — `T` is always **absolute
-  seconds since recording start**, so the v2/v3 difference is resolved inside
-  `scanCast` and nothing downstream of it knows which format was read. This is
-  the single seam behind the "identical timeline from either format" criterion.
-- `resolveOffset(opts Options, man session.Manifest, hdr castHeader) (offsetMS int64, provenance string, err error)`
-  — pure given its arguments; the `transcribe.resolveOffset` twin.
+- `castEvent{Line int; US int64; Code, Data string}` — `US` is always **absolute
+  microseconds since recording start**, so the v2/v3 difference is resolved
+  inside `scanCast` and nothing downstream of it knows which format was read.
+  This is the single seam behind the "identical timeline from either format"
+  criterion, and the grain is what makes that criterion literally true rather
+  than approximately so (see *Reading the cast*).
+- `resolveOffset(name string, opts Options, man session.Manifest, hdr castHeader) (offsetMS int64, provenance string, err error)`
+  — pure given its arguments; the `transcribe.resolveOffset` twin. `name` is the
+  cast's display name, which the implausible-timestamp refusal below names.
 - `coalescer` — the record builder (`add(castEvent) error`, `flush() error`),
   pure over its inputs, holding one pending record's runes at a time.
-- `rewriteInteractions(dir string, records []timeline.Interaction) (replaced int, err error)`
-  — the all-or-nothing write.
-- `stageCast(dir, src string) (tmpPath string, err error)` and
-  `commitCast(tmpPath string) error` — the two-phase archival copy.
+- `rewriteInteractions(dir, castName string, t0 int64, records []timeline.Interaction) (replaced int, err error)`
+  — the all-or-nothing write. `castName` is named by the size refusal, and `t0`
+  anchors the merged-timeline pre-flight.
+- `stageCast(dir, name string, src *os.File) (tmpPath string, err error)` and
+  `commitCast(tmpPath string) error` — the two-phase archival copy, staged from
+  the descriptor the scan already holds.
 
 `Run`'s order of operations is `transcribe.Run`'s, for `transcribe.Run`'s stated
 reason — **every refusal fires before anything on disk changes**, so a refused
@@ -165,10 +199,14 @@ import leaves the session byte-for-byte as it found it:
    `terminal.cast` (no-follow guard). Refuse if neither is usable.
 3. Scan the cast, building records as events arrive. Refuse on any malformed
    line, unsupported version, or implausible time, naming the line.
-4. Validate the record set: each record through `timeline.CheckInteraction`, each
-   wrapped timeline entry against `session.MaxJSONLLine`, and the assembled
-   `interactions.jsonl` (plus the merged `timeline.jsonl` it implies) against
-   `session.MaxJSONLBytes`. Refuse the run, not the record.
+4. Validate the record set: each record through `timeline.CheckInteraction`, and
+   the assembled `interactions.jsonl` (plus the merged `timeline.jsonl` it
+   implies) against `session.MaxJSONLBytes`. Refuse the run, not the record.
+   Each wrapped timeline entry is measured against `session.MaxJSONLLine` as its
+   record is **closed** (see *Splitting an oversized event*) rather than in a
+   separate pass: the check exists to catch a wrong encoded-length table, so it
+   belongs beside the budget it verifies. Both fire before step 5, so the
+   nothing-written guarantee is the same either way.
 5. Stage the archival cast copy into a temp file beside `terminal.cast`.
 6. Rewrite `interactions.jsonl` atomically.
 7. Rename the staged copy over `terminal.cast`.
@@ -223,13 +261,28 @@ these is a refusal naming the line, with nothing written:
   bound mirrors `timeline.maxUtteranceSeconds` and `transcribe.maxOffsetSeconds`,
   so a time this importer accepts is a time `merge` accepts.
 
-The version difference is confined to one accumulator: v2 takes each line's time
-as the absolute offset from recording start; v3 adds each interval to a running
-`float64` sum and reports the sum. The sum is kept in `float64` seconds and
-rounded to milliseconds once, per event, when a record's time is computed —
-rounding each interval before summing would let a systematic sub-millisecond bias
-accumulate across thousands of events, while `float64`'s ~1e-12 s resolution over
-a multi-hour session is far below the millisecond the record records.
+The version difference is confined to one accumulator, and that accumulator runs
+on an **exact integer grain**: microseconds (`castTimeGrain = 1e6`). Each event's
+time is rounded onto the grain as it is parsed — `us := int64(math.Round(t*1e6))`
+— and from there v2 sets the clock to it (refusing a decrease) while v3 adds it
+(refusing a negative). The rounding from the grain to the millisecond a record
+records happens once more, downstream, in one place (`microsToMillis`).
+
+The grain is what makes "identical records from either format" true rather than
+nearly true. A `float64`-seconds clock does not give it: v2 rounds a **stated**
+absolute time while v3 rounds a **running sum**, and at a half-millisecond tie
+the two land on different milliseconds. Seven 0.0015 s intervals sum to
+0.010499999999999999 and round to 10 ms, where v2's stated 0.0105 rounds to 11 —
+and one millisecond is enough to put a following event on either side of the
+250 ms coalescing gap, so the same recording becomes one record read as v2 and
+two read as v3. On the grain both formats reach 10500 µs and the question does
+not arise. A microsecond is exact for every time either format writes (both cap a
+time at six decimal places), and 1e9 seconds on the grain is 1e15, three orders
+of magnitude inside `int64`.
+
+The bound is applied **before** the conversion as well as after it, because
+`int64(math.Round(x))` has no defined answer for a float past the integer range:
+a 1e300 time or interval is refused where it is read rather than converted.
 
 Event codes: only `o` (output) becomes records. `i` (input), `r` (resize), `m`
 (marker), `x` (exit), and any code this importer does not recognise are dropped
@@ -243,6 +296,28 @@ aid for a player, not an observed action. An unrecognised code is dropped rather
 than refused so a future asciicast revision that adds one does not turn every
 cast it writes into an unimportable file; the printed count is what keeps that
 tolerance honest.
+
+The tally is bounded, because a code is a single character in both formats but
+nothing in the file format enforces that: a crafted cast can carry a different
+code on every line, and an unbounded map would grow — along with the line it
+prints — in step with the file. At most `maxDropCodes = 16` distinct codes are
+named individually; everything past that is counted together and reported as
+`%d under further codes`. Each named code is passed through `session.SafeText`
+and clipped to 8 runes, the same rule the header literals above obey, and the
+summary is ordered **by code** rather than by its formatted string, so a
+three-digit count cannot sort a code above one that precedes it.
+
+Two details of the bound are load-bearing:
+
+- **`i` is exempt from it.** The input count is the one tally entry that is a
+  privacy disclosure rather than a scoping note — it is how an operator learns
+  their recorder captured keystrokes — and a cast carrying sixteen junk codes
+  before its first `i` would otherwise swallow that line into the anonymous
+  overflow and never print it. Exempting one fixed key cannot unbound the tally:
+  the map holds at most `maxDropCodes+1` entries.
+- **The overflow is a counter, not a map entry under a reserved key.** `""` is a
+  legitimate event code a cast can carry, so a sentinel key would report a real
+  empty-coded event as overflow and overflow as a real event.
 
 Rune fidelity: `encoding/json` replaces invalid UTF-8 in a JSON string with
 U+FFFD when it decodes, so what reaches `castEvent.Data` is already a valid Go
@@ -262,7 +337,10 @@ t = t0 + offsetMS + round(eventSeconds * 1000)
 ```
 
 `offsetMS` is the cast→session offset in milliseconds, resolved by
-`resolveOffset` in the order `transcribe.resolveOffset` uses:
+`resolveOffset` — which reads `t0` through `session.Manifest.T0` itself, so it
+stays a pure function of its arguments and its table test can drive the
+usable/absent-anchor axis directly — in the order `transcribe.resolveOffset`
+uses:
 
 | Condition | `offsetMS` | Printed provenance |
 |---|---|---|
@@ -377,13 +455,26 @@ raw cast is out of scope".
 
 **Splitting an oversized event.** The binding limit is not the record's own line
 length but the size of the **timeline entry `merge` wraps it in** — the
-`transcribe.checkEntriesFit` and `demo.tooLongOnceWrapped` invariant. The
-budget is computed once per run:
+`transcribe.checkEntriesFit` and `demo.tooLongOnceWrapped` invariant. The budget
+is computed once **per record**, at the moment the record opens, from that
+record's own time:
 
 ```
-envelope := session.EncodedLen(timeline.EventEntry(timeline.Interaction{T: t, Kind: OutputKind}, t0))
+probe    := timeline.Interaction{T: t0 + offsetMS + castMS, Kind: OutputKind, Text: "x"}
+envelope := session.EncodedLen(timeline.EventEntry(probe, t0)) - 1
 budget   := session.MaxJSONLLine - envelope - castEntryIDMargin
 ```
+
+Two details of that expression are load-bearing. The probe carries a one-rune
+text (whose single byte the `- 1` removes) because `timeline.BuildEntries` omits
+an empty `text` from the payload entirely, so an envelope measured without one
+under-counts by the whole `,"text":""` scaffolding. And the budget is per record
+rather than per run because the entry's session-relative `t` varies in encoded
+length across a session — `0` is one byte, `-1000000000.123` is fifteen, and
+float64 division of an integer millisecond count produces the decimal form
+either way — so a single run-wide envelope would have to guess at the widest
+case. A record's `t` is known the instant the record opens, which makes
+measuring it exact and costs one small struct encode per record.
 
 `castEntryIDMargin = 32` is `demo.eventIDGrowthMargin`'s twin, for the same
 reason: `timeline.EventEntry` stamps the placeholder id `ev-001`, while the real
@@ -406,8 +497,19 @@ six bytes encoded, and ANSI-coloured output is dense in them. Per rune
 | U+2028, U+2029 | 6 |
 | everything else, DEL and `<`/`>`/`&` included | `utf8.RuneLen(r)` |
 
+The table is an **upper bound**, not an equality: `encoding/json` has written
+backspace and form feed as a six-byte u-escape in some Go versions and as a
+two-byte short escape in others, and the table takes the larger for both. That
+is the safe direction — an over-count spends a few of a 4 MiB budget's bytes,
+while an under-count over-fills the budget and costs a false refusal on the
+measured check below. The property test asserts the bound (never under, equal
+everywhere the two agree) rather than exact equality.
+
 A rune is appended only if it keeps the running total within `budget`; otherwise
-the record closes and the rune opens the next one. Splitting therefore never
+the record closes and the rune opens the next one. A rune is split off only from
+a **non-empty** pending record, so a rune that could not fit even an empty
+record's budget is appended anyway — and caught by the measured check — rather
+than closing and opening records for ever on one it can never hold. Splitting therefore never
 occurs inside a rune, and concatenating a split's records reproduces the event's
 decoded data exactly. Because the table is an assumption about another package's
 encoder, every finished record is additionally measured for real —
@@ -477,9 +579,14 @@ rather than discovering later:
 
 1. Read the existing file, if any, through `session.OpenFileNoFollowRead` (a
    FIFO or symlink planted at the name in a received session is refused, not
-   followed or blocked on) with a `bufio.Scanner` bounded by
-   `session.MaxJSONLLine` and `session.MaxJSONLBytes` — the same pair
-   `ReadJSONL` enforces. A missing file is zero lines, not an error.
+   followed or blocked on), bounded by `session.MaxJSONLLine` per line and
+   `session.MaxJSONLBytes` for the file — the same pair `ReadJSONL` enforces. A
+   missing file is zero lines, not an error. The read is whole rather than
+   scanned, and the split is on `\n` by hand: `bufio.Scanner` strips a trailing
+   carriage return along with the newline, which would silently rewrite a CRLF
+   line the step below promises to keep byte-for-byte. The replacement is
+   assembled in memory anyway for the atomic write, so reading the 16 MiB-capped
+   original whole costs nothing extra.
 2. Classify each line by decoding a probe struct (`{Kind string}` only): a line
    whose `kind` equals `cast.OutputKind` is a record from an earlier import and
    is **dropped**; every other line — a `demo` click, an `input`, a line this
@@ -489,7 +596,11 @@ rather than discovering later:
    foreign record's field order, number formatting, or an unknown field it cannot
    model).
 3. Assemble kept lines, in file order, followed by the new records encoded with
-   `session.EncodedLen`'s encoder settings.
+   `session.EncodedLen`'s encoder settings (`SetEscapeHTML(false)`, so a
+   measured size and a written line cannot disagree). One byte is added and only
+   one: a final kept line carrying no terminating newline gets one, because
+   without it the first imported record would be appended onto that line and
+   neither would survive a read back.
 4. Pre-flight the assembly with the checks `WriteJSONL` would have applied, since
    step 2 is why they cannot be delegated: every line within
    `session.MaxJSONLLine`, and the total within `session.MaxJSONLBytes` —
@@ -499,7 +610,17 @@ rather than discovering later:
    `session.EncodedLen(timeline.EventEntry(rec, t0))` over every decodable
    interaction line plus, when `transcript.jsonl` is present,
    `session.EncodedLen(timeline.SpeechEntry(u))` over every utterance, against
-   `session.MaxJSONLBytes` —
+   `session.MaxJSONLBytes`. Each event entry is charged its **id growth** —
+   `demo.idGrowth`'s arithmetic, restated as `castIDGrowth` — because
+   `timeline.EventEntry` sizes every entry with the placeholder id `ev-001`
+   while `merge` assigns `ev-%03d` by position, so past the thousandth
+   interaction the real id is longer than the measured one. Without the charge a
+   session sitting just under the cap with a few thousand interactions passes
+   this pre-flight and is then refused by `merge` — the exact "import succeeds,
+   merge can never read it back" state the pre-flight exists to prevent. The
+   ordinal is the position across the prior records and then the new ones, which
+   is the order they are written in and so the order `merge` numbers them in.
+   The message is —
    `the imported records would take the merged %s past its %d-byte limit; record shorter terminal sessions, or start a fresh session`.
    An interaction line that does not decode is not sized: `merge` will refuse
    that session for its own, pre-existing reason, and `import` must not be
@@ -524,9 +645,15 @@ Consequences, all intended:
   session are out of scope; the reference says so, and the remedy is one terminal
   per session.
 - **Zero records is a refusal, not an erasure.** A cast holding no importable
-  output events would otherwise silently delete a prior import's records — the
-  hazard `transcribe`'s zero-utterance guard and `merge`'s zero-entry guard both
-  refuse: `%s holds no output events; refusing to rewrite %s`.
+  output would otherwise silently delete a prior import's records — the hazard
+  `transcribe`'s zero-utterance guard and `merge`'s zero-entry guard both refuse.
+  The two ways to reach it are named apart, because they call for different
+  remedies: a cast with no output events at all is the wrong file (or one
+  recorded with input capture only) —
+  `%s holds no output events; refusing to rewrite %s` — while a cast whose output
+  all rendered empty is a real recording of a terminal that displayed nothing
+  legible —
+  `%s holds no importable output (%d record(s) rendered empty); refusing to rewrite %s`.
 
 ### The archival copy
 
@@ -548,10 +675,18 @@ a wrong name.
 The copy is two-phase, so the ordering question ("which artefact is left behind
 if the other write fails?") has a defensible answer rather than a rollback:
 
-- `stageCast` streams the source into `.terminal.cast.tmp-*` beside the target
-  with `os.CreateTemp` and `io.Copy` over an `io.LimitReader(maxCastBytes)` —
-  the `transcribe.atomicConvert` shape, including the prior-mode preservation
-  rule (an existing `terminal.cast`'s own mode is reapplied; a new file takes
+- `stageCast(dir, name string, src *os.File)` streams the source into
+  `.terminal.cast.tmp-*` beside the target with `os.CreateTemp` and `io.Copy`
+  over an `io.LimitReader(maxCastBytes+1)`. `src` is the descriptor the scan
+  already read, **rewound** rather than re-opened by path: the archive must hold
+  the bytes the records were derived from, and between two opens of a path the
+  operator's file can be replaced or rewritten, which would leave the session
+  asserting a byte-for-byte archive of something else. The copy is refused if it
+  reaches the limit reader's extra byte — the bound is read one byte past so a
+  file that grew is refused rather than archived truncated, which is the one
+  place this design makes a byte-for-byte claim. Otherwise the
+  `transcribe.atomicConvert` shape, including
+  the prior-mode preservation rule (an existing `terminal.cast`'s own mode is reapplied; a new file takes
   `0o644 &^ umask`, so a privacy-conscious operator's umask is honoured).
   A non-regular or symlinked `terminal.cast` is refused before the temp is
   created, `transcribe.checkPlainOutput`'s rule.
@@ -604,6 +739,43 @@ searchable and cheaper to hand to an analysis model. Stripping CSI/OSC sequences
 at import is recorded here as a deliberate follow-up option, with the archived
 `terminal.cast` as the safety net that would make it reversible.
 
+### Printed output
+
+Everything `import` says about its own run goes to `opts.Log`, which the CLI
+wires to **stderr** — beside `resolveSession`'s inference line, and for the same
+reason. `stdout` carries exactly one line, the summary the CLI itself prints, so
+a script reads one line rather than parsing diagnostics out of a stream. (This
+is a deliberate split from `transcribe`, which puts its own progress on stdout:
+`transcribe` predates the inference line, and `import` has more to say.)
+
+In order, and all but the first printed only when they are non-zero:
+
+```
+offset: %+.2fs (%s)                                      the provenance table above; every run
+dropped %d input (i) event(s): keystrokes are never imported
+dropped %d other event(s): 1 marker (m), 1 resize (r), 1 exit (x)
+dropped %d record(s) that render empty
+replaced %d terminal_output record(s) from an earlier import
+```
+
+then, from the CLI:
+
+```
+imported %d records → <session>/interactions.jsonl
+```
+
+The offset line is `transcribe`'s format verbatim, and it prints on **every**
+run, so "offset 0 because the header said nothing" is never a silent
+assumption. Input is named on its own line because its drop is a privacy
+guarantee rather than a scoping decision, and the count is how an operator
+learns their recorder captured keystrokes — and the count is exempt from the
+tally's bound, so a cast full of junk codes cannot suppress the disclosure. The
+other codes are listed together, ordered by code so the line is deterministic
+whatever order the tally iterates in, with any overflow last.
+
+The offset and drop lines print before the zero-records refusal, so an operator
+whose cast held nothing importable still learns what was in it.
+
 ### Downstream: merge, report, analyze unchanged
 
 Confirmed by reading, not assumed:
@@ -638,13 +810,13 @@ analysing), not a code change, and it is where the privacy warning lands too.
 
 | Situation | Status | Message shape |
 |---|---|---|
-| `-session` missing, empty `-session`/`-cast`, stray positional, bad `-offset` | 2 | the existing `usageErr` shapes |
+| `-session` missing with no session manifest in the current directory, empty `-session`/`-cast`, stray positional, bad `-offset` | 2 | the existing `usageErr` shapes |
 | no `manifest.json`, or no usable `t0` | 1 | `anchoring the terminal cast: %w` |
 | neither `-cast` nor `terminal.cast` | 1 | `no %s in session %s and no -cast given: record a terminal with asciinema, then pass -cast FILE` |
 | `-cast` names a missing or non-regular file | 1 | `cast file: %w` / `refusing to read %s: it is not a regular file` |
 | unsupported version, malformed header or event, over-long line or file | 1 | the `%s:%d:`-prefixed shapes above |
 | implausible header timestamp or derived offset | 1 | the `-offset SECONDS` guidance shapes above |
-| no importable output events | 1 | `%s holds no output events; refusing to rewrite %s` |
+| no importable output | 1 | `%s holds no output events…`, or `%s holds no importable output (%d record(s) rendered empty)…` |
 | a size limit reached | 1 | the limit shapes above |
 | a write failure | 1 | wrapped `session`/`os` error |
 
@@ -668,11 +840,17 @@ Each bullet is the intent's criterion, then the mechanism, then the test.
    Mechanism: the v2/v3 difference is confined to `scanCast`'s accumulator, and
    `castEvent.T` is absolute in both cases, so every stage after it is
    format-blind.
-   Test: `TestV2AndV3Agree` — `testdata/v2.cast` and `testdata/v3.cast` describe
-   the same recording (identical header timestamp, event codes, and absolute
-   times; v3's intervals are the differences); assert the two runs produce
-   byte-identical `interactions.jsonl`. A second assertion pins the reconstruction
-   itself: `TestScanCastV3RunningSum` over a table of interval sequences.
+   Test: `TestV2AndV3Agree` — a table over two fixture pairs, each describing one
+   recording in both formats (identical header timestamp, event codes, and
+   absolute times; v3's intervals are the differences): the ordinary recording,
+   and the half-millisecond tie pair above, which is the case a `float64` clock
+   splits apart. Assert the two runs produce byte-identical `interactions.jsonl`,
+   and the expected record count, so the pair cannot pass by both formats being
+   wrong the same way; `TestTiesCoalesceIntoOneRecord` states that count
+   independently. Two more pin the reconstruction itself:
+   `TestScanCastV3RunningSum` over a table of interval sequences (compared
+   exactly, on the grain, ties included) and `TestMicrosToMillis` over the one
+   rounding step from the grain to a record's millisecond.
 3. **A version other than 2 or 3 is refused, naming file and version, writing
    nothing.**
    Mechanism: the header switch refuses before step 4, and every write is in
@@ -709,8 +887,10 @@ Each bullet is the intent's criterion, then the mechanism, then the test.
    nothing truncated.**
    Mechanism: the encoded-length budget, the per-rune append test, and the
    measured `EncodedLen` assertion per record.
-   Test: `TestOversizedEventSplits` — one `o` event of ~12 MiB of mixed ASCII,
-   multi-byte runes, and ESC bytes; assert (a) more than one record, (b) every
+   Test: `TestOversizedEventSplits` — one `o` event of mixed ASCII,
+   multi-byte runes, and ESC bytes, sized as the test plan explains (~6 MiB at
+   the package boundary, the full ~12 MiB in the `coalescer` unit, which writes
+   nothing); assert (a) more than one record, (b) every
    wrapped entry within `session.MaxJSONLLine`, (c) concatenating the records'
    `text` reproduces the event's decoded data exactly, (d) no record boundary
    falls inside a rune (implied by (c), asserted directly with `utf8.ValidString`
@@ -728,8 +908,9 @@ Each bullet is the intent's criterion, then the mechanism, then the test.
    subprocess, no signal path.
    Test: the existing `internal/record` suite stays green with no edits; the
    evidence is the empty diff in that package. `TestUsageListsImport` asserts the
-   new verb appears in the usage text (so the surface change is visible) while
-   `record`'s flag set is unchanged.
+   new verb appears in the usage text (so the surface change is visible), that
+   the inferring-commands footer names it, and that no `-terminal` flag is
+   offered anywhere in that text — the fence, asserted rather than assumed.
 
 Additional criteria the intent states in scope rather than as a Given/When/Then,
 each with its test: input events dropped (`TestInputEventsDropped`, asserting no
@@ -790,6 +971,19 @@ The intent's four open questions, and the two this spec had to add.
    and the remedy for the printable residue is recording guidance
    (`NO_COLOR=1`) rather than an ANSI parser in the importer. Stripping at
    import is recorded as a reversible follow-up.
+7. **Settled: `-session` follows itd-12's shared inference rule.** The open
+   question in the command-surface section is closed by itd-12 having landed:
+   `import` resolves `-session` through `cli.resolveSession`, last among its
+   invocation checks, and carries no required-flag refusal of its own. One flag,
+   one rule, on all six pipeline commands.
+8. **Settled: the budget is measured per record, and `cast` reuses
+   `transcribe.CheckOffset`.** Two numeric rules that could each have been
+   copied are not: the encoded-length budget is measured from the record's own
+   time through `session.EncodedLen` (rather than assumed once per run), and the
+   offset's finiteness and ±10⁹ s bound stay in `transcribe.CheckOffset`, called
+   by both the CLI (for exit 2) and `cast.Run` (so a direct caller cannot pass a
+   non-finite offset into an integer conversion). `cast` importing `transcribe`
+   for one predicate is the cheaper of the two costs.
 
 ## Test plan
 
@@ -800,7 +994,14 @@ runs it via the existing `go test -race ./...` gate, with `gofmt -l .` and
 
 **Fixtures** (`internal/cast/testdata/`): `v2.cast` and `v3.cast` (the same
 recording in both formats, with a header timestamp, output, input, resize,
-marker, and exit events); `v3-nots.cast` (no header `timestamp`);
+marker, and exit events); `v2-ties.cast` and `v3-ties.cast` (the same recording
+again, built so the clock's rounding is the thing under test: seven 1.5 ms
+keystrokes put the seventh at exactly 10.5 ms — a half-millisecond tie that
+rounds one way from a stated absolute time and the other from a running sum —
+with the eighth event 249.5 ms later, so a one-millisecond disagreement falls on
+either side of the 250 ms gap and the recording becomes one record or two — on a
+`float64` clock this pair yields 1 record read as v2 and 2 read as v3, and on the
+microsecond grain 1 either way); `v3-nots.cast` (no header `timestamp`);
 `bad-version.cast`, `bad-header.cast`, `bad-event.cast`, `decreasing.cast`,
 `negative-interval.cast`; `golden.interactions.jsonl` (the expected records for
 `v2.cast`, the `whisperx.golden.jsonl` precedent). Oversized inputs are generated
@@ -808,9 +1009,14 @@ in-test rather than committed.
 
 **Pure units**
 - `scanCast`: v2 absolute times; v3 running sum (table of interval sequences,
-  including `0` intervals and a long tail); code classification and per-code drop
-  counts; blank-line skipping; every malformed-line refusal, each asserting the
-  line number in the message; the per-line and per-file bounds.
+  including `0` intervals and a long tail); every code delivered to the callback
+  in order; blank-line skipping (with the line numbers still counting the blanks,
+  so a refusal names a line the operator can find); every malformed-line refusal,
+  each asserting the line number in the message; the per-line and per-file bounds
+  (the file bound driven by a repeating reader rather than a 64 MiB fixture);
+  both callbacks' errors propagating unchanged. The per-code drop counts are
+  asserted at `Run`, where the classification lives, along with the tally's
+  16-code bound and the clipping of an over-long code.
 - `resolveOffset`: table over `-offset` set/unset × header timestamp
   present/absent/non-positive × `t0` usable/absent → `(offsetMS, provenance,
   error)`, asserting the three provenance strings verbatim (they are a documented
@@ -819,10 +1025,16 @@ in-test rather than committed.
   and times, one case per boundary (newline, 250 ms gap, 1 s span, budget), plus
   the interaction of two boundaries falling together, plus the
   renders-empty drop and its count.
-- the per-rune encoded-length table: property test asserting the table agrees
-  with `session.EncodedLen` for every rune in a sampled set (all of ASCII, a
-  handful of multi-byte runes, U+2028/9, U+FFFD) — so a stdlib change that
-  invalidates the table fails here rather than as a refused import.
+- the per-rune encoded-length table: property test asserting the table is never
+  *under* `session.EncodedLen`'s real cost for every rune in a sampled set (all
+  of ASCII, a handful of multi-byte runes, U+2028/9, U+FFFD, the invisible Cf
+  runes), and equal wherever the two agree — so a stdlib change that invalidates
+  the table fails here rather than as a refused import, while the deliberate
+  over-count on backspace and form feed stays legal.
+- the measured entry-size refusal, which is unreachable while the table holds:
+  driven white-box, by falsifying a `coalescer`'s budget so an over-long record
+  reaches `close`, and asserting the importer-bug message and that no record is
+  kept.
 
 **Package-level `Run`**
 - happy path: records written, return value, printed lines (a `bytes.Buffer`
@@ -841,7 +1053,16 @@ in-test rather than committed.
 - size limits: an assembled `interactions.jsonl` over 16 MiB; a merged-timeline
   total over 16 MiB with `interactions.jsonl` itself under it (the case only an
   offline importer can measure).
-- oversized single event: the four assertions in criterion 7.
+- oversized single event: the four assertions in criterion 7, plus a `Merge` over
+  the result, since fitting the line limit is only worth anything if merge then
+  accepts it. The event is ~6 MiB of mixed ASCII, multi-byte runes, and ESC
+  bytes rather than the ~12 MiB the criterion's prose suggests: escaping inflates
+  those records by about a third, so a 12 MiB event is refused for
+  `interactions.jsonl`'s own 16 MiB file cap before the split can be observed.
+  6 MiB is comfortably past the 4 MiB line limit, which is all the split needs.
+  The `coalescer` unit test, which writes nothing, uses the full 12 MiB.
+- the file-mode rules: an existing `interactions.jsonl`'s mode preserved across
+  the rewrite, and an existing `terminal.cast`'s preserved across the archive.
 
 **Integration (still hermetic)**
 - `import` → `timeline.Merge` → `report.Render` for the v2 and the v3 fixture:
@@ -849,18 +1070,61 @@ in-test rather than committed.
   fragments.
 - `TestImportedRecordsPassCheckInteraction` over every fixture.
 
-**`internal/cli`**
-- `import` dispatch: missing `-session` → 2; empty `-session`/`-cast` → 2; stray
-  positional → 2; non-finite and out-of-bound `-offset` → 2; a well-formed run
-  over a fixture session → 0.
-- usage text contains the `import` block.
+**`internal/cli`** — `import` joins the four shared tables that already state
+these contracts for its siblings, rather than growing a table of its own:
+`TestStrayPositionalIsAUsageError`, `TestInvalidFlagValuesExitTwo` (empty
+`-cast`, non-finite and out-of-bound `-offset`), `TestMissingSessionIsAUsageError`
+and `TestEmptySessionIsAUsageErrorNotInference` (the two `-session` refusals),
+and `TestRefusedInvocationAnnouncesNoSession` (a run refused for `-offset`
+announces no inferred session). Six cases are its own:
+- `TestImportWritesTerminalRecords` — a well-formed run over a cast fixture
+  written in-test: exit 0, the summary line on stdout, the records and their
+  times in `interactions.jsonl`, no keystroke among them, and the cast archived
+  byte-identically.
+- `TestImportDiagnosticsStayOffStdout` — the offset provenance and the drop
+  counts on stderr, and stdout carrying nothing but the one summary line.
+- `TestImportInfersSessionAndReImportsInPlace` — the offset-correction recipe
+  end to end: import with `-cast`, then a bare `import -offset -12.4` from inside
+  the session, asserting the inference line, the explicit-offset provenance, the
+  replaced-record count, and that the correction replaced the derived offset
+  rather than compounding it.
+- `TestImportRefusesUnreadableCastAtRuntime` — an absent `-cast` is exit 1, not
+  exit 2, so a script can tell a mistyped flag from a missing file.
+- `TestUsageListsImport` — the usage block, the inferring-commands footer, and
+  the absence of any `-terminal` flag.
 
-**Not automated** (stated, not claimed as covered): a live two-terminal session —
-`testimony record` in one window, `asciinema rec` in another, on both the 2.x and
-3.x CLI lines — imported, merged, and read as a report, to confirm the 250 ms gap
-and 1 s span values behave on real shell output and that the offset lands within
-a second. This is part of done for the implementing PR, not a CI gate, and the
-constants are tuned against it before the PR lands.
+**CI** — one hermetic smoke step (`Terminal import smoke test`) builds a
+throwaway session around `internal/cast/testdata/v2.cast` in a temp directory and
+asserts what the unit tests cannot reach through the CLI: the stdout/stderr
+split, the archived cast being byte-identical (`cmp`), a bare re-import leaving
+`interactions.jsonl` byte-for-byte unchanged (`cmp`), and the records merging and
+rendering with a signed clock. `examples/sample-session/` is deliberately
+untouched, so the quickstart's golden report is unaffected.
+
+**Live verification** (not a CI gate, and stated here for exactly what it does
+and does not cover).
+
+*Verified against a real recorder.* An asciinema **2.4.0** recording — the PyPI
+line, so asciicast **v2** — of a shell session running `printf hello`, `ls /`, a
+three-frame `\r` progress line, and three ticks 300 ms apart, imported into a
+scratch session whose `t0` sits 1.5 s before the cast header's timestamp. The
+derived offset is `+1.50s`, matching the constructed skew; the run produces 8
+records; each `ls` line is its own record; the three `\r` frames coalesce into
+one record; the three ticks stay separate, which is the 250 ms gap behaving on
+real shell timing rather than on fixture timing. `merge` and `report` then render
+them under the utterance as designed. The one thing the live run showed that the
+fixtures only asserted is the cost this spec already accepts: a coloured `ls`
+renders as CSI residue in `report.md` (open ledger issue
+`iss-2609120520334220`), which is what the `NO_COLOR=1` guidance is for.
+
+*Not verified against a real recorder.* The **3.x (v3)** line is not installed on
+the machine the verification ran on, so asciicast v3 is exercised by fixtures
+only — including the tie pair, which is the case the two formats could diverge
+on. The two-terminal procedure itself (`testimony record` narrating in one window
+while `asciinema rec` records in another) was not run end to end with live audio,
+so the spoken-marker cross-check for the whole-second anchor remains a documented
+procedure rather than a measured one. Both gaps are named here rather than in a
+claim the tests do not carry.
 
 ## Docs plan
 
@@ -911,9 +1175,14 @@ English in prose.
 - **`README.md`** — `import` in the *Status and roadmap* working-today list, and
   `terminal.cast` in the session-directory block. The pipeline diagram gains one
   row (`terminal ──► asciinema ──► terminal.cast ──► interactions.jsonl`).
-- **`AGENTS.md`** (symlinked as `CLAUDE.md`) — the *Current state* paragraph's
-  command inventory goes from seven pipeline commands to eight, naming `import`
-  in the capture/hand-off group.
+- **`AGENTS.md`** (`CLAUDE.md` is a symlink to it, so one edit serves both) —
+  the *Current state* paragraph's command inventory goes from seven pipeline
+  commands to eight, pairing `import` with `transcribe` as the two hand-off
+  commands for a recording the CLI never made; and the *Build, test, and checks*
+  block gains the import smoke line beside the `merge`/`report` one.
+- **`.github/workflows/ci.yml`** — one hermetic `Terminal import smoke test`
+  step (see the test plan) and the workflow header comment that enumerates what
+  it runs.
 - **`CHANGELOG.md`** — one entry under the unreleased heading, per the
   changelog-driven release gate.
 - **`install.sh`** — **no change**, for the reason recorded under decision 3: the

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/REPPL/Testimony/internal/analyze"
+	"github.com/REPPL/Testimony/internal/cast"
 	"github.com/REPPL/Testimony/internal/demo"
 	"github.com/REPPL/Testimony/internal/drafttests"
 	"github.com/REPPL/Testimony/internal/record"
@@ -34,6 +35,8 @@ Usage:
   testimony transcribe  [-session DIR] [-audio FILE]    transcribe a voice recording into transcript.jsonl (reuses the session's audio.wav when -audio is omitted)
                         [-engine auto|whisperx|whispercpp] [-model large-v3-turbo] [-language en] [-offset SECONDS]
                         [-device auto|cpu|cuda] [-compute_type auto|int8|float16|…] [-vad auto|silero|pyannote]   (whisperx only)
+  testimony import      [-session DIR] [-cast FILE]     import an asciinema recording's output into interactions.jsonl (reuses the session's terminal.cast when -cast is omitted)
+                        [-offset SECONDS]
   testimony merge       [-session DIR]                  merge transcript + interactions into timeline.jsonl
   testimony report      [-session DIR] [-window 2.5]    render timeline.jsonl as a Markdown report
   testimony analyze     [-session DIR] [-out FILE]      emit the analysis request (rubric + timeline) on stdout or to FILE
@@ -49,9 +52,10 @@ Usage:
   testimony help
 
 A session directory is described in docs/reference/session-directory.md.
-Omitting -session on transcribe, merge, report, analyze, draft-tests, or review
-uses the current directory when it holds a Testimony session manifest.json (one
-with a session field), and names the inferred session on stderr.
+Omitting -session on transcribe, import, merge, report, analyze, draft-tests, or
+review uses the current directory when it holds a Testimony session
+manifest.json (one with a session field), and names the inferred session on
+stderr.
 `
 
 // Run executes the CLI and returns a process exit code.
@@ -316,6 +320,73 @@ func Run(args []string) int {
 			return fail(err)
 		}
 		fmt.Printf("transcribed %d utterances → %s\n", n, filepath.Join(sess, session.TranscriptFile))
+		return 0
+
+	case "import":
+		fs := flag.NewFlagSet("import", flag.ExitOnError)
+		dir := fs.String("session", "", "session directory")
+		castFile := fs.String("cast", "", "asciicast file (v2 or v3); omit to reuse the session's terminal.cast")
+		offset := fs.Float64("offset", 0, "cast→session clock offset in seconds (default: derived from the cast header's timestamp)")
+		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
+		castSet, offsetSet := false, false
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "cast":
+				castSet = true
+			case "offset":
+				offsetSet = true
+			}
+		})
+		// An explicitly-empty -cast is a wrong invocation (an unset shell variable
+		// spliced into the flag, say), not "omit -cast" — transcribe's -audio
+		// precedent, and for the same reason: left unchecked it silently selects the
+		// in-place branch, re-importing the session's own terminal.cast instead of
+		// the file the caller named, at exit 0.
+		//
+		// -cast carries no extension check, unlike -audio's closed .m4a/.mov/.wav
+		// set. That set exists because ffmpeg accepts only those containers; here the
+		// cast header's version field is the authority on whether a file is
+		// importable, and a name rule would refuse a legitimately-named cast
+		// (`asciinema rec` writes whatever name the operator gives it, and a
+		// redirected recording may carry no extension at all).
+		if castSet && *castFile == "" {
+			return usageErr(fmt.Errorf("import: -cast must not be empty"))
+		}
+		// The same bound transcribe's -offset obeys, from the same function, refused
+		// at exit 2 before anything reads the cast: a non-finite offset has no
+		// millisecond value to round to, and a finite but absurd one would write
+		// records merge refuses one command later, naming interactions.jsonl rather
+		// than the flag.
+		if offsetSet {
+			if err := transcribe.CheckOffset(*offset); err != nil {
+				return usageErr(fmt.Errorf("import: %w", err))
+			}
+		}
+		// Resolved last of the invocation checks, as on every other pipeline
+		// command: import is one of them, so -session obeys the one shared rule
+		// rather than a required-flag refusal of its own, and a run refused for
+		// another flag announces no session it never used.
+		sess, err := resolveSession(fs, *dir)
+		if err != nil {
+			return usageErr(err)
+		}
+		// The offset provenance line, the dropped-event counts, and the replaced-record
+		// count go to stderr, beside resolveSession's own inference line, so stdout
+		// carries just the one summary line a script reads.
+		n, err := cast.Run(cast.Options{
+			SessionDir: sess,
+			Cast:       *castFile,
+			Offset:     *offset,
+			OffsetSet:  offsetSet,
+			Log:        os.Stderr,
+		})
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Printf("imported %d records → %s\n", n, filepath.Join(sess, session.InteractionsFile))
 		return 0
 
 	case "analyze":
