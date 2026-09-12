@@ -9,7 +9,9 @@ useful. Short and pointer-heavy; durable design truth lives in
 
 Testimony captures usability evidence, on the record. A Go CLI
 (`testimony`, standard library only) with `record` (managed capture),
-`demo`, `transcribe`, `merge`, and `report` working end-to-end, plus the
+`demo`, `transcribe`, `import` (an operator-recorded asciinema terminal
+session joins the interaction stream on the shared clock), `merge`, and
+`report` working end-to-end, plus the
 first-pass analysis layer — `analyze` (emit a host-delegated analysis
 request, then validate the answer into `findings.jsonl`) and `review`
 (record human verdicts, appended non-destructively) — and the

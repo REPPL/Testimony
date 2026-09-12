@@ -4,9 +4,9 @@ Everything lives under `internal/`; `cmd/testimony/main.go` is a thin
 entrypoint that calls `cli.Run` and exits with its return code.
 
 - **`internal/cli`** — the command-line interface: usage text, one
-  `flag.FlagSet` per subcommand (`demo`, `record`, `transcribe`, `merge`,
-  `report`, `analyze`, `draft-tests`, `review`, `version`, `help`), and dispatch
-  into the other packages. Holds the `Version` variable stamped by the release
+  `flag.FlagSet` per subcommand (`demo`, `record`, `transcribe`, `import`,
+  `merge`, `report`, `analyze`, `draft-tests`, `review`, `version`, `help`), and
+  dispatch into the other packages. Holds the `Version` variable stamped by the release
   process. Errors print as `testimony: <err>` and map to exit codes (1
   failure, 2 usage).
 - **`internal/demo`** — the instrumented demo app: an embedded single-page
@@ -40,6 +40,14 @@ entrypoint that calls `cli.Run` and exits with its return code.
   engines' JSON output files into engine-neutral segments, and the mapping of
   segments to the `Utterance` schema. Fixture-tested against golden JSONL
   files in `testdata/`.
+- **`internal/cast`** — the terminal import path: a streaming asciicast reader
+  that resolves v2's absolute times and v3's interval sums into one absolute
+  recording clock, the offset resolution from the cast header's own timestamp,
+  the coalescer that turns adjacent output events into one record per displayed
+  line, and the all-or-nothing rewrite of `interactions.jsonl` that replaces
+  only the records this importer wrote. Named for the artefact it parses because
+  `import` is a Go keyword. Fixture-tested against a v2/v3 pair describing one
+  recording, plus a golden JSONL file, in `testdata/`.
 - **`internal/report`** — Markdown rendering of a merged timeline: the
   event↔utterance attachment pass (the same window test as
   `timeline.EventsNear`, inlined and keyed by position so the join does not

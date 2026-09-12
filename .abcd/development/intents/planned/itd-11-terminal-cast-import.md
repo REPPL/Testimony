@@ -1,8 +1,8 @@
 ---
 id: itd-11
 slug: terminal-cast-import
-spec_id: null
-kind: null
+spec_id: spc-2609120417486971
+kind: standalone
 suggested_kind: null
 reclassification_history: []
 builds_on: []
@@ -62,6 +62,18 @@ Alternatives considered and set aside: plain `script(1)` is universally availabl
 - **Given** a single output event larger than the readable JSONL line limit, **when** it is imported, **then** it is split across multiple records within the limit with every byte preserved, and no record is truncated.
 - **Given** a `record` session with a terminal recording underway in another window, **when** the operator presses Ctrl+C in `record`'s terminal, **then** the session finalises exactly as an audio-only session does — nothing about terminal capture appears in `record`'s lifecycle.
 
+## Scope Conditions
+
+- **The operator's asciinema writes asciicast v2 or v3**, and the file reaches the import step as that recorder wrote it. Any other format — asciicast v1, a `script(1)` timing pair, a converted or hand-edited cast declaring another version — is refused by name, so the claim covers the two formats in the wild and nothing else. <!-- cond: cond-2609120432406223 -->
+- **The cast header carries an integer `timestamp`, or the operator states the anchor with `-offset`.** Both formats make the field optional. With neither, the terminal stream is placed at offset 0 — the assumption that the recorder started at `t0` — and the spoken start marker is the only cross-check the operator has. <!-- cond: cond-2609120432405024 -->
+- **The anchor is honest to a whole second, not to a millisecond.** The header field is an integer in both formats, so the reconstructed clock can sit up to a second adrift of `t0`, against a 2.5-second default join window. <!-- cond: cond-2609120432402714 -->
+- **The session directory holds a `manifest.json` with a positive `t0_epoch_ms`.** Interaction times are epoch milliseconds anchored against it; a session without a usable `t0` cannot place any interaction on the session clock, terminal or otherwise. <!-- cond: cond-2609120432402423 -->
+- **The narration and the terminal recording belong to one wall-clock session**, so both streams resolve against the same `t0`. Two recordings made at different times do not interleave by being imported into one directory. <!-- cond: cond-2609120432402550 -->
+- **The recorded work is line-oriented shell output.** A full-screen TUI, a pager, or a progress bar redrawing over itself keeps its evidence in redraw sequences: they are preserved verbatim, and are not reconstructed into what the screen finally displayed. <!-- cond: cond-2609120432404128 -->
+- **One terminal recording per session.** Records from a second, different cast replace the first's, because both are identified as this importer's own. <!-- cond: cond-2609120432407170 -->
+- **Input capture is left off at record time**, the recommended invocation on both CLI lines. The importer drops `i` events regardless, but only recording without input capture keeps keystrokes out of the artefact itself. <!-- cond: cond-2609120432408324 -->
+- **The operator reviews or redacts the derived timeline before `analyze` runs.** Terminal output routinely carries usernames, hostnames, absolute paths, environment values, and occasionally secrets printed by tools — more of the machine than a demo app ever shows. <!-- cond: cond-2609120432400428 -->
+
 ## Open Questions
 
 - Command surface: a new verb, or a flag on an existing command? The `transcribe -audio` analogy suggests a peer command; the name should not imply it transcribes speech.
@@ -72,3 +84,7 @@ Alternatives considered and set aside: plain `script(1)` is universally availabl
 ## Audit Notes
 
 _Empty. Populated by intent-fidelity-reviewer when intent moves to shipped/._
+
+## Grounds
+
+- pursued: an operator-recorded asciicast (v2 or v3), anchored by its header timestamp to the session t0 and coalesced per displayed line, gives merge and report a terminal interaction stream good enough to sit a spoken stumble beside the command and output that caused it, with no change to record; what would show it wrong is real sessions where the whole-second header anchor or the line coalescing leaves output misaligned with speech beyond the join window

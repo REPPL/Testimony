@@ -1642,3 +1642,21 @@ Architecture-shaping decisions graduate to an ADR under
   not the model's to choose, and requiring the quote byte for byte makes the
   drafting step structurally incapable of introducing evidence the human never
   vouched for.
+- 2026-09-12 — A terminal recording arrives by hand-off, not by wrapping:
+  `testimony import -session DIR [-cast FILE] [-offset SECONDS]` reads an
+  operator-recorded asciicast (v2 or v3, told apart by the header's `version`)
+  into `interactions.jsonl`, and `record` gains no flag, no pty, and no second
+  way to end. The offset comes from the cast header's own integer timestamp,
+  with the `(whole seconds, ±1s)` caveat in the printed provenance line.
+- 2026-09-12 — Imported terminal records are marked by `kind:
+  "terminal_output"` — a reserved kind, documented as such — rather than by a
+  new `source` field every reader in the repository would drop; a re-import
+  rewrites `interactions.jsonl` whole, replacing exactly those records and
+  keeping every other line byte-for-byte, and refuses rather than erase when a
+  cast yields none.
+- 2026-09-12 — Output events coalesce into one record per displayed line (cut
+  at a newline, a 250 ms gap, a 1 s span, or the encoded JSONL line budget),
+  input events are dropped unconditionally as a privacy layer, and ANSI
+  sequences stay raw in the record with the raw `.cast` archived as
+  `terminal.cast`; stripping CSI/OSC at import is recorded as a reversible
+  follow-up.

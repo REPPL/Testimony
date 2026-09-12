@@ -1,0 +1,5 @@
+{"t":1784300398000,"kind":"terminal_output","text":"\u001b[0;32malice@example.test\u001b[0m:~/project$ "}
+{"t":1784300398520,"kind":"terminal_output","text":"ls --color\r\n"}
+{"t":1784300399502,"kind":"terminal_output","text":"\u001b[0;34mdocs\u001b[0m  \u001b[0;34minternal\u001b[0m  README.md\r\n"}
+{"t":1784300400000,"kind":"terminal_output","text":"building   0%\rbuilding  50%\rbuilding 100%\r\n"}
+{"t":1784300401000,"kind":"terminal_output","text":"\u001b[0;32malice@example.test\u001b[0m:~/project$ "}

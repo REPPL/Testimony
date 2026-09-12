@@ -10,6 +10,7 @@ sessions/<timestamp>/
   audio.offset.json     # audio→session offset for an external recording (written by transcribe; local only)
   screen.mp4            # screen capture (written by record -video; local only)
   events.rrweb.jsonl    # raw rrweb events (archival; web sessions only)
+  terminal.cast         # raw asciicast (archival; written by import; local only)
   interactions.jsonl    # normalised interaction events (epoch ms)
   transcript.jsonl      # word-aligned utterances (session-relative seconds)
   timeline.jsonl        # merged, session-relative timeline
@@ -60,6 +61,23 @@ schema changes update code, sample, and tests together
 | `text` | string | optional element text |
 | `value` | string | optional input value |
 | `route` | string | optional |
+
+`kind` is an open set with one reserved value: `terminal_output`, written only
+by [`import`](../04-surfaces/08-import.md), which identifies its own earlier
+records by that value alone. Such a record carries `t`, `kind`, and `text` only;
+one record is one line the terminal displayed, its `text` keeping carriage
+returns and ANSI escape sequences verbatim.
+
+## `terminal.cast` — one asciicast, as recorded
+
+Not a session schema this project defines: the file is an
+[asciicast](https://docs.asciinema.org/manual/asciicast/v2/) v2 or v3 recording,
+copied into the session byte-for-byte by `import` and read back by a later
+`import` that omits `-cast`. Archival only — nothing downstream reads it — and
+local only, since it holds every event the recorder captured, keystrokes
+included. `import` reads only the header's `version` and `timestamp`, ignoring
+every other header field, and bounds a read at 16 MiB per line and 64 MiB per
+file.
 
 ## `timeline.jsonl` — one `Entry` per line
 

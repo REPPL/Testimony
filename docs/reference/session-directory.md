@@ -9,6 +9,7 @@ sessions/<timestamp>/
   audio.offset.json    # audio→session offset for an external recording (written by transcribe; local only)
   screen.mp4           # screen capture, H.264, 30 fps with cursor (written by record -video; local only)
   events.rrweb.jsonl   # raw rrweb stream, archival (written by demo and record -demo)
+  terminal.cast        # raw asciicast, archival (written by import; local only)
   interactions.jsonl   # normalised interaction events (written by demo and record -demo)
   transcript.jsonl     # time-aligned utterances (written by transcribe)
   timeline.jsonl       # merged, session-relative timeline (written by merge)
@@ -17,7 +18,7 @@ sessions/<timestamp>/
   report.md            # human-readable aligned record (written by report)
 ```
 
-All `.jsonl` files are JSON Lines: one JSON value per line, blank lines ignored. `timeline.jsonl`, `transcript.jsonl`, `interactions.jsonl`, `findings.jsonl`, and `tests.jsonl` each carry a 16 MiB total-size limit: a write that would push one over the cap is refused, and a load of one already over it is refused, so a session that reaches it needs a fresh session directory to continue in. `events.rrweb.jsonl` is archival and carries no such limit.
+All `.jsonl` files are JSON Lines: one JSON value per line, blank lines ignored. `timeline.jsonl`, `transcript.jsonl`, `interactions.jsonl`, `findings.jsonl`, and `tests.jsonl` each carry a 16 MiB total-size limit: a write that would push one over the cap is refused, and a load of one already over it is refused, so a session that reaches it needs a fresh session directory to continue in. `events.rrweb.jsonl` is archival and carries no such limit, and `terminal.cast` is not a JSON Lines file at all — it carries its own read bound, described below.
 
 ## `manifest.json`
 
@@ -62,6 +63,14 @@ One normalised interaction event per line, as posted by the instrumented app. Ti
 {"t":1784300419200,"kind":"click","selector":"[data-testid=save-btn]","text":"Save","route":"#general"}
 ```
 
+`kind` is an open set, with one exception: **`terminal_output` is reserved for `testimony import`**. Records carrying it are written only by `import`, and `import` identifies its own earlier records by that value alone — so a re-import replaces every `terminal_output` record in the file and leaves every other line byte-for-byte as it was. An instrumented app that posts `kind: "terminal_output"` to the demo capture endpoint therefore has its record replaced by a later import; use any other kind.
+
+A `terminal_output` record carries `t`, `kind`, and `text` and nothing else. One record is one line the terminal displayed, so its `text` ends in a newline when the line was complete, may hold several carriage-return-separated frames of a progress line, and keeps any ANSI escape sequences the terminal received verbatim. A single output event too large for the JSONL line limit is split across consecutive records, each carrying the time of the event whose data it opens with, so concatenating their `text` reproduces the output exactly. `report` renders the records through the same event rendering as any other interaction, with control bytes — the ANSI escape byte included — stripped at that boundary.
+
+```json
+{"t":1784300398520,"kind":"terminal_output","text":"ls --color\r\n"}
+```
+
 ## `transcript.jsonl`
 
 One utterance per line. Times are session-relative seconds (audio time plus the transcription offset), rounded to two decimal places.
@@ -91,6 +100,14 @@ Written by `transcribe` only when the audio came from an external recording (a `
 ## `events.rrweb.jsonl`
 
 One raw [rrweb](https://github.com/rrweb-io/rrweb) event per line, exactly as emitted by the recorder (DOM snapshots, incremental mutations, pointer movement). Archival only: nothing downstream reads it; it exists so full session replay stays possible later. The demo page loads the rrweb recorder from a public CDN, so on a machine without network access (or with the CDN blocked) the file is created but stays empty — the session still captures `interactions.jsonl`, which carries the evidence the pipeline consumes.
+
+## `terminal.cast`
+
+One [asciicast](https://docs.asciinema.org/manual/asciicast/v2/) recording, exactly as the operator's asciinema wrote it — asciicast v2 or v3, as its header's `version` field declares. Archival only: nothing downstream reads it, and it exists so the byte-exact record of the terminal survives alongside the derived records, as `events.rrweb.jsonl` does for a web session.
+
+`import` writes it by copying the file named with `-cast`, and reads it back when `-cast` is omitted, which is what makes re-importing with a corrected `-offset` a one-line command. A cast is read within two bounds: 16 MiB for a single line, and 64 MiB for the whole file; a file past either is refused rather than read in part.
+
+The file is local only, and it holds more than the derived records do: every event the recorder captured, including any keystrokes a recorder run with input capture recorded, which `import` drops rather than normalising. Treat it with the same care as `audio.wav`.
 
 ## `timeline.jsonl`
 
