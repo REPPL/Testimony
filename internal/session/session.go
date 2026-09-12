@@ -8,6 +8,7 @@
 //	audio.offset.json   audio→session offset for an external recording (local only)
 //	screen.mp4          screen recording (local only; -video capture)
 //	events.rrweb.jsonl  raw rrweb events (archival; web sessions only)
+//	terminal.cast       raw asciicast (archival; written by import; local only)
 //	interactions.jsonl  normalised interaction events (epoch ms)
 //	transcript.jsonl    word-aligned utterances (session-relative seconds)
 //	timeline.jsonl      merged, session-relative timeline
@@ -52,6 +53,7 @@ const (
 	AudioOffsetFile  = "audio.offset.json"
 	ScreenFile       = "screen.mp4"
 	RawEventsFile    = "events.rrweb.jsonl"
+	TerminalCastFile = "terminal.cast"
 	InteractionsFile = "interactions.jsonl"
 	TranscriptFile   = "transcript.jsonl"
 	TimelineFile     = "timeline.jsonl"

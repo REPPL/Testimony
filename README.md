@@ -9,11 +9,13 @@ timestamped interaction stream, rendered as a report that shows what was said ne
 to what was done.
 
 ```
- voice  ──► local Whisper ──► transcript.jsonl ─────┐
-                                                    ├─► timeline.jsonl ─► report.md
- clicks ──► capture hooks ──► interactions.jsonl ───┘
+ voice    ──► local Whisper ──► transcript.jsonl ────┐
+                                                     ├─► timeline.jsonl ─► report.md
+ clicks   ──► capture hooks ──┐                      │
+ terminal ──► asciinema ──────┴─► interactions.jsonl ┘
+              (the raw terminal.cast is kept alongside, archival)
 
- page   ──► rrweb ──► events.rrweb.jsonl  (archival only; nothing downstream reads it)
+ page     ──► rrweb ──► events.rrweb.jsonl  (archival only; nothing downstream reads it)
 ```
 
 Raw audio and video never leave your machine; only derived text is analysed. See
@@ -78,7 +80,8 @@ The demo app contains at least one intentional usability flaw. Find it by talkin
 
 - [Tutorials](docs/tutorials/getting-started.md) — your first session, end to end.
 - [How-to guides](docs/how-to/) — [transcribe a recording](docs/how-to/transcribe-a-recording.md)
-  (engines, languages, offsets), [analyse a session](docs/how-to/analyse-a-session.md)
+  (engines, languages, offsets), [record a terminal session](docs/how-to/record-a-terminal-session.md)
+  (asciinema, two windows, one import), [analyse a session](docs/how-to/analyse-a-session.md)
   (findings and verdicts), [draft regression tests](docs/how-to/draft-regression-tests.md)
   (drafts and decisions), [instrument your own app](docs/how-to/instrument-your-own-app.md).
 - [Reference](docs/reference/) — the [command line](docs/reference/cli.md) and the
@@ -97,6 +100,7 @@ sessions/<timestamp>/
   audio.offset.json    # audio→session offset for an external recording (local only)
   screen.mp4           # screen capture, with record -video (local only)
   events.rrweb.jsonl   # raw rrweb stream (archival)
+  terminal.cast        # raw asciicast, as recorded (archival; local only)
   interactions.jsonl   # normalised interaction events
   transcript.jsonl     # time-aligned utterances
   timeline.jsonl       # merged, session-relative timeline
@@ -111,16 +115,17 @@ Exact schemas: [session directory reference](docs/reference/session-directory.md
 
 Working today: `record` (managed capture — one command starts the recorders and
 stamps the session), `demo` (instrumented capture), `transcribe` (local WhisperX
-or whisper.cpp), `merge`, `report`, the first-pass analysis layer — `analyze`
-(emit an analysis request, then validate the answer into findings) and `review`
-(record human verdicts) — and the regression-test drafting layer, `draft-tests`
-(turn a confirmed finding into a proposed test case, then render the accepted
-ones as a Markdown test plan) with `review -kind tests` for the accept / edit /
-reject pass. `record` captures the microphone by default; screen video is opt-in
-with `-video`. The model work is host-delegated — the CLI never calls a model,
-holds no keys, and adds no network dependency — every finding is *unverified*
-until you confirm or reject it, and every drafted test is a *proposal* until you
-accept it.
+or whisper.cpp), `import` (an asciinema terminal recording joins the session's
+interaction stream on the shared clock), `merge`, `report`, the first-pass
+analysis layer — `analyze` (emit an analysis request, then validate the answer
+into findings) and `review` (record human verdicts) — and the regression-test
+drafting layer, `draft-tests` (turn a confirmed finding into a proposed test
+case, then render the accepted ones as a Markdown test plan) with
+`review -kind tests` for the accept / edit / reject pass. `record` captures the
+microphone by default; screen video is opt-in with `-video`. The model work is
+host-delegated — the CLI never calls a model, holds no keys, and adds no network
+dependency — every finding is *unverified* until you confirm or reject it, and
+every drafted test is a *proposal* until you accept it.
 
 Coming next, in user terms:
 

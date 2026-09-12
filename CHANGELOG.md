@@ -44,6 +44,25 @@ break an existing invocation is called out in the entry that records it.
   message does change — a failure while writing `findings.jsonl` is now prefixed
   `write findings.jsonl:` rather than `write findings:`, so every failure on that
   path names the file the same way.
+- `testimony import -session DIR [-cast FILE] [-offset SECONDS]` brings a
+  terminal session into the evidence record: the operator records their own
+  shell with `asciinema rec` in the window where the work happens, then hands
+  the `.cast` file over, exactly as `transcribe -audio` already takes an
+  externally recorded voice. Both asciicast formats are read and told apart by
+  the header's `version` field — v2's absolute event times and v3's intervals
+  reconstruct onto one exact integer clock, finer than either format writes, so
+  the same recording in either format yields byte-identical records — and the
+  cast's own header timestamp anchors it to the
+  session's `t0`, with an explicit `-offset` always winning and the offset's
+  provenance (including its whole-second precision) printed on every run.
+  Output coalesces into one `terminal_output` interaction per line the terminal
+  displayed, an oversized event splits across records with every rune
+  preserved, input events are dropped so keystrokes cannot reach the derived
+  text, and the raw cast is archived in the session as `terminal.cast`. A
+  re-import is byte-identical and leaves a `-demo` session's own records
+  untouched. `record` is unchanged: no flag, no wrapped recorder, no second way
+  for a session to end. New guide: [record a terminal
+  session](docs/how-to/record-a-terminal-session.md).
 - `transcribe` prints an elapsed-time status line every 5 seconds while the
   ASR engine is still running, instead of staying silent between the offset
   line and completion — a CPU-only `whisperx`/`whisper-cli` run can take

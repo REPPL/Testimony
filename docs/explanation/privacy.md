@@ -13,6 +13,8 @@ The rule is simple: **raw recordings stay local; only derived text is ever analy
 
 The distinction matters because the derived text is a much narrower disclosure than the recording it came from. A transcript contains what was said; the audio contains a voiceprint. An event stream says a button was clicked; a screen recording shows everything else that was visible at the time. When an analysis layer (local or cloud) enters the picture, it sits on the far side of this boundary: it sees only the text you choose to give it, never the raw audio or video. If your setting demands it, a fully local analysis path keeps even the derived text on the machine.
 
+A terminal recording sits at the widest point of that boundary. A shell shows far more of the machine than a demo app does: its output routinely carries usernames, hostnames, absolute paths, environment values, and occasionally a secret a tool prints. Keystrokes never reach the derived text — `import` drops every input event a cast holds, so a password typed at a prompt that suppresses echo cannot enter the interaction stream — and the raw `terminal.cast` is local evidence of the same class as `audio.wav`. What does travel outward is the derived text, so a terminal session asks one thing of you that a browser session never had to: read or redact `timeline.jsonl` before running `analyze`. [Record a terminal session](../how-to/record-a-terminal-session.md) sets out the practice.
+
 One caveat deserves emphasis: anything extracted *from* a recording inherits its sensitivity. A video frame can show personal data on screen — treat stills and clips with the same care as the recording itself.
 
 ## Participant pseudonyms

@@ -1,0 +1,4 @@
+{"version":3,"term":{"cols":80,"rows":24}}
+[0.0,"o","alice@example.test:~$ "]
+[0.4,"o","echo hi\r\n"]
+[0.1,"o","hi\r\n"]

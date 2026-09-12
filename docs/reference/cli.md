@@ -16,7 +16,7 @@ Running `testimony` with no command, or with an unknown command, prints the usag
 
 ## Session directory inference
 
-The six pipeline commands — `transcribe`, `merge`, `report`, `analyze`, `draft-tests`, and `review` — take their session directory from `-session DIR`. When `-session` is omitted and the current directory itself holds a Testimony session `manifest.json`, that directory is the session: the command operates on it exactly as `-session .` does, and prints one line to stderr naming what it inferred (`merge: using session . (inferred from the current directory)`) before it starts work, so the implicit choice is visible in the output of the run. The line goes to stderr, never stdout, so `analyze`'s emitted request stays a clean pipe. An explicit `-session` always wins, is used verbatim, and prints no such line — the current directory is not consulted at all.
+The seven pipeline commands — `transcribe`, `import`, `merge`, `report`, `analyze`, `draft-tests`, and `review` — take their session directory from `-session DIR`. When `-session` is omitted and the current directory itself holds a Testimony session `manifest.json`, that directory is the session: the command operates on it exactly as `-session .` does, and prints one line to stderr naming what it inferred (`merge: using session . (inferred from the current directory)`) before it starts work, so the implicit choice is visible in the output of the run. The line goes to stderr, never stdout, so `analyze`'s emitted request stays a clean pipe. An explicit `-session` always wins, is used verbatim, and prints no such line — the current directory is not consulted at all.
 
 The marker is a session manifest, not merely the file name. `manifest.json` is one of the most common file names in software, so the file must be a regular file (a directory or a symlink at that name is not a marker) and, when it parses, must carry the `session` field every `testimony` session has (see [`manifest.json`](session-directory.md#manifestjson)). A `manifest.json` that belongs to something else leaves the command refusing rather than writing into a directory that is not a session:
 
@@ -92,6 +92,44 @@ Behaviour: reads `manifest.json` (required). With `-audio`, requires ffmpeg on P
 
 It then prints `transcribed N utterances → <path>`. With an `-audio` that names a file other than the session's own `audio.wav`, the offset in force is written to `audio.offset.json`; without it (including `-audio audio.wav`), the sidecar is rewritten only when an explicit `-offset` is given and the session already has one. A later bare run reuses the persisted value.
 
+## `testimony import`
+
+Imports an operator-recorded terminal session — an [asciinema](https://asciinema.org) recording — into the session's `interactions.jsonl` on the shared session clock, and keeps the raw cast in the session as `terminal.cast`. It is `transcribe -audio`'s peer for the terminal: the CLI never runs the recorder, so the operator records their own shell and hands the file over afterwards. Nothing here spawns a process, allocates a pty, or touches the network, and `record` is unaffected — there is no `-terminal` flag and no change to how a session ends.
+
+```
+testimony import [-session DIR] [-cast FILE] [-offset SECONDS]
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
+| `-cast` | *(optional)* | asciicast file to import. Omit to re-import the session's own `terminal.cast`, which is what makes correcting an offset a one-line command. A `-cast` resolving to that same file is the omitted case, so the archive is never copied onto itself. Unlike `-audio`, no extension is required: the cast's own header decides whether a file is importable |
+| `-offset` | derived | cast-to-session clock offset in seconds — the value added to every cast-clock time to place it on the session clock. A non-finite value, or one beyond ±10⁹ seconds, is a usage error |
+
+**What is read.** Both asciicast formats are accepted and told apart by the header's `version` field: **v2** event times are absolute seconds since recording start, **v3** event times are intervals since the previous event, reconstructed by a running sum. Both are reconstructed onto one exact integer clock — microseconds, which is finer than either format writes — so the same recording in either format yields byte-identical records, and the operator never has to state which their recorder wrote. Any other version is refused by name. The header's `version` and `timestamp` are the only fields read; every other one is ignored, since both formats are extensible. A cast is read within two bounds: 16 MiB for a single line and 64 MiB for the whole file.
+
+**Which events are kept.** Only `o` (output) becomes records. `i` (input), `r` (resize), `m` (marker), `x` (exit), and any code this importer does not recognise are dropped and counted by code, with the counts printed. Dropping input is unconditional: a cast recorded with input capture still cannot put keystrokes into the derived text. An unrecognised code is dropped rather than refused, so a later asciicast revision does not make its casts unimportable.
+
+**How output becomes records.** A shell echoes a typed command back roughly one keystroke at a time, so adjacent output accumulates into one record per line the terminal displayed. A record closes at the first of: a **newline** (included in the record); an inter-event **gap of 250 ms** or more, which closes output that never ends in a newline, such as a bare prompt; a **span of 1 second** measured from the record's first event, so a record's stated time is never more than a second stale against `report`'s 2.5-second join window; or the JSONL line budget. A record's `t` is the instant its first rune arrived. Carriage returns are kept and are **not** a boundary, so a progress line redrawing over itself is one record holding its frames rather than one record per frame. A record whose text would render empty — a blank line, a lone carriage return — is dropped and counted.
+
+A single output event too large for the line limit is split across consecutive records at rune boundaries, so concatenating their text reproduces the event exactly and nothing is truncated. The budget is measured against the **encoded** length of the timeline entry `merge` will wrap the record in, because escaping is what consumes it: an escape byte costs six bytes encoded, and coloured output is dense in them.
+
+Records carry `t`, `kind`, and `text` and nothing else, with `kind` always `terminal_output` — a reserved kind (see [`interactions.jsonl`](session-directory.md#interactionsjsonl)). ANSI escape sequences are kept verbatim, because the record is evidence; `report` strips the escape byte at its own boundary, so recording with colour disabled (`NO_COLOR=1`) is the remedy for the printable residue. See [record a terminal session](../how-to/record-a-terminal-session.md).
+
+**The archival copy.** The cast is copied into the session as `terminal.cast`, staged into a temp file beside it before the records are written and renamed into place afterwards, so a failure anywhere before that rename leaves the session exactly as it was. An existing `terminal.cast`'s own file mode is preserved; a new one is created honouring the umask. With `-cast` omitted there is no copy at all.
+
+**Re-running.** `interactions.jsonl` is rewritten whole and atomically: records from an earlier import (identified by their `terminal_output` kind, and nothing else) are dropped, every other line is kept byte-for-byte in its original order, and the new records are appended. So importing the same cast twice yields a byte-identical file, a `record -demo` session's clicks and inputs survive untouched, and a line this importer cannot decode at all is preserved as it stands. A session holds **one** terminal recording: importing a different cast replaces the first one's records and its `terminal.cast`.
+
+**Printed output.** The offset in force and its provenance are printed on every run, so the default is never a silent assumption — one of:
+
+- `from -offset flag` — the explicit flag, which always wins;
+- `derived: cast header timestamp − manifest t0 (whole seconds, ±1s)` — taken from the cast header's own timestamp. The caveat is part of the line because the field is an integer in both formats, so the reconstructed clock can sit up to a second adrift of `t0`'s millisecond precision — material against the 2.5-second default join window, which is why the spoken "session start" marker stays the cross-check;
+- `default 0: cast header carries no timestamp` — the cast carries no anchor, so the recording is taken to start at `t0`.
+
+The dropped-event counts, the count of records that render empty, and the number of earlier records replaced follow it. Dropped input events are counted on a line of their own, because that count is how you learn a recorder captured keystrokes; the other codes share a line, ordered by code. All of these go to **stderr**, beside the session-inference line; **stdout** carries only `imported N records → <path>`, so a script reads one line.
+
+**Failure modes.** Exit 2 (a wrong invocation, refused before any work): a missing `-session` with no session manifest in the current directory, an explicitly empty `-session` or `-cast`, a stray positional argument, or an unusable `-offset`. Exit 1 (a runtime failure): no `manifest.json`, or one with no usable `t0_epoch_ms` — required on every path, including with an explicit `-offset`, since the records are epoch-millisecond-timed; neither `-cast` nor a `terminal.cast` to fall back on; a `-cast` naming a missing or non-regular file; an unsupported version, a malformed header or event, or a line or file past its bound, each naming the line; a header timestamp at or before the epoch, or a derived offset beyond ±10⁹ seconds, both asking for an explicit `-offset`; a cast holding no importable output — either no output events at all, or output that all rendered empty, each named as such — which refuses rather than erase an earlier import's records; and any size limit the assembled `interactions.jsonl` — or the merged `timeline.jsonl` it implies — would cross. Every exit-1 path above fires before any file in the session changes.
+
 ## `testimony merge`
 
 Merges the transcript and interaction stream into `timeline.jsonl`.
@@ -103,6 +141,8 @@ testimony merge [-session DIR]
 | Flag | Default | Meaning |
 |---|---|---|
 | `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
+
+Terminal records written by [`import`](#testimony-import) merge exactly like any other interaction: they carry no new source type, flag, or schema field.
 
 Behaviour: reads `manifest.json` (required), `transcript.jsonl`, and `interactions.jsonl`; converts interaction epoch-millisecond times to session-relative seconds via `t0_epoch_ms`; writes the time-sorted `timeline.jsonl`; prints `merged N utterances + M events → <path>`. A missing `transcript.jsonl` or `interactions.jsonl` counts as zero records rather than an error, so a default audio-only `record` session (which never writes `interactions.jsonl`) still merges to a speech-only timeline. If the two sources together yield zero entries — missing, empty, or both — and a `timeline.jsonl` from an earlier merge already exists and is non-empty, merge refuses rather than truncate it to zero entries; a session with no timeline yet, or one already empty, still merges to an empty one. When interactions are present, `t0_epoch_ms` is required: without it their epoch-millisecond times cannot be placed on the session clock, so merge fails rather than write a corrupt timeline.
 

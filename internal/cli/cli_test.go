@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -172,6 +173,7 @@ func TestStrayPositionalIsAUsageError(t *testing.T) {
 		{"merge", "-session", dir, "junk"},
 		{"report", "-session", dir, "junk", "-window", "NaN"},
 		{"transcribe", "-session", dir, "junk", "-offset", "99"},
+		{"import", "-session", dir, "junk", "-offset", "99"},
 		{"analyze", "-session", dir, "junk", "-out", "x", "-ingest", "-"},
 		{"review", "-session", dir, "junk", "-finding", "F-001", "-verdict", "confirmed"},
 		{"draft-tests", "-session", dir, "junk", "-render"},
@@ -252,6 +254,9 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 		{[]string{"transcribe", "-session", dir, "-engine", ""}, `transcribe: -engine must not be empty`},
 		{[]string{"transcribe", "-session", dir, "-device", ""}, `transcribe: -device must not be empty`},
 		{[]string{"transcribe", "-session", dir, "-vad", ""}, `transcribe: -vad must not be empty`},
+		{[]string{"import", "-session", dir, "-cast", ""}, `import: -cast must not be empty`},
+		{[]string{"import", "-session", dir, "-offset", "NaN"}, `import: -offset must be a finite number of seconds, got NaN`},
+		{[]string{"import", "-session", dir, "-offset", "1e10"}, `import: -offset 1e+10 exceeds 1e+09 seconds in magnitude`},
 		{[]string{"review", "-session", dir, "-finding", "", "-verdict", ""}, `review: -finding must not be empty`},
 		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", ""}, `review: -verdict must not be empty`},
 		{[]string{"review", "-session", dir, "-finding", "F-001", "-verdict", "duplicate-of-F-001"}, `review: -finding cannot be a duplicate of itself`},
@@ -299,7 +304,7 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 func TestUsageListsEveryFlagAndCommand(t *testing.T) {
 	for _, want := range []string{"-commit HASH", "testimony help",
 		"testimony draft-tests", "-window 10", "-kind findings|tests", "-decision edited -edit FILE",
-		"transcribe, merge, report, analyze, draft-tests, or review"} {
+		"transcribe, import, merge, report, analyze, draft-tests, or"} {
 		if !strings.Contains(usage, want) {
 			t.Errorf("usage text does not mention %q", want)
 		}
@@ -318,7 +323,7 @@ func TestMissingSessionIsAUsageError(t *testing.T) {
 	// manifest.json, which is no longer merely incidental now that its
 	// absence is what sends these invocations down the refusal path.
 	chdir(t, t.TempDir())
-	for _, cmd := range []string{"merge", "report", "transcribe", "analyze", "draft-tests", "review"} {
+	for _, cmd := range []string{"merge", "report", "transcribe", "import", "analyze", "draft-tests", "review"} {
 		var code int
 		stderr := captureStderr(t, func() { code = Run([]string{cmd}) })
 		if code != 2 {
@@ -481,7 +486,7 @@ func TestNoSessionAndNoManifestIsAUsageError(t *testing.T) {
 func TestEmptySessionIsAUsageErrorNotInference(t *testing.T) {
 	dir := miniSession(t)
 	chdir(t, dir)
-	for _, cmd := range []string{"merge", "report", "transcribe", "analyze", "review"} {
+	for _, cmd := range []string{"merge", "report", "transcribe", "import", "analyze", "review"} {
 		var code int
 		stderr := captureStderr(t, func() { code = Run([]string{cmd, "-session", ""}) })
 		if code != 2 {
@@ -694,6 +699,7 @@ func TestRefusedInvocationAnnouncesNoSession(t *testing.T) {
 		{"report", "-window", "NaN"},
 		{"transcribe", "-engine", "bogus"},
 		{"transcribe", "-offset", "NaN"},
+		{"import", "-offset", "NaN"},
 		{"analyze", "-out", "req.md", "-ingest", "-"},
 		{"review", "-finding", "F-001"},
 	}
@@ -1029,5 +1035,208 @@ func TestDraftTestsInfersSession(t *testing.T) {
 	}
 	if strings.Contains(req, "inferred") {
 		t.Errorf("the inference notice reached stdout: %q", req)
+	}
+}
+
+// castTestT0 anchors the import tests' session. It matches the t0 the
+// session-directory reference's own examples carry, and the fixture cast below
+// declares a header timestamp two seconds earlier, so the imported records land
+// on a session-relative clock that starts negative and crosses zero.
+const (
+	castTestT0     = 1784300400000
+	castHeaderUnix = 1784300398
+)
+
+// castSession writes a session with a usable t0 (which import requires on every
+// path, since the records it writes are epoch-millisecond-timed) and a small
+// asciicast v2 file beside it, and returns both paths. The cast carries a
+// keystroke-echoed command, an input event import must drop, and a resize event
+// it must count rather than normalise.
+func castSession(t *testing.T) (dir, castPath string) {
+	t.Helper()
+	dir = t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{
+		Session: "s", App: "a shell", Participant: "P1", T0EpochMS: castTestT0,
+	}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	lines := []string{
+		fmt.Sprintf(`{"version":2,"width":80,"height":24,"timestamp":%d}`, castHeaderUnix),
+		`[0,"o","alice@example.test:~/project$ "]`,
+		`[0.52,"i","l"]`,
+		`[0.53,"o","l"]`,
+		`[0.62,"o","s"]`,
+		`[0.75,"o","\r\n"]`,
+		`[0.8,"r","120x40"]`,
+		`[0.81,"o","docs  internal  README.md\r\n"]`,
+	}
+	castPath = filepath.Join(t.TempDir(), "session.cast")
+	if err := os.WriteFile(castPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write cast: %v", err)
+	}
+	return dir, castPath
+}
+
+// TestImportWritesTerminalRecords is the well-formed run: exit 0, the summary
+// line on stdout, the records in interactions.jsonl, and the cast archived in
+// the session so a later bare re-import has something to read.
+func TestImportWritesTerminalRecords(t *testing.T) {
+	dir, castPath := castSession(t)
+	var code int
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() {
+			code = Run([]string{"import", "-session", dir, "-cast", castPath})
+		})
+	})
+	if code != 0 {
+		t.Fatalf("import: exit %d, want 0 (stderr %q)", code, stderr)
+	}
+	want := "imported 3 records → " + filepath.Join(dir, session.InteractionsFile)
+	if !strings.Contains(stdout, want) {
+		t.Errorf("want %q on stdout, got %q", want, stdout)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, session.InteractionsFile))
+	if err != nil {
+		t.Fatalf("read interactions: %v", err)
+	}
+	for _, want := range []string{`"kind":"terminal_output"`, `"text":"ls\r\n"`, `"t":1784300398000`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("interactions.jsonl does not contain %q: %s", want, b)
+		}
+	}
+	// A keystroke must never reach the derived text, whatever the recorder did.
+	if strings.Contains(string(b), `"text":"l"`) {
+		t.Errorf("an input event reached interactions.jsonl: %s", b)
+	}
+	archived, err := os.ReadFile(filepath.Join(dir, session.TerminalCastFile))
+	if err != nil {
+		t.Fatalf("read archived cast: %v", err)
+	}
+	original, err := os.ReadFile(castPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(archived) != string(original) {
+		t.Errorf("terminal.cast is not byte-identical to the imported file")
+	}
+}
+
+// TestImportDiagnosticsStayOffStdout pins the stream split: the offset
+// provenance line and the dropped-event counts are diagnostics that belong
+// beside the session-inference line on stderr, so stdout carries only the one
+// summary line a script reads.
+func TestImportDiagnosticsStayOffStdout(t *testing.T) {
+	dir, castPath := castSession(t)
+	var code int
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() {
+			code = Run([]string{"import", "-session", dir, "-cast", castPath})
+		})
+	})
+	if code != 0 {
+		t.Fatalf("import: exit %d, want 0 (stderr %q)", code, stderr)
+	}
+	for _, want := range []string{
+		"offset: -2.00s (derived: cast header timestamp − manifest t0 (whole seconds, ±1s))",
+		"dropped 1 input (i) event(s): keystrokes are never imported",
+		"dropped 1 other event(s): 1 resize (r)",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("want %q on stderr, got %q", want, stderr)
+		}
+	}
+	if strings.Contains(stdout, "offset:") || strings.Contains(stdout, "dropped") {
+		t.Errorf("import's diagnostics reached stdout: %q", stdout)
+	}
+	if lines := strings.Count(strings.TrimSpace(stdout), "\n"); lines != 0 {
+		t.Errorf("stdout carries %d extra line(s) beyond the summary: %q", lines, stdout)
+	}
+}
+
+// TestImportInfersSessionAndReImportsInPlace is the pair the how-to's
+// offset-correction recipe rests on: import resolves -session by the same
+// shared rule as every other pipeline command, and with -cast omitted it
+// re-reads the session's own terminal.cast, so correcting a wrong offset is one
+// command with no file to find again.
+func TestImportInfersSessionAndReImportsInPlace(t *testing.T) {
+	dir, castPath := castSession(t)
+	captureStdout(t, func() {
+		captureStderr(t, func() {
+			if code := Run([]string{"import", "-session", dir, "-cast", castPath}); code != 0 {
+				t.Fatalf("first import: exit %d, want 0", code)
+			}
+		})
+	})
+	chdir(t, dir)
+
+	var code int
+	var stderr string
+	stdout := captureStdout(t, func() {
+		stderr = captureStderr(t, func() { code = Run([]string{"import", "-offset", "-12.4"}) })
+	})
+	if code != 0 {
+		t.Fatalf("bare import from inside a session: exit %d, want 0 (stderr %q)", code, stderr)
+	}
+	for _, want := range []string{
+		"import: using session . (inferred from the current directory)",
+		"offset: -12.40s (from -offset flag)",
+		"replaced 3 terminal_output record(s) from an earlier import",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("want %q on stderr, got %q", want, stderr)
+		}
+	}
+	if want := "imported 3 records → " + session.InteractionsFile; !strings.Contains(stdout, want) {
+		t.Errorf("want %q on stdout, got %q", want, stdout)
+	}
+	// The explicit offset replaced the derived one rather than being applied on
+	// top of it: the first record sits 12.4 s before t0, not 14.4 s.
+	b, err := os.ReadFile(session.InteractionsFile)
+	if err != nil {
+		t.Fatalf("read interactions: %v", err)
+	}
+	if want := `"t":1784300387600`; !strings.Contains(string(b), want) {
+		t.Errorf("interactions.jsonl does not carry the corrected time %s: %s", want, b)
+	}
+	if strings.Count(string(b), `"kind":"terminal_output"`) != 3 {
+		t.Errorf("the re-import did not replace the first import's records: %s", b)
+	}
+}
+
+// TestImportRefusesUnreadableCastAtRuntime keeps the exit-status contract:
+// a well-formed invocation whose cast cannot be read is a runtime failure (1),
+// not a usage error, so a script can tell a mistyped flag from a missing file.
+func TestImportRefusesUnreadableCastAtRuntime(t *testing.T) {
+	dir, _ := castSession(t)
+	var code int
+	stderr := captureStderr(t, func() {
+		code = Run([]string{"import", "-session", dir, "-cast", filepath.Join(t.TempDir(), "absent.cast")})
+	})
+	if code != 1 {
+		t.Errorf("import with an absent -cast: exit %d, want 1 (runtime error)", code)
+	}
+	if want := "testimony: cast file:"; !strings.Contains(stderr, want) {
+		t.Errorf("want %q on stderr, got %q", want, stderr)
+	}
+}
+
+// TestUsageListsImport pins the surface change the intent's last criterion
+// asks for: the new verb is visible in the usage text, and record's own flag
+// set is untouched by it.
+func TestUsageListsImport(t *testing.T) {
+	for _, want := range []string{
+		"testimony import      [-session DIR] [-cast FILE]",
+		"[-offset SECONDS]",
+		"import an asciinema recording's output into interactions.jsonl",
+		"Omitting -session on transcribe, import, merge, report, analyze, draft-tests, or",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage text does not mention %q", want)
+		}
+	}
+	if strings.Contains(usage, "-terminal") {
+		t.Error("usage text offers a -terminal flag; terminal capture is a hand-off, not a record mode")
 	}
 }
