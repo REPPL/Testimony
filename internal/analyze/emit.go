@@ -38,7 +38,7 @@ func EmitRequest(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	entries, err := loadTimeline(dir)
+	entries, err := LoadTimeline(dir)
 	if err != nil {
 		return "", err
 	}

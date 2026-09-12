@@ -12,6 +12,7 @@
 //	transcript.jsonl    word-aligned utterances (session-relative seconds)
 //	timeline.jsonl      merged, session-relative timeline
 //	findings.jsonl      analysis findings + appended verdicts
+//	tests.jsonl         regression-test drafts + appended decisions
 //	report.md           human-readable session report
 package session
 
@@ -55,6 +56,7 @@ const (
 	TranscriptFile   = "transcript.jsonl"
 	TimelineFile     = "timeline.jsonl"
 	FindingsFile     = "findings.jsonl"
+	TestsFile        = "tests.jsonl"
 	ReportFile       = "report.md"
 )
 
@@ -138,9 +140,10 @@ func (m Manifest) T0() (int64, error) {
 // untrusted session's JSONL files is bounded the same way: ReadJSONL caps both
 // a line (MaxJSONLLine) and the whole file (MaxJSONLBytes), and
 // analyze.ParseRecords — findings.jsonl's own scanner, not routed through
-// ReadJSONL — carries the same pair of caps. analyze.Ingest caps the untrusted
-// answer it validates at maxAnswerBytes, and the demo body caps what it
-// accepts at capture time; neither reads a session's own JSONL files back.
+// ReadJSONL — carries the same pair of caps, as does drafttests.ParseRecords
+// for tests.jsonl. The two ingest boundaries cap the untrusted answer they
+// validate at MaxAnswerBytes, and the demo body caps what it accepts at capture
+// time; neither reads a session's own JSONL files back.
 const maxManifestBytes = 1 << 20 // 1 MiB
 
 // LoadManifest reads manifest.json from dir.
@@ -458,6 +461,16 @@ const MaxJSONLLine = 4 << 20 // 4 MiB
 // not bound it.
 const MaxJSONLBytes = 16 << 20 // 16 MiB
 
+// MaxAnswerBytes caps the untrusted model answer read at a validation boundary
+// (analyze.Ingest, drafttests.Ingest), mirroring the bounded reads elsewhere
+// (the demo server's 8 MiB body cap, the 4 MiB JSONL line cap). An answer is
+// read from stdin or a file and is the one input the tool never trusts, so a
+// multi-gigabyte one must not OOM the process before validation runs. It is
+// generous for a genuine multi-record answer; anything larger is rejected, not
+// buffered. It sits beside the JSONL caps because it bounds input at the same
+// scale and for the same reason.
+const MaxAnswerBytes = 16 << 20 // 16 MiB
+
 // jsonlEncoder returns a json.Encoder configured exactly as WriteJSONL's own
 // encoders are, so a size measured against it predicts what WriteJSONL will
 // later check and write. HTML escaping is disabled: JSONL artefacts are never
@@ -550,12 +563,14 @@ func ReadJSONL[T any](path string) ([]T, error) {
 // demo.appendRecords. That costs a second encoding pass over records that are
 // small structs; a durably unreadable session is the worse trade.
 //
-// findings.jsonl never passes through here: analyze.commitFindings and
-// review.AppendVerdict write it through their own locked descriptors instead,
-// so neither can share this pre-flight. Both give their write path the matching
-// MaxJSONLLine/MaxJSONLBytes checks ParseRecords (its read side) enforces —
-// commitFindings via analyze.oversizedFindings, AppendVerdict via its own
-// stat-then-append check.
+// findings.jsonl and tests.jsonl never pass through here: they hold a machine
+// record plus appended human records, so they are written through the locked
+// descriptors of CommitRecords (a whole-file replacement, guarded) and
+// AppendRecord (one appended line) instead, and neither can share this
+// pre-flight. Both give their write path the matching MaxJSONLLine/MaxJSONLBytes
+// checks their readers enforce — the commit side via its caller's own
+// oversized-record pass, the append side via AppendRecord's stat-then-append
+// check.
 func WriteJSONL[T any](path string, values []T) error {
 	// Encode into one reusable buffer so the pre-flight pass holds a single
 	// record, not the whole file, in memory.

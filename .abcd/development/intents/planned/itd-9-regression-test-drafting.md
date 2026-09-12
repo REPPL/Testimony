@@ -1,8 +1,8 @@
 ---
 id: itd-9
 slug: regression-test-drafting
-spec_id: null
-kind: null
+spec_id: spc-2609120417480624
+kind: standalone
 suggested_kind: null
 reclassification_history: []
 builds_on: []
@@ -37,6 +37,17 @@ Keeping the human in the loop mirrors the stance the rest of the pipeline takes.
 - Drafting from unverified or rejected findings; only human-confirmed findings are eligible.
 - Reference-capture findings (itd-4), which are design preferences rather than defects and have nothing to regress against.
 
+## Scope Conditions
+
+- The session holds a `findings.jsonl` with at least one finding whose current <!-- cond: cond-2609120430207432 -->
+  verdict is `confirmed`; a session with none is staged loudly rather than
+  drafted from.
+- `timeline.jsonl` is present, so each confirmed finding's event window <!-- cond: cond-2609120430209331 -->
+  resolves — the reproduction steps are reconstructed from it.
+- The host that answers the drafting request is the operator's chosen model, as <!-- cond: cond-2609120430205995 -->
+  for `analyze`: the CLI emits the request, never calls a model, holds no keys,
+  and adds no network dependency.
+
 ## Acceptance Criteria
 
 - **Given** a finding whose status is `confirmed`, **when** the drafting step runs, **then** a test case draft is produced containing reproduction steps from the event window, the expected and observed behaviour, and the participant's quote.
@@ -52,3 +63,7 @@ Keeping the human in the loop mirrors the stance the rest of the pipeline takes.
 ## Audit Notes
 
 _Empty. Populated by intent-fidelity-reviewer when intent moves to shipped/._
+
+## Grounds
+
+- pursued: a confirmed finding's event window plus the participant's own words is enough for a host model to draft a followable regression test, and a human accept/edit/reject pass keeps every draft a proposal; what would show it wrong is drafts whose steps a developer cannot follow from the window alone, which the edited-decision rate on real sessions would reveal

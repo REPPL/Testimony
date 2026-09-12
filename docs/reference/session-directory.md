@@ -13,10 +13,11 @@ sessions/<timestamp>/
   transcript.jsonl     # time-aligned utterances (written by transcribe)
   timeline.jsonl       # merged, session-relative timeline (written by merge)
   findings.jsonl       # analysis findings + appended verdicts (written by analyze/review)
+  tests.jsonl          # regression-test drafts + appended decisions (written by draft-tests/review)
   report.md            # human-readable aligned record (written by report)
 ```
 
-All `.jsonl` files are JSON Lines: one JSON value per line, blank lines ignored. `timeline.jsonl`, `transcript.jsonl`, `interactions.jsonl`, and `findings.jsonl` each carry a 16 MiB total-size limit: a write that would push one over the cap is refused, and a load of one already over it is refused, so a session that reaches it needs a fresh session directory to continue in. `events.rrweb.jsonl` is archival and carries no such limit.
+All `.jsonl` files are JSON Lines: one JSON value per line, blank lines ignored. `timeline.jsonl`, `transcript.jsonl`, `interactions.jsonl`, `findings.jsonl`, and `tests.jsonl` each carry a 16 MiB total-size limit: a write that would push one over the cap is refused, and a load of one already over it is refused, so a session that reaches it needs a fresh session directory to continue in. `events.rrweb.jsonl` is archival and carries no such limit.
 
 ## `manifest.json`
 
@@ -151,6 +152,50 @@ Ingest validates every finding against the merged timeline and is the sole valid
 ```
 
 A finding's effective status starts `unverified`; verdict records apply in file order and the last one for that finding wins.
+
+## `tests.jsonl`
+
+The regression-test drafting layer's output, written by `testimony draft-tests -ingest` and appended to by `testimony review -kind tests`. Two record kinds share the file, one per line: a **draft** line (no `kind` field) and a **decision** line (`kind: "decision"`). Decisions are appended, never written in place, so a draft's original state and the full decision history are retained. Blank lines are ignored.
+
+Ingest validates every draft against `findings.jsonl` and is the sole validation boundary — it never trusts the model. Unknown fields are rejected (the shape is closed), and `status` is forced to `"proposed"` on ingest regardless of the answer JSON, so a draft can never be born accepted. A draft may only ever reference a finding whose effective status is `confirmed`.
+
+**Draft record**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string | yes | `T-NNN`, zero-padded (`^T-\d{3}$`); unique within the file |
+| `finding` | string | yes | an existing finding id in `findings.jsonl` whose effective status is `confirmed` and whose `mode` is not `B` |
+| `session` | string | yes | equal to the manifest's `session`, so the link survives the line being copied out of the session directory |
+| `title` | string | yes | one line naming the defect; non-empty, at most 200 characters |
+| `steps` | array of strings | yes | the reproduction in time order; non-empty, at most 32 entries, every entry non-empty |
+| `expected` | string | yes | the behaviour the participant expected; non-empty |
+| `observed` | string | yes | what the system did; non-empty |
+| `rationale_quote` | string | yes | **equal** to the source finding's `quote`, byte for byte — the drafting step carries evidence forward and never introduces any |
+| `severity` | integer | yes | **equal** to the source finding's `severity`, so triage order survives the hand-off unaltered |
+| `status` | string | no | always `"proposed"` on ingest, whatever the answer claims |
+
+```json
+{"id":"T-001","finding":"F-001","session":"sample-session","title":"Saving gives no confirmation","steps":["Open #general in the settings prototype.","Change the display name to Alice.","Click the Save button ([data-testid=save-btn])."],"expected":"The save is confirmed on screen — a toast, or the button briefly disabled.","observed":"Nothing visibly changes, so there is no way to tell the save landed.","rationale_quote":"I clicked save and nothing happened","severity":3,"status":"proposed"}
+```
+
+**Decision record**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `kind` | string | yes | literal `"decision"` (the discriminator) |
+| `test` | string | yes | an existing draft id in the file |
+| `decision` | string | yes | one of `accepted`, `edited`, `rejected` |
+| `at` | string | yes | decision date, ISO `YYYY-MM-DD` |
+| `edit` | object | when `edited` | the replacement fields: a subset of `{title, steps, expected, observed}` with at least one member, each held to the draft's own rule for that field |
+
+```json
+{"kind":"decision","test":"T-001","decision":"accepted","at":"2026-09-12"}
+{"kind":"decision","test":"T-003","decision":"edited","at":"2026-09-12","edit":{"title":"Saving a display name gives no confirmation","steps":["Open #general.","Click Save."]}}
+```
+
+The `edit` object is a **closed** four-field subset: an `edit` naming `id`, `finding`, `session`, `severity`, or `rationale_quote` is a hard error, not a silently dropped key. A human edit therefore cannot re-point a draft at a different finding or session; the only way to change the link is to reject the draft and ingest a new one.
+
+A draft's effective status starts `proposed`; decision records apply in file order and the last one for that draft wins. An `edited` draft's rendered fields are the last `edited` decision's `edit` applied over the draft, computed when the plan is rendered — the draft line itself is never rewritten. `testimony draft-tests -render` renders the drafts whose effective status is `accepted` or `edited`.
 
 ## `report.md`
 

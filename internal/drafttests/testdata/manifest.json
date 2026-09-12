@@ -1,0 +1,11 @@
+{
+  "session": "fixture-session",
+  "app": "testimony demo",
+  "commit": "walking-skeleton",
+  "participant": "P1",
+  "t0_epoch_ms": 1784300400000,
+  "tasks": [
+    "Change your display name and save it",
+    "Try the appearance settings"
+  ]
+}

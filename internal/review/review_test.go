@@ -3,7 +3,6 @@ package review
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"math"
 	"os"
@@ -638,93 +637,6 @@ func TestReviewErrorPathsSanitiseFindingIDs(t *testing.T) {
 	})
 }
 
-// shortWriteFile is a verdictFile whose Write persists a prefix and then errors,
-// standing in for a full disk (write(2) fills the remaining space, returns a
-// short count, and the next write returns ENOSPC — os.File.Write persists the
-// truncated prefix before returning the error). Seek always reports the current
-// length, so it also stands in for the O_APPEND descriptor writeVerdict holds.
-type shortWriteFile struct {
-	buf  []byte
-	fail bool // when true, Write keeps only a prefix then returns an error
-}
-
-func (f *shortWriteFile) Seek(offset int64, whence int) (int64, error) {
-	return int64(len(f.buf)), nil
-}
-
-func (f *shortWriteFile) ReadAt(p []byte, off int64) (int, error) {
-	if off < 0 || off >= int64(len(f.buf)) {
-		return 0, io.EOF
-	}
-	return copy(p, f.buf[off:]), nil
-}
-
-func (f *shortWriteFile) Truncate(size int64) error {
-	f.buf = f.buf[:size]
-	return nil
-}
-
-func (f *shortWriteFile) Write(p []byte) (int, error) {
-	if f.fail {
-		half := len(p) / 2
-		f.buf = append(f.buf, p[:half]...)
-		return half, errors.New("no space left on device")
-	}
-	f.buf = append(f.buf, p...)
-	return len(p), nil
-}
-
-// TestWriteVerdictRollsBackPartialWrite is the ENOSPC regression on the verdict
-// path: a short write that persists a newline-less prefix must be truncated
-// away, so findings.jsonl never retains a partial line that would fuse with the
-// next verdict into one malformed physical record and make the whole file — the
-// human verdict record the package exists to protect — unparseable to every
-// reader. Pre-fix AppendVerdict wrote directly with no rollback, so the prefix
-// survived, exactly as demo.appendLines did before its own fix.
-func TestWriteVerdictRollsBackPartialWrite(t *testing.T) {
-	f := &shortWriteFile{}
-	first, err := json.Marshal(analyze.Verdict{Kind: "verdict", Finding: "F-001", Verdict: "confirmed", At: "2026-07-17"})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if err := writeVerdict(f, append(first, '\n')); err != nil {
-		t.Fatalf("first verdict: %v", err)
-	}
-	good := string(f.buf)
-
-	f.fail = true
-	second, err := json.Marshal(analyze.Verdict{Kind: "verdict", Finding: "F-002", Verdict: "rejected", At: "2026-07-17"})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if err := writeVerdict(f, append(second, '\n')); err == nil {
-		t.Fatalf("expected a write error on a full disk")
-	}
-	if string(f.buf) != good {
-		t.Fatalf("partial line survived: file is %q, want the clean prefix %q", f.buf, good)
-	}
-	if !strings.HasSuffix(string(f.buf), "\n") {
-		t.Fatalf("file does not end on a newline: %q", f.buf)
-	}
-
-	// The rolled-back file still parses one record per line, so a later verdict
-	// lands cleanly rather than fusing onto a fragment.
-	f.fail = false
-	if err := writeVerdict(f, append(second, '\n')); err != nil {
-		t.Fatalf("verdict after rollback: %v", err)
-	}
-	lines := strings.Split(strings.TrimRight(string(f.buf), "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d lines, want 2: %q", len(lines), f.buf)
-	}
-	for i, l := range lines {
-		var v analyze.Verdict
-		if err := json.Unmarshal([]byte(l), &v); err != nil {
-			t.Fatalf("line %d is not one JSON record: %v (%q)", i+1, err, l)
-		}
-	}
-}
-
 // TestAppendVerdictRefusesSymlink is the arbitrary-file-append regression: a
 // findings.jsonl planted as a symlink must not be followed.
 func TestAppendVerdictRefusesSymlink(t *testing.T) {
@@ -1006,5 +918,95 @@ func TestAppendVerdictAcceptsUnchangedFinding(t *testing.T) {
 	}
 	if len(verdicts) != 1 || verdicts[0].Finding != "F-001" || verdicts[0].Verdict != "confirmed" {
 		t.Fatalf("verdict not recorded as expected: %+v", verdicts)
+	}
+}
+
+// --- the -kind dispatch ----------------------------------------------------
+
+func TestParseKindFlag(t *testing.T) {
+	cases := []struct {
+		in, want string
+		wantErr  bool
+	}{
+		{"", KindFindings, false},
+		{"findings", KindFindings, false},
+		{"tests", KindTests, false},
+		{"Findings", "", true},
+		{"verdicts", "", true},
+	}
+	for _, tc := range cases {
+		got, err := ParseKindFlag(tc.in)
+		if (err != nil) != tc.wantErr {
+			t.Fatalf("%q: err=%v wantErr=%v", tc.in, err, tc.wantErr)
+		}
+		if err == nil && got != tc.want {
+			t.Fatalf("%q: got %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+const draftFixture = `{"id":"T-001","finding":"F-001","session":"s","title":"Saving gives no confirmation","steps":["Open #general.","Click Save."],"expected":"The save is confirmed.","observed":"Nothing happens.","rationale_quote":"I clicked save and nothing happened","severity":3,"status":"proposed"}
+`
+
+// TestRunDispatchesKindTests: one verb serves both record families, so a
+// -kind tests run reaches the drafting layer's decision path and appends its
+// record to tests.jsonl rather than findings.jsonl.
+func TestRunDispatchesKindTests(t *testing.T) {
+	dir := writeSession(t)
+	if err := os.WriteFile(filepath.Join(dir, session.TestsFile), []byte(draftFixture), 0o644); err != nil {
+		t.Fatalf("write tests: %v", err)
+	}
+	before := findingLines(t, dir)
+
+	var out bytes.Buffer
+	err := Run(Options{Dir: dir, Kind: KindTests, Test: "T-001", Decision: "accepted", Out: &out, Today: "2026-09-12"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := out.String(); got != "recorded: T-001 accepted (2026-09-12)\n" {
+		t.Fatalf("echo = %q", got)
+	}
+	b, rerr := os.ReadFile(filepath.Join(dir, session.TestsFile))
+	if rerr != nil {
+		t.Fatalf("read tests: %v", rerr)
+	}
+	if !strings.Contains(string(b), `{"kind":"decision","test":"T-001","decision":"accepted","at":"2026-09-12"}`) {
+		t.Fatalf("the decision did not reach tests.jsonl:\n%s", b)
+	}
+	if !strings.HasPrefix(string(b), draftFixture) {
+		t.Fatalf("the draft line was not preserved byte-for-byte:\n%s", b)
+	}
+	// findings.jsonl is a different record family and stays untouched.
+	if strings.Join(before, "\n") != strings.Join(findingLines(t, dir), "\n") {
+		t.Fatal("a tests-side decision modified findings.jsonl")
+	}
+}
+
+// TestRunRefusesCrossFamilyFlags: a flag belonging to the other record family is
+// a wrong invocation, not a silently ignored one — recording nothing while
+// exiting 0 would let a script believe the decision landed.
+func TestRunRefusesCrossFamilyFlags(t *testing.T) {
+	cases := []struct {
+		name string
+		opts Options
+		want string
+	}{
+		{"verdict with kind tests", Options{Kind: KindTests, Finding: "F-001", Verdict: "confirmed"}, "-finding and -verdict apply to -kind findings"},
+		{"test with kind findings", Options{Test: "T-001", Decision: "accepted"}, "-test, -decision and -edit apply to -kind tests"},
+		{"edit with kind findings", Options{EditIn: strings.NewReader("{}")}, "-test, -decision and -edit apply to -kind tests"},
+		{"unknown kind", Options{Kind: "verdicts"}, "invalid kind"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeSession(t)
+			opts := tc.opts
+			opts.Dir = dir
+			opts.Out = io.Discard
+			opts.Today = "2026-09-12"
+			err := Run(opts)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want an error containing %q", err, tc.want)
+			}
+		})
 	}
 }

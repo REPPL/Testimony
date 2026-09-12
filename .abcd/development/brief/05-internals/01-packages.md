@@ -5,8 +5,8 @@ entrypoint that calls `cli.Run` and exits with its return code.
 
 - **`internal/cli`** — the command-line interface: usage text, one
   `flag.FlagSet` per subcommand (`demo`, `record`, `transcribe`, `merge`,
-  `report`, `analyze`, `review`, `version`, `help`), and dispatch into the
-  other packages. Holds the `Version` variable stamped by the release
+  `report`, `analyze`, `draft-tests`, `review`, `version`, `help`), and dispatch
+  into the other packages. Holds the `Version` variable stamped by the release
   process. Errors print as `testimony: <err>` and map to exit codes (1
   failure, 2 usage).
 - **`internal/demo`** — the instrumented demo app: an embedded single-page
@@ -18,8 +18,18 @@ entrypoint that calls `cli.Run` and exits with its return code.
   the microphone recorder — and, with `-video`, the screen recorder — as
   ffmpeg subprocesses, and stops them cleanly on Ctrl+C.
 - **`internal/session`** — the on-disk layout of a session: the `Manifest`
-  schema, well-known file-name constants, and generic JSONL read/write
-  helpers (`ReadJSONL[T]`/`WriteJSONL[T]`) used by every other package.
+  schema, well-known file-name constants, the shared size caps
+  (`MaxJSONLLine`/`MaxJSONLBytes`/`MaxAnswerBytes`), and generic JSONL read/write
+  helpers (`ReadJSONL[T]`/`WriteJSONL[T]`) used by every other package. It also
+  holds the two dangerous session-file writes, each written once:
+  `AppendRecord` (one appended record — the no-follow open, the exclusive lock,
+  the two size pre-flights, the newline framing over an unterminated last line,
+  an optional under-lock `Verify`, the partial-write rollback, and the returned
+  Close error) and `CommitRecords` (a guarded whole-file replacement, buffered
+  before the truncate and rolled back to empty on a short write). `findings.jsonl`
+  and `tests.jsonl` both hold a machine record plus appended human records, so
+  both write through these rather than `WriteJSONL`
+  ([ADR 0001](../../decisions/adrs/0001-one-append-primitive-and-one-review-verb.md)).
 - **`internal/timeline`** — the data model of the merged record: `Utterance`,
   `Word`, `Interaction`, and `Entry` types; `BuildEntries` (normalise both
   streams to session-relative seconds and sort); `EventsNear` (the join-window
@@ -39,7 +49,15 @@ entrypoint that calls `cli.Run` and exits with its return code.
   self-contained, host-delegated analysis request (a versioned rubric plus
   the session's timeline) and is the sole validation boundary for the
   model's answer, writing validated findings to `findings.jsonl`.
+- **`internal/drafttests`** — the regression-test drafting layer: emits a
+  self-contained, host-delegated drafting request (a versioned rubric plus each
+  confirmed finding and its event window, via `Window`), is the sole validation
+  boundary for the model's answer (writing proposed drafts to `tests.jsonl`),
+  records the human accept / edit / reject decision as an appended record, and
+  renders the accepted drafts as a Markdown test plan. Imports `analyze` (for
+  `Load`, `EffectiveStatus`, and `LoadTimeline`), `session`, and `timeline`.
 - **`internal/review`** — records human verdicts on candidate findings, each
   appended to `findings.jsonl` as a separate, non-destructive record rather
   than an in-place rewrite, so a finding's birth state and full verdict
-  history both survive.
+  history both survive. Its `-kind` dispatch sends the tests side to
+  `internal/drafttests`, so the pipeline has one human-decision verb.

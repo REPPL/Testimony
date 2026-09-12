@@ -7,21 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
-	"syscall"
 
 	"github.com/REPPL/Testimony/internal/session"
 	"github.com/REPPL/Testimony/internal/timeline"
 )
 
-// maxAnswerBytes caps the untrusted answer read in Ingest, mirroring the
-// bounded reads elsewhere (the demo server's 8 MiB body cap, the 4 MiB JSONL
-// line cap). It is generous for a genuine multi-finding answer.
-const maxAnswerBytes = 16 << 20
-
-// loadTimeline reads the merged timeline, hinting to run merge first when it is
+// LoadTimeline reads the merged timeline, hinting to run merge first when it is
 // missing (matching report), and orders it by time the same way report does: a
 // hand-edited or exchanged timeline.jsonl reaches this reader directly, and an
 // out-of-order one was presented to EmitRequest's "read the timeline in order"
@@ -47,7 +40,12 @@ const maxAnswerBytes = 16 << 20
 // \"\"" would misname the actual problem. Positions are 1-based entry
 // ordinals, which match file lines only when the file has no blank lines
 // (ReadJSONL skips those).
-func loadTimeline(dir string) ([]timeline.Entry, error) {
+//
+// It is exported because internal/drafttests reads the same timeline under the
+// same refusals: the event window a regression-test draft is reconstructed from
+// must not be built over a file whose entry ids are ambiguous or whose src this
+// package cannot place.
+func LoadTimeline(dir string) ([]timeline.Entry, error) {
 	entries, err := timeline.ReadEntries(filepath.Join(dir, session.TimelineFile))
 	if err != nil {
 		return nil, fmt.Errorf("read timeline (run `testimony merge` first?): %w", err)
@@ -78,7 +76,7 @@ func loadTimeline(dir string) ([]timeline.Entry, error) {
 // nothing written on any failure). To protect the retained precision record it
 // refuses to overwrite a findings.jsonl that already holds verdict records.
 func Ingest(dir string, r io.Reader) ([]Finding, error) {
-	entries, err := loadTimeline(dir)
+	entries, err := LoadTimeline(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -86,14 +84,15 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 
 	// The answer is untrusted LLM output (this is the validation boundary) and
 	// -ingest reads it from stdin/a file, so cap the read: a multi-gigabyte
-	// answer must not OOM the process before validation runs. maxAnswerBytes is
-	// generous for a real answer; anything larger is rejected, not buffered.
-	data, err := io.ReadAll(io.LimitReader(r, maxAnswerBytes+1))
+	// answer must not OOM the process before validation runs.
+	// session.MaxAnswerBytes is generous for a real answer; anything larger is
+	// rejected, not buffered.
+	data, err := io.ReadAll(io.LimitReader(r, session.MaxAnswerBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxAnswerBytes {
-		return nil, fmt.Errorf("answer exceeds %d bytes: refusing to ingest", maxAnswerBytes)
+	if len(data) > session.MaxAnswerBytes {
+		return nil, fmt.Errorf("answer exceeds %d bytes: refusing to ingest", session.MaxAnswerBytes)
 	}
 	raws, rubric, err := parseContainer(data)
 	if err != nil {
@@ -151,93 +150,43 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 }
 
 // commitFindings runs the verdict guard and the truncating write as one locked
-// step. Probing with holdsVerdicts and then calling session.WriteJSONL as two
-// separate opens left a TOCTOU window: a concurrent `testimony review` commits a
-// verdict (under its own lock, see review.AppendVerdict) between the probe and
-// the O_TRUNC open, and the rewrite destroys it — precisely the human-decision
-// record the guard exists to protect. Holding one exclusive advisory lock across
-// probe, truncate, and write forecloses the interleaving: AppendVerdict blocks
-// until the commit completes, so a verdict is either visible to the probe (and
-// the re-ingest refused) or appended after the new findings. The findings were
-// already held to both session.MaxJSONLLine and session.MaxJSONLBytes by
-// oversizedFindings, so writing through the locked descriptor keeps the
-// read-side invariants WriteJSONL's two callers get.
+// step, through session.CommitRecords: the probe, the truncate, and the write
+// share one exclusive advisory lock, so a concurrent `testimony review`
+// committing a verdict (under session.AppendRecord's lock, see
+// review.AppendVerdict) cannot slip between the probe and the O_TRUNC open and
+// have its record — precisely the human-decision record the guard exists to
+// protect — destroyed by the rewrite. The findings were already held to both
+// session.MaxJSONLLine and session.MaxJSONLBytes by oversizedFindings, which is
+// the pre-flight CommitRecords leaves to its callers because only they can name a
+// record by its own id or its position in an answer.
+//
+// Each finding is encoded with json.Marshal, the same encoder (HTML escaping on,
+// Go's default) oversizedFindings measures with, so the bytes written are exactly
+// the bytes that passed the size check.
 func commitFindings(dir string, findings []Finding) error {
 	path := filepath.Join(dir, session.FindingsFile)
-	f, err := session.OpenFileNoFollow(path, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return err
-	}
-	held, err := holdsVerdicts(f, path)
-	if err != nil {
-		f.Close()
-		return err
-	}
-	if held {
-		f.Close()
-		return fmt.Errorf("refusing to overwrite %s: it already holds verdict records (the retained precision record)", session.FindingsFile)
-	}
-	if err := writeFindings(f, findings); err != nil {
-		f.Close()
-		return err
-	}
-	// Close releases the lock with the descriptor.
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("write findings: %w", err)
-	}
-	return nil
-}
-
-// findingsFile is the subset of *os.File writeFindings needs; a fake satisfies it
-// in tests to exercise the truncate-then-write rollback.
-type findingsFile interface {
-	io.Writer
-	Truncate(size int64) error
-	Seek(offset int64, whence int) (int64, error)
-}
-
-// writeFindings replaces f's contents with the findings, one JSON object per line,
-// rolling the file back to empty if the write only partly lands.
-//
-// The whole set is encoded into one buffer before f is truncated, so the truncate
-// and the write are a single Write of pre-built bytes rather than a streamed series
-// of encodes that a mid-way I/O error (ENOSPC) could leave half-flushed. That
-// matters because commitFindings ran f.Truncate(0) first: without the rollback a
-// short write left findings.jsonl holding a truncated, newline-less JSON fragment,
-// which not only breaks every reader but blocks the tool's own recovery — the next
-// analyze -ingest calls holdsVerdicts, which json.Unmarshals every line and errors
-// on the fragment before it can conclude "no verdicts" and rewrite. On any write
-// error the file is therefore truncated back to empty: an empty findings.jsonl is
-// parseable (zero findings, zero verdicts) and re-ingestable, so the failure state
-// no longer forecloses its own repair. This is the same partial-write rollback
-// review.writeVerdict and demo.appendRecords already apply; commitFindings was the
-// one writer without it. The set is bounded by oversizedFindings before this runs,
-// so buffering it whole holds one bounded answer, not an unbounded stream.
-func writeFindings(f findingsFile, findings []Finding) error {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	for _, v := range findings {
-		if err := enc.Encode(v); err != nil {
+	records := make([][]byte, 0, len(findings))
+	for _, f := range findings {
+		b, err := json.Marshal(f)
+		if err != nil {
 			return fmt.Errorf("write findings: %w", err)
 		}
+		records = append(records, b)
 	}
-	if err := f.Truncate(0); err != nil {
-		return fmt.Errorf("write findings: %w", err)
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("write findings: %w", err)
-	}
-	if _, err := f.Write(buf.Bytes()); err != nil {
-		// Best-effort roll back to an empty (parseable, re-ingestable) file, then
-		// surface the original error.
-		f.Truncate(0)
-		return fmt.Errorf("write findings: %w", err)
-	}
-	return nil
+	return session.CommitRecords(session.Commit{
+		Path:    path,
+		Records: records,
+		Guard: func(current io.Reader) error {
+			held, err := holdsVerdicts(current, path)
+			if err != nil {
+				return err
+			}
+			if held {
+				return fmt.Errorf("refusing to overwrite %s: it already holds verdict records (the retained precision record)", session.FindingsFile)
+			}
+			return nil
+		},
+	})
 }
 
 // oversizedFindings reports any finding whose findings.jsonl line — its JSON
@@ -257,8 +206,8 @@ func writeFindings(f findingsFile, findings []Finding) error {
 // checks here run before any write and join the transactional error set, so
 // an oversized answer leaves the previous findings.jsonl untouched rather
 // than bricking it — the write-side pre-flight WriteJSONL's two callers get,
-// which findings.jsonl otherwise lacks because commitFindings writes it
-// through its own locked descriptor rather than WriteJSONL. Labels come from
+// which findings.jsonl otherwise lacks because it is committed through
+// session.CommitRecords rather than WriteJSONL. Labels come from
 // each finding's answer position for the same reason validate's do; a line
 // already flagged as over-long is excluded from the total so one oversized
 // finding cannot also trigger a redundant total-size error.
@@ -374,9 +323,9 @@ func decodeFinding(raw json.RawMessage) (Finding, error) {
 
 // holdsVerdicts reports whether the findings.jsonl open on f already contains
 // any verdict record. It reads through the caller's descriptor — opened under
-// the no-follow guard and exclusively locked by commitFindings — rather than
-// opening the path itself, so the probe and the write it gates observe the same
-// locked file. It scans for raw kind:"verdict" lines rather than reusing
+// the no-follow guard and exclusively locked by session.CommitRecords — rather
+// than opening the path itself, so the probe and the write it gates observe the
+// same locked file. It scans for raw kind:"verdict" lines rather than reusing
 // analyze.Load, whose verdict slice is filtered to the closed enum
 // (confirmed|rejected|duplicate): a hand-edited or shared file whose only
 // verdict lines carry a foreign or typo'd value would otherwise slip past the
