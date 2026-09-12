@@ -246,14 +246,7 @@ func serveOn(ln net.Listener, addr, dir string) (*http.Server, error) {
 	}
 	s := &server{interactions: inter, rawEvents: raw, t0: t0}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := assets.ReadFile("assets/index.html")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(b)
-	})
-	mux.HandleFunc("/api/interactions", s.handleInteraction)
-	mux.HandleFunc("/api/events", s.handleRawEvents)
+	mux := newMux(s)
 
 	// A deliberately wider bind serves the page to other devices, but allowWrite
 	// still pins capture posts to loopback clients — lifting that pin would
@@ -289,6 +282,43 @@ func serveOn(ln net.Listener, addr, dir string) (*http.Server, error) {
 	return srv, nil
 }
 
+// newMux builds the capture server's routing table: the demo page, the two
+// exact capture endpoints, and the two fallbacks that keep a mis-addressed
+// capture post audible.
+//
+// http.ServeMux matches "/" as a subtree, so every path no other pattern
+// claims lands on the page handler. A capture post that misses an endpoint by
+// a character — "/api/interactions/", "/api/interaction", "/api/events/" —
+// was therefore answered 200 with the demo page: it appended nothing, and,
+// because it never reached appendLines, it went past refuseWrite without a
+// word on stderr. The page posts via sendBeacon, which surfaces no status, so
+// the operator's only sign of a typo in their own instrumentation was merge
+// counting 0 events after the participant had gone. Both fallbacks now answer
+// through refuseWrite — 404 naming the unknown path under "/api/", 405 for a
+// non-GET method anywhere else — so every refusal reaches the terminal, as
+// refuseWrite's contract requires. The two exact endpoints are untouched.
+func newMux(s *server) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Serving the page is a read; anything else here is a write attempt
+		// against a path that captures nothing.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			refuseWrite(w, r, fmt.Sprintf("method %s on %q", r.Method, r.URL.Path), "GET or HEAD only", http.StatusMethodNotAllowed)
+			return
+		}
+		b, _ := assets.ReadFile("assets/index.html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(b)
+	})
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		refuseWrite(w, r, fmt.Sprintf("unknown capture path %q", r.URL.Path), "unknown capture endpoint", http.StatusNotFound)
+	})
+	mux.HandleFunc("/api/interactions", s.handleInteraction)
+	mux.HandleFunc("/api/events", s.handleRawEvents)
+	return mux
+}
+
 // handleInteraction appends one normalised interaction (a single JSON object)
 // as one line of interactions.jsonl.
 func (s *server) handleInteraction(w http.ResponseWriter, r *http.Request) {
@@ -303,6 +333,7 @@ func (s *server) handleRawEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) appendLines(w http.ResponseWriter, r *http.Request, f *os.File, batch bool) {
 	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
 		refuseWrite(w, r, "method "+r.Method, "POST only", http.StatusMethodNotAllowed)
 		return
 	}

@@ -115,11 +115,11 @@ func fileLines(t *testing.T, path string) []string {
 // ":port" must bind 127.0.0.1, not 0.0.0.0, while an explicit host is honoured.
 func TestListenAddrDefaultsToLoopback(t *testing.T) {
 	cases := map[string]string{
-		":8737":            "127.0.0.1:8737",
-		"127.0.0.1:8737":   "127.0.0.1:8737",
-		"0.0.0.0:8737":     "0.0.0.0:8737",
-		"[::1]:8737":       "[::1]:8737",
-		"192.168.1.5:8737": "192.168.1.5:8737",
+		":8737":          "127.0.0.1:8737",
+		"127.0.0.1:8737": "127.0.0.1:8737",
+		"0.0.0.0:8737":   "0.0.0.0:8737",
+		"[::1]:8737":     "[::1]:8737",
+		"192.0.2.5:8737": "192.0.2.5:8737",
 	}
 	for in, want := range cases {
 		got, err := listenAddr(in)
@@ -960,5 +960,85 @@ func TestServeSurfacesBoundAddr(t *testing.T) {
 	}
 	if got := DisplayURL(displayAddr(srv, ":0")); strings.Contains(got, ":0") || !strings.HasPrefix(got, "http://localhost:") {
 		t.Fatalf("display URL still unopenable: %q", got)
+	}
+}
+
+// pageRequest builds a non-POST request to path that clears the loopback
+// guard, so a case testing the routing table is not decided by allowWrite.
+func pageRequest(method, path string) *http.Request {
+	r := httptest.NewRequest(method, path, nil)
+	r.Host = "localhost:8737"
+	r.RemoteAddr = "127.0.0.1:54321"
+	return r
+}
+
+// TestMuxRefusesMisroutedCapturePost pins the routing table's fallbacks. The
+// "/" pattern is a subtree, so before the fix every path no endpoint claimed
+// was served the demo page with 200 — including a capture post that missed
+// "/api/interactions" or "/api/events" by a character. The page posts via
+// sendBeacon, which surfaces no status, so such a post appended nothing, said
+// nothing on stderr, and left the operator to discover the silence when merge
+// counted 0 events. Every mis-addressed post must now answer through
+// refuseWrite, naming the path, while the two exact endpoints and the page
+// itself are unchanged.
+func TestMuxRefusesMisroutedCapturePost(t *testing.T) {
+	good := `{"t":1,"kind":"click"}`
+	cases := []struct {
+		name    string
+		method  string
+		path    string
+		code    int
+		refused bool // answered through refuseWrite, so logged to stderr
+		lines   int  // interactions.jsonl lines afterwards
+	}{
+		{"exact interactions endpoint", http.MethodPost, "/api/interactions", http.StatusNoContent, false, 1},
+		{"trailing slash", http.MethodPost, "/api/interactions/", http.StatusNotFound, true, 0},
+		{"mistyped endpoint", http.MethodPost, "/api/interaction", http.StatusNotFound, true, 0},
+		{"events trailing slash", http.MethodPost, "/api/events/", http.StatusNotFound, true, 0},
+		{"post to the page", http.MethodPost, "/", http.StatusMethodNotAllowed, true, 0},
+		{"get the page", http.MethodGet, "/", http.StatusOK, false, 0},
+		{"head the page", http.MethodHead, "/", http.StatusOK, false, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, dir := newTestServer(t)
+			w := httptest.NewRecorder()
+			stderr := captureStderr(t, func() {
+				r := pageRequest(c.method, c.path)
+				if c.method == http.MethodPost {
+					r = jsonPost(c.path, good, nil)
+				}
+				newMux(s).ServeHTTP(w, r)
+			})
+			if w.Code != c.code {
+				t.Fatalf("status = %d, want %d", w.Code, c.code)
+			}
+			logged := strings.Contains(stderr, "capture write refused")
+			if logged != c.refused {
+				t.Errorf("logged a refusal = %v, want %v (stderr %q)", logged, c.refused, stderr)
+			}
+			if c.refused && !strings.Contains(stderr, c.path) {
+				t.Errorf("refusal names no path; want %q on stderr, got %q", c.path, stderr)
+			}
+			if got := fileLines(t, filepath.Join(dir, session.InteractionsFile)); len(got) != c.lines {
+				t.Errorf("interactions.jsonl has %d lines, want %d: %q", len(got), c.lines, got)
+			}
+			if got := fileLines(t, filepath.Join(dir, session.RawEventsFile)); len(got) != 0 {
+				t.Errorf("events.rrweb.jsonl has %d lines, want 0: %q", len(got), got)
+			}
+			if c.code == http.StatusMethodNotAllowed {
+				if got := w.Header().Get("Allow"); got != "GET, HEAD" {
+					t.Errorf("Allow = %q, want %q", got, "GET, HEAD")
+				}
+			}
+			if c.code == http.StatusOK {
+				if got := w.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+					t.Errorf("Content-Type = %q, want the demo page's", got)
+				}
+				if c.method == http.MethodGet && !strings.Contains(w.Body.String(), "<!DOCTYPE html>") {
+					t.Errorf("GET / served no HTML page: %q", w.Body.String())
+				}
+			}
+		})
 	}
 }
