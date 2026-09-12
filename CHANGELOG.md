@@ -16,6 +16,22 @@ break an existing invocation is called out in the entry that records it.
   ASR engine is still running, instead of staying silent between the offset
   line and completion — a CPU-only `whisperx`/`whisper-cli` run can take
   several minutes with nothing else printed, indistinguishable from a hang.
+- `transcribe`, `merge`, `report`, `analyze`, and `review` infer their session
+  directory from the current directory when `-session` is omitted: `cd` into a
+  session (a directory holding a Testimony session `manifest.json` — a regular
+  file carrying the `session` field, so an unrelated project's web-app or
+  extension manifest of the same name is not mistaken for one) and each command
+  operates on it exactly as `-session .` does, so a single session's lifecycle
+  no longer repeats the same timestamped path on every invocation. The command
+  names the inferred session on stderr — never stdout, which carries
+  `analyze`'s emitted request — after its other invocation checks pass and
+  before it starts work, so the implicit choice is visible in the output of the
+  run that used it and a run refused for another flag announces nothing. An
+  explicit `-session` is unchanged, wins wherever it is given, and prints no
+  such line. Inference covers the exact current directory only — no parent is
+  searched — and `record`/`demo`, which create sessions rather than operate on
+  one, are unaffected. With neither an explicit flag nor a session manifest in
+  the current directory, the usage error names both things that were checked.
 
 ### Fixed
 

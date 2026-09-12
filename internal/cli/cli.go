@@ -29,19 +29,22 @@ Usage:
   testimony record      [-out sessions] [-app NAME] [-participant P1] [-task ...]   managed capture: session dir + manifest, start recorders, run until Ctrl+C
                         [-commit HASH] [-video|-no-video] [-demo [-addr :8737]]
   testimony demo        [-addr :8737] [-out sessions]   serve the instrumented demo app, capture a session
-  testimony transcribe   -session DIR [-audio FILE]     transcribe a voice recording into transcript.jsonl (reuses the session's audio.wav when -audio is omitted)
+  testimony transcribe  [-session DIR] [-audio FILE]    transcribe a voice recording into transcript.jsonl (reuses the session's audio.wav when -audio is omitted)
                         [-engine auto|whisperx|whispercpp] [-model large-v3-turbo] [-language en] [-offset SECONDS]
                         [-device auto|cpu|cuda] [-compute_type auto|int8|float16|…] [-vad auto|silero|pyannote]   (whisperx only)
-  testimony merge        -session DIR                   merge transcript + interactions into timeline.jsonl
-  testimony report       -session DIR [-window 2.5]     render timeline.jsonl as a Markdown report
-  testimony analyze      -session DIR [-out FILE]        emit the analysis request (rubric + timeline) on stdout or to FILE
-  testimony analyze      -session DIR -ingest FILE       validate answer JSON (FILE or "-") → findings.jsonl (all findings unverified)
-  testimony review       -session DIR                    interactively record verdicts on unverified findings (stdin must be a character device)
-  testimony review       -session DIR -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
+  testimony merge       [-session DIR]                  merge transcript + interactions into timeline.jsonl
+  testimony report      [-session DIR] [-window 2.5]    render timeline.jsonl as a Markdown report
+  testimony analyze     [-session DIR] [-out FILE]      emit the analysis request (rubric + timeline) on stdout or to FILE
+  testimony analyze     [-session DIR] -ingest FILE     validate answer JSON (FILE or "-") → findings.jsonl (all findings unverified)
+  testimony review      [-session DIR]                  interactively record verdicts on unverified findings (stdin must be a character device)
+  testimony review      [-session DIR] -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
   testimony version
   testimony help
 
 A session directory is described in docs/reference/session-directory.md.
+Omitting -session on transcribe, merge, report, analyze, or review uses the
+current directory when it holds a Testimony session manifest.json (one with a
+session field), and names the inferred session on stderr.
 `
 
 // Run executes the CLI and returns a process exit code.
@@ -87,15 +90,16 @@ func Run(args []string) int {
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
 		}
-		if *dir == "" {
-			return usageErr(fmt.Errorf("merge: -session is required"))
+		sess, err := resolveSession(fs, *dir)
+		if err != nil {
+			return usageErr(err)
 		}
-		speech, events, err := timeline.Merge(*dir)
+		speech, events, err := timeline.Merge(sess)
 		if err != nil {
 			return fail(err)
 		}
 		fmt.Printf("merged %d utterances + %d events → %s\n",
-			speech, events, filepath.Join(*dir, session.TimelineFile))
+			speech, events, filepath.Join(sess, session.TimelineFile))
 		return 0
 
 	case "report":
@@ -105,9 +109,6 @@ func Run(args []string) int {
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
-		}
-		if *dir == "" {
-			return usageErr(fmt.Errorf("report: -session is required"))
 		}
 		// A non-finite window is not a join window at all, and Render has no way to
 		// notice: every comparison against NaN is false, so a NaN window silently
@@ -119,11 +120,18 @@ func Run(args []string) int {
 		if math.IsNaN(*window) || math.IsInf(*window, 0) {
 			return usageErr(fmt.Errorf("report: -window must be a finite number of seconds, got %v", *window))
 		}
-		md, err := report.Render(*dir, *window)
+		// Resolved last of the invocation checks: an inferred session is announced
+		// on stderr, and a run that is about to be refused for some other flag must
+		// not first announce a session it never used.
+		sess, err := resolveSession(fs, *dir)
+		if err != nil {
+			return usageErr(err)
+		}
+		md, err := report.Render(sess, *window)
 		if err != nil {
 			return fail(err)
 		}
-		out := filepath.Join(*dir, session.ReportFile)
+		out := filepath.Join(sess, session.ReportFile)
 		if err := session.WriteFileNoFollow(out, []byte(md), 0o644); err != nil {
 			return fail(err)
 		}
@@ -186,9 +194,6 @@ func Run(args []string) int {
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
-		}
-		if *dir == "" {
-			return usageErr(fmt.Errorf("transcribe: -session is required"))
 		}
 		audioSet := false
 		fs.Visit(func(f *flag.Flag) {
@@ -281,8 +286,14 @@ func Run(args []string) int {
 				return usageErr(fmt.Errorf("transcribe: %w", err))
 			}
 		}
+		// Resolved last of the invocation checks (see report above): a run refused
+		// for another flag must not first announce an inferred session.
+		sess, err := resolveSession(fs, *dir)
+		if err != nil {
+			return usageErr(err)
+		}
 		n, err := transcribe.Run(transcribe.Options{
-			SessionDir: *dir,
+			SessionDir: sess,
 			Audio:      *audio,
 			Engine:     *engine,
 			Model:      *model,
@@ -297,7 +308,7 @@ func Run(args []string) int {
 		if err != nil {
 			return fail(err)
 		}
-		fmt.Printf("transcribed %d utterances → %s\n", n, filepath.Join(*dir, session.TranscriptFile))
+		fmt.Printf("transcribed %d utterances → %s\n", n, filepath.Join(sess, session.TranscriptFile))
 		return 0
 
 	case "analyze":
@@ -308,9 +319,6 @@ func Run(args []string) int {
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
-		}
-		if *dir == "" {
-			return usageErr(fmt.Errorf("analyze: -session is required"))
 		}
 		outSet, ingestSet := false, false
 		fs.Visit(func(f *flag.Flag) {
@@ -335,10 +343,16 @@ func Run(args []string) int {
 		if outSet && *out == "" {
 			return usageErr(fmt.Errorf("analyze: -out must not be empty"))
 		}
+		if *ingest != "" && *out != "" {
+			return usageErr(fmt.Errorf("analyze: -out and -ingest cannot be combined"))
+		}
+		// Resolved last of the invocation checks (see report above): a run refused
+		// for another flag must not first announce an inferred session.
+		sess, err := resolveSession(fs, *dir)
+		if err != nil {
+			return usageErr(err)
+		}
 		if *ingest != "" {
-			if *out != "" {
-				return usageErr(fmt.Errorf("analyze: -out and -ingest cannot be combined"))
-			}
 			in := os.Stdin
 			if *ingest != "-" {
 				// Read the answer file through the no-follow guard, like every other
@@ -353,15 +367,15 @@ func Run(args []string) int {
 				defer f.Close()
 				in = f
 			}
-			findings, err := analyze.Ingest(*dir, in)
+			findings, err := analyze.Ingest(sess, in)
 			if err != nil {
 				return fail(err)
 			}
 			fmt.Printf("validated %d findings → %s (all unverified)\n",
-				len(findings), filepath.Join(*dir, session.FindingsFile))
+				len(findings), filepath.Join(sess, session.FindingsFile))
 			return 0
 		}
-		prompt, err := analyze.EmitRequest(*dir)
+		prompt, err := analyze.EmitRequest(sess)
 		if err != nil {
 			return fail(err)
 		}
@@ -388,9 +402,6 @@ func Run(args []string) int {
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
-		}
-		if *dir == "" {
-			return usageErr(fmt.Errorf("review: -session is required"))
 		}
 		f, v := strings.TrimSpace(*finding), strings.TrimSpace(*verdict)
 		findingSet, verdictSet := false, false
@@ -444,8 +455,14 @@ func Run(args []string) int {
 				return usageErr(fmt.Errorf("review: -finding cannot be a duplicate of itself"))
 			}
 		}
+		// Resolved last of the invocation checks (see report above): a run refused
+		// for another flag must not first announce an inferred session.
+		sess, err := resolveSession(fs, *dir)
+		if err != nil {
+			return usageErr(err)
+		}
 		if err := review.Run(review.Options{
-			Dir:     *dir,
+			Dir:     sess,
 			Finding: f,
 			Verdict: v,
 			In:      os.Stdin,
@@ -489,6 +506,64 @@ func rejectArgs(fs *flag.FlagSet) error {
 		return fmt.Errorf("%s: unexpected argument %q (the command takes no positional arguments)", fs.Name(), fs.Arg(0))
 	}
 	return nil
+}
+
+// resolveSession returns the session directory a pipeline command operates on:
+// the explicit -session flag when it is given, otherwise the current directory
+// when that directory itself holds a manifest.json. It is the single resolution
+// point for transcribe, merge, report, analyze, and review, so the five commands
+// cannot drift in what they accept.
+//
+// Inference covers the exact current directory only — never a parent, the way
+// git searches upward for .git — because a command that operated on an ancestor
+// session from somewhere inside it would write evidence into a session the
+// operator never named. It reports the inferred directory on stderr before any
+// work starts: the choice is implicit, so it must at least be visible, and an
+// operator who mistook which directory they were in can see it in the output of
+// the run that misfired. An explicit -session prints nothing extra.
+//
+// An explicitly-empty -session is a wrong invocation (an unset shell variable
+// spliced into the flag, say), not omission — the analyze -ingest/-out
+// precedent. Left to fall through to inference it would silently run against
+// whatever directory the caller happened to be standing in, which is exactly
+// the wrong-session hazard inference has to avoid.
+//
+// The marker is a Testimony session manifest, not merely the file name:
+// manifest.json is one of the most common file names in software (a web app
+// manifest, a browser-extension manifest, a package manifest), so keying on
+// the name alone would make `merge` write timeline.jsonl into an unrelated
+// project's root and `report` overwrite a hand-written report.md there, both
+// at exit 0. The manifest must be a regular file (Lstat, not Stat: every other
+// manifest access goes through the no-follow guard, and a directory or a
+// dangling symlink at that name is not the marker) and, when it parses, must
+// carry the `session` field that session.Create always writes and
+// docs/reference/session-directory.md requires. A manifest that fails to parse
+// still infers, so a genuinely corrupt Testimony session reports its real
+// parse error instead of a misleading "holds no manifest.json".
+func resolveSession(fs *flag.FlagSet, dir string) (string, error) {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "session" {
+			set = true
+		}
+	})
+	if set {
+		if dir == "" {
+			return "", fmt.Errorf("%s: -session must not be empty", fs.Name())
+		}
+		return dir, nil
+	}
+	fi, err := os.Lstat(session.ManifestFile)
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("%s: -session is required (no -session flag, and the current directory holds no regular %s file)",
+			fs.Name(), session.ManifestFile)
+	}
+	if m, err := session.LoadManifest("."); err == nil && m.Session == "" {
+		return "", fmt.Errorf("%s: -session is required (the current directory holds a %s, but it is not a session manifest: no %q field)",
+			fs.Name(), session.ManifestFile, "session")
+	}
+	fmt.Fprintf(os.Stderr, "%s: using session . (inferred from the current directory)\n", fs.Name())
+	return ".", nil
 }
 
 // printErr writes an operator-facing error in the one shape every command uses.
