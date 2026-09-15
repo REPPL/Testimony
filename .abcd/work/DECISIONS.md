@@ -1676,3 +1676,4 @@ Architecture-shaping decisions graduate to an ADR under
   CSI residue, as designed and documented — logged as `iss-2609120520334220`.
   The 3.x (v3) recorder is not installed, so v3 stays fixture-verified only.
 - 2026-09-15 — PR bodies carry the `Assisted-by:` trailer as their last line, matching the global attribution gate that refuses a body without it; the earlier "no footer in PR bodies" rule contradicted that gate and is replaced. Session links stay out of PR bodies and commits.
+- 2026-09-15 — itd-6 (terminal capture inside `record`) is superseded by itd-11: `import` delivers the same evidence from an operator-recorded cast without touching `record`'s lifecycle. Moved to `intents/superseded/` with a `superseded_by` pointer; abcd has no supersede verb, so the move is by hand (captured as a tooling observation).
