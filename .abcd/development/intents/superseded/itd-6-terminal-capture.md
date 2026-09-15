@@ -7,7 +7,10 @@ suggested_kind: null
 reclassification_history: []
 builds_on: []
 severity: major
+superseded_by: itd-11
 ---
+
+> **Superseded by itd-11 (terminal-cast-import), shipped 2026-09-12.** The evidence this intent asked for — a terminal session's commands and output on the session clock, joined to narration by `merge` and rendered by `report` — is delivered by `testimony import`, which takes an operator-recorded asciicast (v2 or v3) after the session instead of wrapping a recorder inside `record`. The three open questions below are answered there: the cast header's whole-second timestamp anchors the clock (with `-offset` as the correction), output is kept verbatim and split at the JSONL budget rather than truncated, and TUI redraw traffic is preserved in the archived cast but not coalesced. Kept as the historical record of the wrap-the-shell design.
 
 # Think Aloud While You Work at the Terminal
 

@@ -1675,3 +1675,4 @@ Architecture-shaping decisions graduate to an ADR under
   `report` rendered them under the utterance. Coloured `ls` output rendered as
   CSI residue, as designed and documented — logged as `iss-2609120520334220`.
   The 3.x (v3) recorder is not installed, so v3 stays fixture-verified only.
+- 2026-09-15 — itd-6 (terminal capture inside `record`) is superseded by itd-11: `import` delivers the same evidence from an operator-recorded cast without touching `record`'s lifecycle. Moved to `intents/superseded/` with a `superseded_by` pointer; abcd has no supersede verb, so the move is by hand (captured as a tooling observation).
