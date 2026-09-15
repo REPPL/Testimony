@@ -1,9 +1,9 @@
 # Session directory reference
 
-Every capture session lives in one directory (by default under `sessions/`):
+Every capture session lives in one directory. `record` and `demo` create it under `~/Testimony/sessions`, a fixed root whatever directory they are run from, unless `-out` names another one (see [where a new session lands](cli.md#where-a-new-session-lands)):
 
 ```
-sessions/<timestamp>/
+~/Testimony/sessions/<timestamp>/
   manifest.json        # session metadata, including t0_epoch_ms (written by demo and record)
   audio.wav            # 16 kHz mono ASR input (captured by record, or converted by transcribe -audio; local only)
   audio.offset.json    # audio→session offset for an external recording (written by transcribe; local only)

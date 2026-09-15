@@ -34,20 +34,34 @@ report: -session is required (no -session flag, and the current directory holds 
 
 Resolution is the last of a command's invocation checks, so a run refused for any other flag reports only that flag and announces no session.
 
-`record` and `demo` are unaffected: they create sessions rather than operate on an existing one, and their `-out` root is a different flag with a different meaning.
+`record` and `demo` are unaffected: they create sessions rather than operate on an existing one, and their `-out` root is a different flag with a different meaning — see [where a new session lands](#where-a-new-session-lands).
+
+## Where a new session lands
+
+The two capture commands — `record` and `demo` — create a session under the `-out` root. That root defaults to `~/Testimony/sessions`, a fixed location resolved against the home directory at the moment of the run, so every session lands in the same place whatever directory the command was run from. The root, and any missing parent of it, is created on demand.
+
+`-out DIR` overrides it per invocation and is used verbatim, relative or absolute: `-out sessions` keeps a project-local `sessions/` beside the working directory. It is the only override — there is no environment variable and no configuration file.
+
+When `-out` is omitted and the home directory cannot be resolved, the command refuses at status 2 rather than fall back to a relative root, since a session written beside whichever directory the operator was standing in is exactly what the fixed default exists to prevent:
+
+```
+record: -out is required (the default root ~/Testimony/sessions cannot be resolved: $HOME is not defined); pass -out DIR
+```
+
+Both commands print the session directory they created, as the real path, in their start-up output.
 
 ## `testimony demo`
 
 Serves the instrumented demo app and captures a session.
 
 ```
-testimony demo [-addr :8737] [-out sessions]
+testimony demo [-addr :8737] [-out ~/Testimony/sessions]
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `-addr` | `:8737` | listen address (a bare `:port` binds loopback `127.0.0.1` only) |
-| `-out` | `sessions` | root directory for new session folders |
+| `-out` | `~/Testimony/sessions` | root directory for new session folders, created on demand (see [where a new session lands](#where-a-new-session-lands)) |
 
 Behaviour: creates a new session directory named after the current time (`YYYY-MM-DD_HHMMSS`) under the `-out` root, writes `manifest.json` (app `testimony demo`, participant `P1`, one seeded default task, `t0_epoch_ms` set to now), serves the demo page at `/`, and appends captured events via two endpoints:
 
@@ -166,13 +180,13 @@ Behaviour: reads `manifest.json` (required) and `timeline.jsonl`, plus `findings
 Managed capture: creates the session directory and manifest, starts the recorders, and runs until interrupted.
 
 ```
-testimony record [-out sessions] [-app NAME] [-participant P1] [-commit HASH]
+testimony record [-out ~/Testimony/sessions] [-app NAME] [-participant P1] [-commit HASH]
                  [-task ...] [-video|-no-video] [-demo [-addr :8737]]
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-out` | `sessions` | root directory for new session folders |
+| `-out` | `~/Testimony/sessions` | root directory for new session folders, created on demand (see [where a new session lands](#where-a-new-session-lands)) |
 | `-app` | *(empty)* | application under test; with `-demo`, defaults to the demo app |
 | `-participant` | `P1` | participant pseudonym |
 | `-commit` | *(empty)* | build/commit hash under test |
@@ -252,8 +266,8 @@ Render behaviour: writes one Markdown test-case block per draft whose effective 
 **Loud staging.** Two states are refused at exit 1 — a well-formed invocation whose work cannot be done — with the counts by status and nothing written:
 
 ```
-testimony: no confirmed findings to draft tests from (5 findings: 0 confirmed, 2 unverified, 1 duplicate, 2 rejected); confirm one with `testimony review -session sessions/x` first
-testimony: no accepted test drafts to render (3 drafts: 0 accepted, 0 edited, 2 proposed, 1 rejected); accept one with `testimony review -session sessions/x -kind tests` first
+testimony: no confirmed findings to draft tests from (5 findings: 0 confirmed, 2 unverified, 1 duplicate, 2 rejected); confirm one with `testimony review -session ~/Testimony/sessions/x` first
+testimony: no accepted test drafts to render (3 drafts: 0 accepted, 0 edited, 2 proposed, 1 rejected); accept one with `testimony review -session ~/Testimony/sessions/x -kind tests` first
 ```
 
 The first applies to emit and to ingest, and on ingest it fires before a byte of the answer is read: with no eligible finding, every draft in the answer would fail the same rule. The second keeps `-out FILE` from truncating an existing test plan into an empty document.

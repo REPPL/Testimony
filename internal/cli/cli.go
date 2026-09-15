@@ -29,9 +29,9 @@ var Version = "dev"
 const usage = `testimony — usability evidence, on the record
 
 Usage:
-  testimony record      [-out sessions] [-app NAME] [-participant P1] [-task ...]   managed capture: session dir + manifest, start recorders, run until Ctrl+C
+  testimony record      [-out ~/Testimony/sessions] [-app NAME] [-participant P1] [-task ...]   managed capture: session dir + manifest, start recorders, run until Ctrl+C
                         [-commit HASH] [-video|-no-video] [-demo [-addr :8737]]
-  testimony demo        [-addr :8737] [-out sessions]   serve the instrumented demo app, capture a session
+  testimony demo        [-addr :8737] [-out ~/Testimony/sessions]   serve the instrumented demo app, capture a session
   testimony transcribe  [-session DIR] [-audio FILE]    transcribe a voice recording into transcript.jsonl (reuses the session's audio.wav when -audio is omitted)
                         [-engine auto|whisperx|whispercpp] [-model large-v3-turbo] [-language en] [-offset SECONDS]
                         [-device auto|cpu|cuda] [-compute_type auto|int8|float16|…] [-vad auto|silero|pyannote]   (whisperx only)
@@ -56,6 +56,9 @@ Omitting -session on transcribe, import, merge, report, analyze, draft-tests, or
 review uses the current directory when it holds a Testimony session
 manifest.json (one with a session field), and names the inferred session on
 stderr.
+record and demo create a new session under ~/Testimony/sessions unless -out
+names another root, so a session lands in the same place whatever directory the
+command was run from.
 `
 
 // Run executes the CLI and returns a process exit code.
@@ -70,10 +73,23 @@ func Run(args []string) int {
 	case "demo":
 		fs := flag.NewFlagSet("demo", flag.ExitOnError)
 		addr := fs.String("addr", ":8737", "listen address")
-		out := fs.String("out", "sessions", "root directory for new session folders")
+		root, rootErr := defaultSessionRoot()
+		out := fs.String("out", root, "root directory for new session folders")
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
+		}
+		outSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "out" {
+				outSet = true
+			}
+		})
+		// The default root is the only thing a home directory is needed for, so
+		// an unresolvable one is refused here and nowhere else: an explicit -out
+		// runs exactly as it always has.
+		if !outSet && rootErr != nil {
+			return usageErr(fmt.Errorf("demo: %w", unresolvedRootErr(rootErr)))
 		}
 		// An empty -out is a wrong invocation (an unset shell variable spliced
 		// into the flag, say), not a valid root: every other validated flag on
@@ -151,7 +167,8 @@ func Run(args []string) int {
 
 	case "record":
 		fs := flag.NewFlagSet("record", flag.ExitOnError)
-		out := fs.String("out", "sessions", "root directory for new session folders")
+		root, rootErr := defaultSessionRoot()
+		out := fs.String("out", root, "root directory for new session folders")
 		app := fs.String("app", "", "application under test")
 		participant := fs.String("participant", "P1", "participant pseudonym")
 		commit := fs.String("commit", "", "build/commit hash under test")
@@ -164,6 +181,16 @@ func Run(args []string) int {
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
+		}
+		outSet := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "out" {
+				outSet = true
+			}
+		})
+		// See demo's identical check above.
+		if !outSet && rootErr != nil {
+			return usageErr(fmt.Errorf("record: %w", unresolvedRootErr(rootErr)))
 		}
 		// See demo's identical check above: an empty -out is a wrong invocation,
 		// not a valid root, and must exit 2 naming the flag rather than surface
@@ -800,6 +827,46 @@ func rejectArgs(fs *flag.FlagSet) error {
 		return fmt.Errorf("%s: unexpected argument %q (the command takes no positional arguments)", fs.Name(), fs.Arg(0))
 	}
 	return nil
+}
+
+// defaultRootDisplay is the default session root as an operator writes it —
+// the form the usage block, the documentation, and every message about it use,
+// rather than the expanded path of whoever happens to be running the command.
+const defaultRootDisplay = "~/Testimony/sessions"
+
+// defaultSessionRoot returns the root under which record and demo create a new
+// session when -out is not given. It is the single definition of that default:
+// both commands register the value it returns as their -out default, so `-h`
+// shows the real directory a session will land in and the two cannot drift.
+//
+// The root is fixed rather than relative to the working directory because a
+// session is evidence an operator comes back to, and a relative "sessions"
+// scattered one session per directory the command happened to be run from —
+// findable later only by remembering where you stood. ~/Testimony/sessions is
+// preferred to an XDG-style ~/.local/share/testimony/sessions for the same
+// reason: captured sessions are documents to open, browse, and hand on, not
+// application state, and a hidden directory hides them.
+//
+// The home directory is resolved at invocation time, never cached, and a home
+// that cannot be resolved is reported rather than papered over: silently
+// falling back to a relative root would put the session in whatever directory
+// the operator was standing in, which is the outcome the fixed default exists
+// to end.
+func defaultSessionRoot() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "Testimony", "sessions"), nil
+}
+
+// unresolvedRootErr phrases the refusal both capture commands give when -out is
+// omitted and the default root cannot be resolved. It names the root, carries
+// the reason, and tells the operator the one thing that gets them moving —
+// exactly one flag — rather than leaving them to discover it in the usage block.
+func unresolvedRootErr(err error) error {
+	return fmt.Errorf("-out is required (the default root %s cannot be resolved: %w); pass -out DIR",
+		defaultRootDisplay, err)
 }
 
 // resolveSession returns the session directory a pipeline command operates on:

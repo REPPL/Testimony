@@ -51,7 +51,9 @@ testimony version
 testimony record -demo
 ```
 
-One command creates a fresh session directory (for example `sessions/2026-07-17_174858`), starts recording your microphone into that directory, serves a small instrumented settings app, and prints the URL to open — the exact commands for the next steps print once you stop the session (step 5). The first run asks for **Microphone** permission — grant it in System Settings and run the command again. Keep this terminal open: it records your voice and captures your clicks for the whole session.
+One command creates a fresh session directory (for example `~/Testimony/sessions/2026-07-17_174858`), starts recording your microphone into that directory, serves a small instrumented settings app, and prints the URL to open — the exact commands for the next steps print once you stop the session (step 5). The first run asks for **Microphone** permission — grant it in System Settings and run the command again. Keep this terminal open: it records your voice and captures your clicks for the whole session.
+
+Every session lands under `~/Testimony/sessions`, the same place whatever directory you run the command from, so you can always find one again; `-out DIR` puts it somewhere else. The exact path prints at the top of the output — the steps below use the example one.
 
 > If you would rather not capture the microphone, run `testimony demo` instead, record your voice separately in QuickTime Player, save the file, and pass it to `transcribe` in step 6 with `-audio ~/Desktop/session.m4a`. Everything else is the same.
 
@@ -74,7 +76,7 @@ In the terminal, press `Ctrl+C`. The recorder finalises `audio.wav`, the capture
 Point `transcribe` at the session directory — no audio file to name, because the recording is already in the session as `audio.wav`:
 
 ```sh
-testimony transcribe -session sessions/2026-07-17_174858
+testimony transcribe -session ~/Testimony/sessions/2026-07-17_174858
 ```
 
 This runs speech recognition locally on your machine — using the WhisperX engine you installed in step 1 — and writes `transcript.jsonl` into the session directory. It also prints the clock offset it uses to align the recording with the session — note it, and see [how alignment works](../explanation/how-alignment-works.md) if it ever looks wrong.
@@ -82,7 +84,7 @@ This runs speech recognition locally on your machine — using the WhisperX engi
 ## 7. Merge speech and clicks
 
 ```sh
-testimony merge -session sessions/2026-07-17_174858
+testimony merge -session ~/Testimony/sessions/2026-07-17_174858
 ```
 
 This interleaves the transcript with the captured interactions into a single `timeline.jsonl`.
@@ -90,8 +92,8 @@ This interleaves the transcript with the captured interactions into a single `ti
 ## 8. Generate and read the report
 
 ```sh
-testimony report -session sessions/2026-07-17_174858
-open sessions/2026-07-17_174858/report.md
+testimony report -session ~/Testimony/sessions/2026-07-17_174858
+open ~/Testimony/sessions/2026-07-17_174858/report.md
 ```
 
 The report pairs each utterance with the interface events around it:

@@ -7,7 +7,7 @@ by hand. Testimony delegates the model work to an assistant of your choice —
 emits a request, you run it, and it validates the answer.
 
 Prerequisite: a session with a merged timeline. If you have only a transcript and
-interactions, run `testimony merge -session sessions/<dir>` first.
+interactions, run `testimony merge -session ~/Testimony/sessions/<dir>` first.
 
 The flow is four steps: **emit** the request, **run** it with your assistant,
 **ingest** the answer, and **review** the findings — then re-render the report.
@@ -19,7 +19,7 @@ plus the session's timeline. Send it to stdout to read it, or to a file to hand
 off:
 
 ```sh
-testimony analyze -session sessions/<dir> -out request.txt
+testimony analyze -session ~/Testimony/sessions/<dir> -out request.txt
 ```
 
 The request pins a rubric version (`testimony-analysis/v1`), asks for two passes
@@ -50,7 +50,7 @@ accepted):
 Validate the answer against the findings schema and write `findings.jsonl`:
 
 ```sh
-testimony analyze -session sessions/<dir> -ingest answer.json
+testimony analyze -session ~/Testimony/sessions/<dir> -ingest answer.json
 ```
 
 Ingest is the validation boundary, and it never trusts the model. It rejects, with
@@ -64,7 +64,7 @@ whole answer is clean, so you can fix a batch in one pass. Every finding lands
 You can also pipe the answer straight in with `-ingest -`:
 
 ```sh
-your-assistant < request.txt | testimony analyze -session sessions/<dir> -ingest -
+your-assistant < request.txt | testimony analyze -session ~/Testimony/sessions/<dir> -ingest -
 ```
 
 ## 4. Review the findings
@@ -73,7 +73,7 @@ Each finding is a *candidate* until you judge it. `testimony review` walks the
 unverified findings and records your verdict:
 
 ```sh
-testimony review -session sessions/<dir>
+testimony review -session ~/Testimony/sessions/<dir>
 ```
 
 For each finding it shows its id, type, severity, the clock, the participant's
@@ -86,8 +86,8 @@ decided both survive.
 To record a single verdict without the interactive walk (handy in scripts):
 
 ```sh
-testimony review -session sessions/<dir> -finding F-001 -verdict confirmed
-testimony review -session sessions/<dir> -finding F-005 -verdict duplicate-of-F-001
+testimony review -session ~/Testimony/sessions/<dir> -finding F-001 -verdict confirmed
+testimony review -session ~/Testimony/sessions/<dir> -finding F-005 -verdict duplicate-of-F-001
 ```
 
 Interactive review needs stdin to be a character device (an interactive
@@ -99,14 +99,14 @@ prints a notice and exits without blocking.
 Rebuild `report.md` to see the findings grouped by verdict:
 
 ```sh
-testimony report -session sessions/<dir>
-open sessions/<dir>/report.md
+testimony report -session ~/Testimony/sessions/<dir>
+open ~/Testimony/sessions/<dir>/report.md
 ```
 
 The Findings section lists findings under **Confirmed**, **Unverified**,
 **Duplicate**, and **Rejected**, each with its quote, anchor, and — where you
 recorded one — the verdict and its date. Change a verdict at any time with
-`testimony review -session sessions/<dir> -finding F-NNN -verdict <verdict>`
+`testimony review -session ~/Testimony/sessions/<dir> -finding F-NNN -verdict <verdict>`
 (the interactive walk offers only findings that are still unverified); the
 latest one wins, and the history is kept.
 

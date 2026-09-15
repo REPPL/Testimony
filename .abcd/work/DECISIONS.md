@@ -1675,3 +1675,14 @@ Architecture-shaping decisions graduate to an ADR under
   `report` rendered them under the utterance. Coloured `ls` output rendered as
   CSI residue, as designed and documented — logged as `iss-2609120520334220`.
   The 3.x (v3) recorder is not installed, so v3 stays fixture-verified only.
+- 2026-09-15 — `record` and `demo` default their `-out` root to the fixed
+  `~/Testimony/sessions` (itd-10), resolved via `os.UserHomeDir()` at
+  invocation time by one helper both commands register as their flag default,
+  in place of the relative `sessions/`. The press release's own path beats an
+  XDG-style `~/.local/share/testimony/sessions`: a session is evidence to open
+  and hand on, not application state, and a hidden directory hides it. `-out
+  DIR` stays the only override — no environment variable, no config file — and
+  an unresolvable home refuses at the usage status naming `-out` rather than
+  falling back to a relative root, which is the scattered-session outcome the
+  fixed default exists to end. A behaviour change, called out in the changelog
+  with `-out sessions` as the one-line migration.

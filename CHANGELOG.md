@@ -84,6 +84,20 @@ break an existing invocation is called out in the entry that records it.
   one, are unaffected. With neither an explicit flag nor a session manifest in
   the current directory, the usage error names both things that were checked.
 
+### Changed
+
+- `record` and `demo` create a new session under `~/Testimony/sessions` when
+  `-out` is not given, in place of the relative `sessions/` root they used to
+  create beside whatever directory the command happened to be run from — so a
+  session lands in the same, findable place however the command was invoked.
+  The root is resolved against the home directory at invocation time and
+  created on demand exactly as an explicit `-out` root is; with no home
+  directory to resolve it, the command refuses at the usage status naming
+  `-out` rather than fall back to a relative root. **This changes an existing
+  invocation:** pass `-out sessions` to keep the old behaviour. `-out DIR`
+  remains the only override, and every other command is unaffected — they take
+  an explicit `-session DIR` or infer one from the current directory.
+
 ### Fixed
 
 - `demo` and `record` refuse a capture post that misses an endpoint path

@@ -11,13 +11,20 @@ app contains at least one intentional usability flaw, found by talking.
 | Flag | Default | Meaning |
 |---|---|---|
 | `-addr` | `:8737` | listen address (a bare `:port` binds loopback `127.0.0.1` only) |
-| `-out` | `sessions` | root directory for new session folders |
+| `-out` | `~/Testimony/sessions` | root directory for new session folders, created on demand |
 
 ## Behaviour
 
 - Creates `<out>/<timestamp>/` (format `2006-01-02_150405`) and writes a
   `manifest.json` with `t0_epoch_ms` set to launch time, app
   `"testimony demo"`, participant `"P1"`, and a one-line task.
+- `-out` defaults to the fixed root `~/Testimony/sessions`, resolved against
+  the home directory at invocation time and shared with
+  [`record`](05-record.md) through one helper in `internal/cli`, so a session
+  lands in the same place whatever directory the command was run from. The
+  root is created on demand. With `-out` omitted and no home directory to
+  resolve, the command refuses at the usage status naming the flag to pass
+  rather than fall back to a relative root.
 - Serves the embedded single-page app at `/`; interactive elements carry
   `data-testid` attributes throughout.
 - `POST /api/interactions` appends one normalised interaction (single JSON
