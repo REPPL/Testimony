@@ -424,6 +424,30 @@ func SafeInline(s string) string {
 	return b.String()
 }
 
+// CodeRendersEmpty reports whether s would carry no meaningful content once
+// rendered inside a Markdown code span: it reduces to nothing but whitespace
+// after SafeText and backtick removal (invisible-only Unicode, backticks alone,
+// or literal whitespace — a lone tab, which SafeText maps to a space).
+//
+// Backticks are part of the predicate because they are part of the rendering: a
+// code span strips them (they would otherwise close the span early and let the
+// tail render as active markup), so a value made only of backticks renders as
+// nothing at all.
+//
+// This is the one home for that judgement, shared by every surface that decides
+// whether such a value is present. A caller deciding whether to show a code span
+// at all, rather than fall back to something more informative, must judge
+// presence on this rendered form — judging it on s's raw emptiness lets a value
+// that renders as nothing through as if it were real content. Just as
+// importantly, a surface that ACCEPTS such a value (analyze.NewProvenance
+// vetting -model) and a surface that RENDERS it (report's provenance line) must
+// agree: with two predicates, a model of backticks alone was accepted at the
+// flag, echoed on the success line, and then rendered as "not recorded" in the
+// report — the tool contradicting itself about what it had just stored.
+func CodeRendersEmpty(s string) bool {
+	return strings.TrimSpace(strings.ReplaceAll(SafeText(s), "`", "")) == ""
+}
+
 // SafeTextLines applies SafeText to s one line at a time, preserving the
 // newlines SafeText itself would strip (they fall under r < 0x20). A
 // subprocess's captured output — ffmpeg's multi-line metadata dump, a device

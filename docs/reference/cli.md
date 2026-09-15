@@ -216,7 +216,7 @@ The first-pass analysis layer. `analyze` never calls a model, holds no keys, and
 
 ```
 testimony analyze [-session DIR] [-out FILE]      # emit the request
-testimony analyze [-session DIR] -ingest FILE     # validate the answer → findings.jsonl
+testimony analyze [-session DIR] -ingest FILE [-backend local|cloud] [-model NAME]   # validate the answer → findings.jsonl
 ```
 
 | Flag | Default | Meaning |
@@ -224,12 +224,34 @@ testimony analyze [-session DIR] -ingest FILE     # validate the answer → find
 | `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
 | `-out` | *(stdout)* | emit mode: write the request to `FILE` instead of stdout |
 | `-ingest` | *(off)* | ingest mode: validate the answer JSON at `FILE` (or `-` for stdin) into `findings.jsonl` |
+| `-backend` | *(unrecorded)* | ingest mode: record which backend answered the request — `local` or `cloud` |
+| `-model` | *(not recorded)* | ingest mode: record the model that answered the request; free text, at most 200 characters, and refused when it renders as nothing (whitespace, invisible characters, or backticks alone) |
 
-`analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`). Combining `-out` and `-ingest` is an error. Emit reads `manifest.json` and `timeline.jsonl`; ingest reads `timeline.jsonl` only. Both hint to run `merge` first when the timeline is missing, and both refuse a timeline whose entries carry a `src` other than `speech` or `event`, or a duplicated entry id — findings cite evidence by id, so a reused one cannot be resolved unambiguously (a `merge`-produced timeline never carries either defect: `merge` refuses a transcript whose utterance ids repeat or collide with the `ev-NNN` event ids it synthesises).
+`analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`). Combining `-out` and `-ingest` is an error. `-backend` and `-model` belong to ingest alone — emit mutates nothing in the session directory, so there is nothing for them to be recorded against — and passing either in emit mode is a usage error rather than a silently ignored flag. `-model` without `-backend` is a usage error too: the backend is the field that carries the claim, so a model name on its own records nothing about where the request ran. `unrecorded` is not accepted from `-backend`; it is what the absence of the flag records. Emit reads `manifest.json` and `timeline.jsonl`; ingest reads `timeline.jsonl` only. Both hint to run `merge` first when the timeline is missing, and both refuse a timeline whose entries carry a `src` other than `speech` or `event`, or a duplicated entry id — findings cite evidence by id, so a reused one cannot be resolved unambiguously (a `merge`-produced timeline never carries either defect: `merge` refuses a transcript whose utterance ids repeat or collide with the `ev-NNN` event ids it synthesises).
 
 Emit behaviour: writes a single self-contained prompt — the rubric version header (`testimony-analysis/v1`), the second-coder stance, two-pass instructions (segment coding, then session synthesis), the rubric body (five `type` definitions, the `1..4` severity scale, the evidence hard-constraints), the session context (app, participant, tasks), the timeline lines inline, and the required output shape with a worked example. Nothing in the session directory is mutated. The timeline is emitted whole (v1 does not chunk by task boundary; the manifest carries no task timestamps). With `-out FILE` the prompt goes to a file and the command prints `wrote <path>`; otherwise it prints to stdout.
 
-Ingest behaviour: reads the answer from `FILE` (or stdin when `-`), accepting a top-level object with a `findings` array (optionally a `rubric`, which must be a known version) or a bare array. Ingest is the sole validation boundary and never trusts the model. Each finding is decoded with unknown fields disallowed, then checked against every schema rule (see [session directory reference](session-directory.md#findingsjsonl)): id format and uniqueness, `t` within the session, the `type`, `severity`, and `mode` enums, non-empty `evidence` of at most 64 ids with every id real and at least one spoken `utt-*` anchor, a `quote` that is a verbatim substring of one *cited* evidence utterance, and any `ui` selector/route matching a real event. Validation is transactional — all errors are reported at once and nothing is written on any failure. On success every finding is forced to `status: unverified`, `findings.jsonl` is written, and the command prints `validated N findings → <path> (all unverified)`. An answer with no findings (a bare `[]`, `{"findings":[]}`, or a truncated file) is refused rather than written, so it cannot erase a prior `findings.jsonl`; an answer whose findings would together push `findings.jsonl` past the session's 16 MiB total-size limit is refused the same way (see [`session-directory.md`](session-directory.md)). Ingest refuses to overwrite a `findings.jsonl` that already holds verdict records — counting any `kind:"verdict"` line, even one whose value is outside the closed enum.
+Ingest behaviour: reads the answer from `FILE` (or stdin when `-`), accepting a top-level object with a `findings` array (optionally a `rubric`, which must be a known version) or a bare array. Ingest is the sole validation boundary and never trusts the model. Each finding is decoded with unknown fields disallowed, then checked against every schema rule (see [session directory reference](session-directory.md#findingsjsonl)): id format and uniqueness, `t` within the session, the `type`, `severity`, and `mode` enums, non-empty `evidence` of at most 64 ids with every id real and at least one spoken `utt-*` anchor, a `quote` that is a verbatim substring of one *cited* evidence utterance, and any `ui` selector/route matching a real event. Validation is transactional — all errors are reported at once and nothing is written on any failure. On success every finding is forced to `status: unverified`, `findings.jsonl` is written, and the command prints `validated N findings → <path>`, followed by the birth state and the provenance the run recorded (the exact forms are under **Provenance** below). An answer with no findings (a bare `[]`, `{"findings":[]}`, or a truncated file) is refused rather than written, so it cannot erase a prior `findings.jsonl`; an answer whose findings would together push `findings.jsonl` past the session's 16 MiB total-size limit is refused the same way (see [`session-directory.md`](session-directory.md)). Ingest refuses to overwrite a `findings.jsonl` that already holds verdict records — counting any `kind:"verdict"` line, even one whose value is outside the closed enum.
+
+**Provenance.** Every ingest writes one [provenance record](session-directory.md#findingsjsonl) as the **first** line of `findings.jsonl`, in the same write as the findings, so a findings file always states what produced it. The record carries the rubric version, the backend, the model when one was given, and the date. It is the operator's **declaration**: `analyze` never calls a model and has no way to observe where the emitted request ran, so it records what you tell it.
+
+With neither flag the record states `"backend":"unrecorded"` and the run says so on stderr before it reads the answer, so the choice is visible in the output of the run that made it (stated as an intention, because a run that then fails validation writes nothing):
+
+```
+analyze: no -backend given; the provenance will record "backend not recorded"
+```
+
+The success line names what was recorded:
+
+```
+validated 5 findings → sessions/x/findings.jsonl (all unverified; local backend, model llama3.1:70b)
+validated 5 findings → sessions/x/findings.jsonl (all unverified; cloud backend, model not recorded)
+validated 5 findings → sessions/x/findings.jsonl (all unverified; backend not recorded, model not recorded)
+```
+
+A re-ingest replaces the provenance record together with the findings it accompanies, so a declaration can never outlive the findings it describes. The verdict guard is unchanged and outranks it: once a `findings.jsonl` holds verdicts, no re-ingest may rewrite it — including one whose only purpose is to correct the provenance.
+
+For the fully local route end to end, see [Analyse a session locally](../how-to/analyse-locally.md).
 
 ## `testimony draft-tests`
 

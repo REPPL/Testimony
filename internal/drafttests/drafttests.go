@@ -417,7 +417,10 @@ func noAcceptedDrafts(dir string, drafts []Draft, decisions []Decision) error {
 // first when there is none — every mode of this package needs them, because a
 // draft is only ever a proposal about a finding a human confirmed.
 func loadFindings(dir string) ([]analyze.Finding, []analyze.Verdict, error) {
-	findings, verdicts, err := analyze.Load(dir)
+	// The analysis provenance is discarded: the drafting layer has its own rubric
+	// and its own record, and which backend coded a finding changes no instruction
+	// in the drafting request.
+	_, findings, verdicts, err := analyze.Load(dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil, fmt.Errorf("no %s (run `testimony analyze -ingest` first)", session.FindingsFile)

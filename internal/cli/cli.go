@@ -41,6 +41,7 @@ Usage:
   testimony report      [-session DIR] [-window 2.5]    render timeline.jsonl as a Markdown report
   testimony analyze     [-session DIR] [-out FILE]      emit the analysis request (rubric + timeline) on stdout or to FILE
   testimony analyze     [-session DIR] -ingest FILE     validate answer JSON (FILE or "-") → findings.jsonl (all findings unverified)
+                        [-backend local|cloud] [-model NAME]   record what answered the request, beside the findings
   testimony draft-tests [-session DIR] [-window 10] [-out FILE]   emit the regression-test drafting request (rubric + confirmed findings + event windows)
   testimony draft-tests [-session DIR] -ingest FILE     validate answer JSON (FILE or "-") → tests.jsonl (all drafts proposed)
   testimony draft-tests [-session DIR] -render [-out FILE]        render the accepted drafts as Markdown test cases
@@ -421,17 +422,24 @@ func Run(args []string) int {
 		dir := fs.String("session", "", "session directory")
 		out := fs.String("out", "", "write the emitted request to FILE instead of stdout")
 		ingest := fs.String("ingest", "", "validate answer JSON at FILE (or \"-\" for stdin) into findings.jsonl")
+		backend := fs.String("backend", "", "ingest mode: record which backend answered the request: local | cloud")
+		model := fs.String("model", "", "ingest mode: record the model that answered the request (free text)")
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
 		}
 		outSet, ingestSet := false, false
+		backendSet, modelSet := false, false
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
 			case "out":
 				outSet = true
 			case "ingest":
 				ingestSet = true
+			case "backend":
+				backendSet = true
+			case "model":
+				modelSet = true
 			}
 		})
 		// An explicitly-empty -ingest or -out is a wrong invocation (an unset
@@ -451,6 +459,34 @@ func Run(args []string) int {
 		if *ingest != "" && *out != "" {
 			return usageErr(fmt.Errorf("analyze: -out and -ingest cannot be combined"))
 		}
+		// An explicitly-empty -backend or -model is a wrong invocation for the same
+		// reason -ingest/-out are, and the guards must come before NewProvenance
+		// below: an empty -backend would otherwise fall through its "flag not given"
+		// branch and silently record "unrecorded" for an operator who believed they
+		// had named a backend — the provenance record then states the opposite of
+		// what they meant it to.
+		if backendSet && *backend == "" {
+			return usageErr(fmt.Errorf("analyze: -backend must not be empty"))
+		}
+		if modelSet && *model == "" {
+			return usageErr(fmt.Errorf("analyze: -model must not be empty"))
+		}
+		// Both flags record what answered the request, which only ingest has an
+		// answer to record against; emit mutates nothing in the session directory.
+		// Silently ignored, they would let an operator who meant to record their
+		// backend believe they had — the draft-tests -window precedent, which
+		// refuses rather than ignores a flag that does nothing in the mode you are
+		// in.
+		if *ingest == "" && (backendSet || modelSet) {
+			return usageErr(fmt.Errorf("analyze: -backend and -model apply to the ingest mode only"))
+		}
+		// The declaration's rules live in internal/analyze, which owns the record —
+		// the review.ParseVerdictFlag precedent — so a bad declaration surfaces here
+		// as a wrong invocation (exit 2) rather than as a runtime failure.
+		prov, err := analyze.NewProvenance(*backend, *model, time.Now().Format("2006-01-02"))
+		if err != nil {
+			return usageErr(fmt.Errorf("analyze: %w", err))
+		}
 		// Resolved last of the invocation checks (see report above): a run refused
 		// for another flag must not first announce an inferred session.
 		sess, err := resolveSession(fs, *dir)
@@ -458,6 +494,18 @@ func Run(args []string) int {
 			return usageErr(err)
 		}
 		if *ingest != "" {
+			// An implicit choice must at least be visible in the output of the run
+			// that made it — resolveSession's inferred-session notice, applied to the
+			// other implicit choice this command makes. On stderr, so a caller piping
+			// analyze's output is unaffected.
+			//
+			// The tense is deliberate. This prints before the answer is validated, so
+			// it also prints on runs that go on to fail and write nothing; "will
+			// record" states an intention that a later refusal simply overtakes,
+			// where "recording" would claim something the run never did.
+			if !backendSet {
+				fmt.Fprintln(os.Stderr, `analyze: no -backend given; the provenance will record "backend not recorded"`)
+			}
 			in := os.Stdin
 			if *ingest != "-" {
 				// Read the answer file through the no-follow guard, like every other
@@ -472,12 +520,12 @@ func Run(args []string) int {
 				defer f.Close()
 				in = f
 			}
-			findings, err := analyze.Ingest(sess, in)
+			findings, err := analyze.Ingest(sess, in, prov)
 			if err != nil {
 				return fail(err)
 			}
-			fmt.Printf("validated %d findings → %s (all unverified)\n",
-				len(findings), filepath.Join(sess, session.FindingsFile))
+			fmt.Printf("validated %d findings → %s (all unverified; %s)\n",
+				len(findings), filepath.Join(sess, session.FindingsFile), describeProvenance(prov))
 			return 0
 		}
 		prompt, err := analyze.EmitRequest(sess)
@@ -815,6 +863,35 @@ func Run(args []string) int {
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
 		return 2
 	}
+}
+
+// describeProvenance renders the declaration for the ingest success line, so the
+// operator sees what was recorded in the output of the run that recorded it
+// rather than having to open findings.jsonl to find out.
+//
+// The backend phrase comes from a switch on the closed enum, never from the
+// stored string; the model is operator-supplied text reaching a terminal, so it
+// goes through session.SafeText — the same treatment the emitted request gives
+// manifest fields — and falls back to the placeholder when it renders as
+// nothing.
+func describeProvenance(p analyze.Provenance) string {
+	var backend string
+	switch p.Backend {
+	case analyze.BackendLocal:
+		backend = "local backend"
+	case analyze.BackendCloud:
+		backend = "cloud backend"
+	default:
+		backend = "backend not recorded"
+	}
+	// Every branch falls through to the model clause rather than returning early:
+	// the two halves of the declaration are independent, so a record that carries
+	// a model must say so whatever its backend reads, and the line keeps one shape
+	// the operator can scan for in all three cases.
+	if session.CodeRendersEmpty(p.Model) {
+		return backend + ", model not recorded"
+	}
+	return backend + ", model " + session.SafeText(p.Model)
 }
 
 // rejectArgs refuses leftover positional arguments after flag parsing. Flag

@@ -146,11 +146,12 @@ func Render(dir string, window float64) (string, error) {
 	return b.String(), nil
 }
 
-// renderFindings appends the Findings section, grouping findings.jsonl by
-// effective status. When no findings file exists it leaves a short, non-fatal
-// notice. Report reads only derived text; it never touches media.
+// renderFindings appends the Findings section: the provenance line, then the
+// findings grouped by effective status. When no findings file exists it leaves
+// a short, non-fatal notice — and no provenance line, since there is no file to
+// have a provenance. Report reads only derived text; it never touches media.
 func renderFindings(b *strings.Builder, dir string) {
-	findings, verdicts, err := analyze.Load(dir)
+	prov, findings, verdicts, err := analyze.Load(dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			b.WriteString("_No findings yet — run `testimony analyze` then `testimony review`._\n")
@@ -166,6 +167,8 @@ func renderFindings(b *strings.Builder, dir string) {
 		b.WriteString("_Findings unavailable: findings.jsonl could not be read (run `testimony analyze`/`review` to see why)._\n")
 		return
 	}
+
+	renderProvenance(b, prov)
 
 	eff := analyze.EffectiveStatus(findings, verdicts)
 	byStatus := map[string][]analyze.Finding{}
@@ -219,6 +222,58 @@ func renderFindings(b *strings.Builder, dir string) {
 	}
 }
 
+// renderProvenance writes the one line that says what produced these findings,
+// directly under the Findings heading and above the first status group.
+//
+// The wording is load-bearing, not decoration. The report is the artefact that
+// travels — to a co-author, an archive, an ethics reviewer — and the record is
+// the operator's declaration, which Testimony has no way to verify: the CLI
+// never calls a model and cannot observe where the emitted request ran. "(as
+// declared at ingest)" is what keeps the line from reading as though the tool
+// measured it.
+//
+// backend is rendered from a switch on the closed enum rather than from the
+// parsed string, so no untrusted byte reaches that position at all — analyze's
+// reader has already dropped any record whose backend is outside the set, and
+// this switch means even a future widening of that set cannot leak raw bytes
+// here. Every other field is operator-supplied or hand-editable text and takes
+// the same sink defence the rest of this file applies: presence is decided on
+// the rendered form, never on raw emptiness.
+func renderProvenance(b *strings.Builder, p *analyze.Provenance) {
+	if p == nil {
+		// No provenance record: a findings.jsonl written before the record existed,
+		// one assembled by hand, or one whose only provenance line carried a backend
+		// no reader can interpret. Saying so plainly is the truthful fallback.
+		b.WriteString("_Provenance: not recorded._\n\n")
+		return
+	}
+	var backend string
+	switch p.Backend {
+	case analyze.BackendLocal:
+		backend = "local backend"
+	case analyze.BackendCloud:
+		backend = "cloud backend"
+	default:
+		backend = "backend not recorded"
+	}
+	model := "model not recorded"
+	if !session.CodeRendersEmpty(p.Model) {
+		model = "model " + mdCode(p.Model)
+	}
+	rubric := "rubric not recorded"
+	if !session.CodeRendersEmpty(p.Rubric) {
+		rubric = "rubric " + mdCode(p.Rubric)
+	}
+	fmt.Fprintf(b, "_Provenance (as declared at ingest): %s · %s · %s", backend, model, rubric)
+	// The date clause is dropped entirely when it renders to nothing, rather than
+	// printed blank — the same rule the verdict suffix above follows for its own
+	// at/of fields.
+	if !inlineRendersEmpty(p.At) {
+		fmt.Fprintf(b, " · ingested %s", mdInline(p.At))
+	}
+	b.WriteString("._\n\n")
+}
+
 // findingAnchor renders a finding's on-screen anchor: the ui selector (in
 // backticks) and route when present, else the evidence ids.
 //
@@ -233,7 +288,7 @@ func renderFindings(b *strings.Builder, dir string) {
 func findingAnchor(f analyze.Finding) string {
 	if f.UI != nil {
 		var parts []string
-		if !codeRendersEmpty(f.UI.Selector) {
+		if !session.CodeRendersEmpty(f.UI.Selector) {
 			parts = append(parts, mdCode(f.UI.Selector))
 		}
 		if !inlineRendersEmpty(f.UI.Route) {
@@ -336,19 +391,7 @@ func mdCode(s string) string {
 	return "`" + strings.ReplaceAll(session.SafeText(s), "`", "") + "`"
 }
 
-// codeRendersEmpty reports whether mdCode(s) would carry no meaningful
-// content — s reduces to nothing but whitespace once SafeText and backtick
-// removal are applied (invisible-only Unicode, backticks alone, or literal
-// whitespace, e.g. a lone tab, which SafeText maps to a space). A caller
-// deciding whether to show a code span at all, rather than fall back to
-// something more informative, must judge presence on this rendered form —
-// judging it on s's raw emptiness lets a value that renders as nothing (or
-// as invisible whitespace) through as if it were real content.
-func codeRendersEmpty(s string) bool {
-	return strings.TrimSpace(strings.ReplaceAll(session.SafeText(s), "`", "")) == ""
-}
-
-// inlineRendersEmpty is codeRendersEmpty's mdInline sibling: mdInline escapes
+// inlineRendersEmpty is session.CodeRendersEmpty's mdInline sibling: mdInline escapes
 // a backtick rather than stripping it, so a lone backtick is meaningful,
 // visible content there, unlike inside a code span.
 func inlineRendersEmpty(s string) bool {
@@ -406,7 +449,7 @@ func eventLine(e timeline.Entry) string {
 	// renders to nothing or to whitespace only (invisible-only Unicode,
 	// backticks alone in a code span, or literal whitespace) must be omitted
 	// rather than appended as an empty or blank fragment.
-	if sel := raw("selector"); !codeRendersEmpty(sel) {
+	if sel := raw("selector"); !session.CodeRendersEmpty(sel) {
 		parts = append(parts, mdCode(sel))
 	}
 	if t := raw("text"); !inlineRendersEmpty(t) {

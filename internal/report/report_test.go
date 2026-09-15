@@ -22,6 +22,17 @@ const answerFixture = `{"rubric":"testimony-analysis/v1","findings":[
  {"id":"F-002","t":38,"type":"preference","severity":2,"quote":"I like this dark mode toggle","evidence":["utt-006"]}
 ]}`
 
+// testProvenance is the declaration the report fixtures are ingested with: a
+// local backend and a named model, so the golden exercises the fully rendered
+// provenance line rather than only its placeholder form.
+func testProvenance() analyze.Provenance {
+	p, err := analyze.NewProvenance(analyze.BackendLocal, "llama3.1:70b", "2026-07-17")
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
 func setupSession(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -39,7 +50,7 @@ func setupSession(t *testing.T) string {
 func TestRoundTrip(t *testing.T) {
 	dir := setupSession(t)
 
-	if _, err := analyze.Ingest(dir, strings.NewReader(answerFixture)); err != nil {
+	if _, err := analyze.Ingest(dir, strings.NewReader(answerFixture), testProvenance()); err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
 	findingsBefore := findingLines(t, dir)
@@ -343,7 +354,7 @@ func findingLines(t *testing.T, dir string) []string {
 	}
 	var out []string
 	for _, l := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
-		if !strings.Contains(l, `"kind":"verdict"`) {
+		if !strings.Contains(l, `"kind":"verdict"`) && !strings.Contains(l, `"kind":"provenance"`) {
 			out = append(out, l)
 		}
 	}
@@ -692,7 +703,7 @@ func TestReportEventLineOmitsSelectorThatRendersEmpty(t *testing.T) {
 // TestReportFindingAnchorFallsBackOnWhitespaceOnlyUI is the literal-whitespace
 // sibling of TestReportFindingAnchorFallsBackOnBlankUI: session.SafeText maps
 // a tab to a space rather than stripping it, so a selector of "\t" is
-// non-empty even after SafeText and backtick removal — codeRendersEmpty must
+// non-empty even after SafeText and backtick removal — session.CodeRendersEmpty must
 // judge it on the TRIMMED form to still fall back to the evidence ids, not
 // render a code span holding only a space.
 func TestReportFindingAnchorFallsBackOnWhitespaceOnlyUI(t *testing.T) {
@@ -1004,5 +1015,114 @@ func TestReportFindingTypeAndQuotePlaceholderOnEmpty(t *testing.T) {
 	}
 	if !strings.Contains(md, "**F-001** — · severity 3") || !strings.Contains(md, "**F-002** — · severity 2") {
 		t.Fatalf("report is missing the — placeholder for an empty/invisible-only finding type:\n%s", md)
+	}
+}
+
+// --- provenance (itd-8 / spc-2609150759135349) ---
+
+// renderWithFindings writes a findings.jsonl verbatim and renders the report.
+func renderWithFindings(t *testing.T, findings string) string {
+	t.Helper()
+	dir := setupSession(t)
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(findings), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	md, err := Render(dir, 2.5)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	return md
+}
+
+const findingLine = `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"status":"unverified"}`
+
+// TestReportRendersProvenanceLine is AC2: the declaration is stated on one line
+// under the Findings heading and above the first status group, and its wording
+// says it is a declaration rather than something the tool measured.
+func TestReportRendersProvenanceLine(t *testing.T) {
+	md := renderWithFindings(t,
+		`{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"local","model":"llama3.1:70b","at":"2026-09-15"}`+"\n"+findingLine+"\n")
+
+	want := "_Provenance (as declared at ingest): local backend · model `llama3.1:70b` · rubric `testimony-analysis/v1` · ingested 2026-09-15._"
+	if !strings.Contains(md, want) {
+		t.Fatalf("report does not carry the provenance line %q:\n%s", want, md)
+	}
+	heading := strings.Index(md, "## Findings")
+	prov := strings.Index(md, "_Provenance")
+	group := strings.Index(md, "### Confirmed")
+	if heading < 0 || prov < 0 || group < 0 || !(heading < prov && prov < group) {
+		t.Fatalf("provenance line is not between the Findings heading and the first status group (heading %d, prov %d, group %d)", heading, prov, group)
+	}
+}
+
+// TestReportProvenanceRendersBackendFromEnum pins the fixed phrase each backend
+// renders as. The phrase comes from a switch on the closed enum, never from the
+// stored string, so no untrusted byte can reach that position.
+func TestReportProvenanceRendersBackendFromEnum(t *testing.T) {
+	for backend, want := range map[string]string{
+		"local":      "local backend",
+		"cloud":      "cloud backend",
+		"unrecorded": "backend not recorded",
+	} {
+		md := renderWithFindings(t,
+			`{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"`+backend+`","at":"2026-09-15"}`+"\n"+findingLine+"\n")
+		if !strings.Contains(md, "_Provenance (as declared at ingest): "+want+" ·") {
+			t.Fatalf("backend %q did not render as %q:\n%s", backend, want, md)
+		}
+	}
+}
+
+// TestReportProvenanceNotRecorded is AC3's report half: a findings.jsonl with no
+// provenance record — one written before the record existed, or one whose only
+// record carried an uninterpretable backend — says so rather than implying one.
+func TestReportProvenanceNotRecorded(t *testing.T) {
+	for _, tc := range []struct{ name, findings string }{
+		{"no provenance line", findingLine + "\n"},
+		{"uninterpretable backend", `{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"on-prem","at":"2026-09-15"}` + "\n" + findingLine + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			md := renderWithFindings(t, tc.findings)
+			if !strings.Contains(md, "_Provenance: not recorded._") {
+				t.Fatalf("report does not say the provenance is not recorded:\n%s", md)
+			}
+			if !strings.Contains(md, "**F-001**") {
+				t.Fatalf("the findings stopped rendering:\n%s", md)
+			}
+		})
+	}
+}
+
+// TestReportProvenanceSanitisesModelAndRubric: both fields are hand-editable
+// text reaching the shareable artefact, so each takes the sink defence the rest
+// of this file applies. Both render inside a code span (mdCode, as findingAnchor
+// renders a selector), which makes inline Markdown literal — so the defence that
+// matters there is that a backtick cannot close the span early and let the tail
+// render as active markup, and that the control bytes never reach the file.
+func TestReportProvenanceSanitisesModelAndRubric(t *testing.T) {
+	md := renderWithFindings(t,
+		`{"kind":"provenance","rubric":"r\u001b[31m","backend":"local","model":"x`+"`"+`![beacon](http://h/b.png)","at":"2026-09-15"}`+"\n"+findingLine+"\n")
+	if strings.Contains(md, "\x1b") {
+		t.Fatalf("an ANSI escape survived into the provenance line:\n%s", md)
+	}
+	// The backtick is stripped, so the span the model sits in cannot be closed by
+	// its own content and the image form after it stays literal text.
+	if !strings.Contains(md, "model `x![beacon](http://h/b.png)`") {
+		t.Fatalf("the model is not rendered inside an unbroken code span:\n%s", md)
+	}
+
+	// A model and a rubric that render to nothing fall back to their placeholders
+	// rather than leaving an empty code span on the page.
+	md = renderWithFindings(t,
+		`{"kind":"provenance","rubric":"​","backend":"cloud","model":"  ","at":"2026-09-15"}`+"\n"+findingLine+"\n")
+	if !strings.Contains(md, "model not recorded") || !strings.Contains(md, "rubric not recorded") {
+		t.Fatalf("blank model/rubric did not fall back to their placeholders:\n%s", md)
+	}
+
+	// An at that renders to nothing drops its clause entirely, the same rule the
+	// verdict suffix follows.
+	md = renderWithFindings(t,
+		`{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"cloud","at":"​"}`+"\n"+findingLine+"\n")
+	if strings.Contains(md, "ingested") {
+		t.Fatalf("a blank date left a dangling ingested clause:\n%s", md)
 	}
 }

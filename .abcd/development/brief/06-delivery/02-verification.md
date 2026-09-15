@@ -45,10 +45,16 @@ go test -race ./...
 
 The pipeline smoke test asserts that `timeline.jsonl` and `report.md` are
 non-empty and that the report renders the sample session's fixed content: the
-`## Timeline` and `## Findings` headings, the confirmed `F-001` finding, the
-"save button" utterance text, the `save-btn` selector, the exact
-`**Utterances:** 10 · **Events:** 10` header count, and one indented event
-bullet naming that same selector. The header count is what catches events
+`## Timeline` and `## Findings` headings, the `_Provenance` line, the confirmed
+`F-001` finding, the "save button" utterance text, the `save-btn` selector, the
+exact `**Utterances:** 10 · **Events:** 10` header count, and one indented event
+bullet naming that same selector. The provenance assertion pins the line's
+presence, not a particular backend: the bundled sample declares none — its
+findings were hand-authored for the repository rather than produced by any model,
+and a sample claiming `local` would plant a false provenance claim in the one
+artefact users copy from — so the grep catches the record being dropped by the
+reader or the renderer, which would silently strip the one statement the report
+makes about its own origin. The header count is what catches events
 going missing from the merge: every other assertion up to it still passes with
 `interactions.jsonl` deleted ("save button" comes from the utterance's own
 text, and the `save-btn` selector renders from `findings.jsonl` regardless of

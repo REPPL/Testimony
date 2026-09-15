@@ -12,6 +12,33 @@ break an existing invocation is called out in the entry that records it.
 
 ### Added
 
+- `testimony analyze -ingest` records what answered the analysis request.
+  `-backend local|cloud` and a free-text `-model NAME` write one provenance
+  record — `{"kind":"provenance","rubric":…,"backend":…,"model":…,"at":…}` — as
+  the **first** line of `findings.jsonl`, in the same write as the findings, and
+  `report` prints it under the Findings heading, so a findings file and the
+  report rendered from it always state what produced them. The record is the
+  operator's **declaration**, not a measurement: the CLI still never calls a
+  model, holds no keys, and adds no network dependency, so there is no backend
+  for a flag to select and no way for `analyze` to observe where the request was
+  answered — every surface that renders the record says so. Both flags are
+  optional and no existing invocation changes: with neither, the record states
+  `"backend":"unrecorded"` and the run announces the intention on stderr before
+  it reads the answer, so the choice is visible rather than silent. The ingest
+  success line names what was recorded (`… (all unverified; local backend, model
+  llama3.1:70b)`). A re-ingest replaces the provenance record together with the
+  findings it accompanies; the verdict-overwrite guard is unchanged and still
+  outranks it, so a `findings.jsonl` holding verdicts refuses a re-ingest
+  whatever the flags say. A `findings.jsonl` written before this change carries
+  no such record, loads unchanged everywhere, and reports `Provenance: not
+  recorded`. Wrong invocations are refused at exit 2 with the rest of that
+  family: an explicitly-empty `-backend`/`-model`, an unknown backend,
+  `-backend unrecorded` (which is what the flag's absence records, not a claim an
+  operator may state), `-model` without `-backend`, and either flag in emit mode.
+  A new how-to, [Analyse a session locally](docs/how-to/analyse-locally.md),
+  walks the fully local route end to end, and the privacy explanation now states
+  plainly that no session content leaves the machine at any step — conditional on
+  exactly that route.
 - `testimony draft-tests` turns a **confirmed** finding into a proposed
   regression test case, and `testimony review -kind tests` records the human
   accept / edit / reject pass over each draft. The oracle stays host-delegated,

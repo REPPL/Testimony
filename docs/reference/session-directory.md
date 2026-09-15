@@ -131,9 +131,30 @@ Event payload (`src: "event"`): `kind`, plus `selector`, `text`, `value`, and `r
 
 ## `findings.jsonl`
 
-The analysis layer's output, written by `testimony analyze -ingest` and appended to by `testimony review`. Two record kinds share the file, one per line: a **finding** line (no `kind` field) and a **verdict** line (`kind: "verdict"`). Verdicts are appended, never written in place, so a finding's original state and the full verdict history are retained. Blank lines are ignored.
+The analysis layer's output, written by `testimony analyze -ingest` and appended to by `testimony review`. Three record kinds share the file, one per line: a **provenance** line (`kind: "provenance"`), a **finding** line (no `kind` field), and a **verdict** line (`kind: "verdict"`). Verdicts are appended, never written in place, so a finding's original state and the full verdict history are retained. Blank lines are ignored.
 
 Ingest validates every finding against the merged timeline and is the sole validation boundary — it never trusts the model. Unknown fields are rejected (the shape is closed), and `status` is forced to `"unverified"` on ingest regardless of the answer JSON.
+
+**Provenance record**
+
+The operator's declaration of what answered the analysis request, written by `analyze -ingest` as the **first** line of the file, in the same write as the findings it accompanies. It is a declaration, not a measurement: `analyze` never calls a model and cannot observe where the emitted request ran, so it records what the operator states. Exactly one record per file.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `kind` | string | yes | literal `"provenance"` (the discriminator) |
+| `rubric` | string | yes | the rubric version ingest enforced — always the version `analyze` itself pins, never the version the answer claimed |
+| `backend` | string | yes | one of `local`, `cloud`, `unrecorded`; `unrecorded` is what `analyze -ingest` writes when no `-backend` is given |
+| `model` | string | no | the model the operator names with `-model`; free text, at most 200 characters, absent when none was given |
+| `at` | string | yes | ingest date, ISO `YYYY-MM-DD` |
+
+```json
+{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"local","model":"llama3.1:70b","at":"2026-09-15"}
+{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"unrecorded","at":"2026-09-15"}
+```
+
+First position is the writer's convention, not a reader's requirement: a hand-edited file that puts the record elsewhere is still read. A record whose `backend` falls outside the closed set is **ignored**, exactly as an out-of-enum verdict is, so a claim no reader can interpret never reaches the report; the file then reads as if it carried none. Two interpretable records is a hard error naming both lines — an ambiguous attribution would have `report` state a producer that may not be the one, so it is refused rather than resolved silently.
+
+A `findings.jsonl` written before this record existed carries none. It loads unchanged everywhere, and `report.md` states `Provenance: not recorded`. A re-ingest replaces the record together with the findings it describes; the verdict guard is unchanged and outranks it, so a file holding verdicts refuses a re-ingest whatever the provenance flags say.
 
 **Finding record**
 
@@ -220,4 +241,4 @@ Human-readable Markdown rendered from the timeline and findings:
 
 - a header with session name, app, participant, duration (`MM:SS`, the latest moment on the timeline — the maximum over all entries, taking an utterance's end `t1` and an event's time), and utterance/event counts, plus the task list;
 - a **Timeline** section: each utterance as `**[MM:SS] <speaker>:** “<text>”` (curly quotes), with the events joined to it — the first utterance (in time) whose span, widened by the report's join window, contains the event — as indented bullets ``[MM:SS] <kind> `<selector>` "<text>" value="…" (<route>)`` (straight quotes, selector in its own code span); events matched by no utterance appear as standalone bullets in time order; every `MM:SS` in `report.md` (including the header's duration) carries a leading `-` for a negative time — one preceding `t0` (a recording predating it, see `t`'s note above) — except a time that rounds to zero, which renders `00:00` unsigned;
-- a **Findings** section rendering `findings.jsonl` grouped by effective status (Confirmed, Unverified, Duplicate, Rejected), each group headed with a count and each finding line carrying its id, type, severity, clock, quote, anchor, and any verdict and date. When there is no `findings.jsonl` the section is a short notice pointing at `analyze` and `review`; when the file exists but cannot be read, the section instead reports that `findings.jsonl` could not be read, without the underlying error (`report` still exits `0`).
+- a **Findings** section opening with the provenance line — the backend, model, rubric version and ingest date the [provenance record](#findingsjsonl) declares, or `Provenance: not recorded` when the file carries none — then rendering `findings.jsonl` grouped by effective status (Confirmed, Unverified, Duplicate, Rejected), each group headed with a count and each finding line carrying its id, type, severity, clock, quote, anchor, and any verdict and date. When there is no `findings.jsonl` the section is a short notice pointing at `analyze` and `review`; when the file exists but cannot be read, the section instead reports that `findings.jsonl` could not be read, without the underlying error (`report` still exits `0`).

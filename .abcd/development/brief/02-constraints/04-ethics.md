@@ -24,8 +24,14 @@
 The sensitive artefacts — a participant's voice and screen — stay on local
 hardware. ASR is local; raw audio/video never leave the machine. Only derived
 text (transcript, serialised events, and any keyframes the analyst explicitly
-releases) reaches a cloud LLM; a fully local variant (local LLM for analysis)
-is the fallback if an ethics protocol requires it.
+releases) reaches an LLM at all. Whether that LLM is in the cloud is the
+operator's choice, not the tool's: the oracle is host-delegated, so `analyze`
+emits a request and something else answers it. Answer it on the same machine and
+no session content leaves the machine at any step — the fallback an ethics
+protocol requires. Which route a session took is **recorded rather than
+assumed**: `analyze -ingest` writes the operator's declared backend and model
+into `findings.jsonl` and `report.md` prints it, with the standing caveat that
+the CLI cannot verify a claim about a program it never called.
 
 For sessions with external participants:
 

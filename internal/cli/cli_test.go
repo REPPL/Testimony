@@ -304,6 +304,7 @@ func TestInvalidFlagValuesExitTwo(t *testing.T) {
 func TestUsageListsEveryFlagAndCommand(t *testing.T) {
 	for _, want := range []string{"-commit HASH", "testimony help",
 		"testimony draft-tests", "-window 10", "-kind findings|tests", "-decision edited -edit FILE",
+		"-backend local|cloud", "-model NAME",
 		"transcribe, import, merge, report, analyze, draft-tests, or"} {
 		if !strings.Contains(usage, want) {
 			t.Errorf("usage text does not mention %q", want)
@@ -1391,5 +1392,148 @@ func TestUsageShowsTheFixedDefaultRoot(t *testing.T) {
 	}
 	if strings.Contains(usage, "[-out sessions]") {
 		t.Error("usage text still advertises the old relative sessions/ default")
+	}
+}
+
+// --- provenance flags (itd-8 / spc-2609150759135349) ---
+
+// miniAnswer writes a one-finding answer valid against miniSession's timeline.
+func miniAnswer(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "answer.json")
+	body := `{"rubric":"testimony-analysis/v1","findings":[{"id":"F-001","t":0,"type":"bug","severity":3,"quote":"hi","evidence":["utt-001"]}]}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write answer: %v", err)
+	}
+	return path
+}
+
+func firstFindingsLine(t *testing.T, dir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	return strings.SplitN(strings.TrimRight(string(b), "\n"), "\n", 2)[0]
+}
+
+// TestAnalyzeIngestRecordsProvenance is AC1 through the command: the declaration
+// reaches findings.jsonl and the run says what it recorded, so the operator sees
+// it without opening the file.
+func TestAnalyzeIngestRecordsProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		args          []string
+		wantClause    string
+		wantFirstLine string
+	}{
+		{
+			"local with a model",
+			[]string{"-backend", "local", "-model", "llama3.1:70b"},
+			"(all unverified; local backend, model llama3.1:70b)",
+			`{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"local","model":"llama3.1:70b",`,
+		},
+		{
+			"cloud without a model",
+			[]string{"-backend", "cloud"},
+			"(all unverified; cloud backend, model not recorded)",
+			`{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"cloud","at":`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := miniSession(t)
+			answer := miniAnswer(t, dir)
+			var code int
+			stdout := captureStdout(t, func() {
+				code = Run(append([]string{"analyze", "-session", dir, "-ingest", answer}, tc.args...))
+			})
+			if code != 0 {
+				t.Fatalf("exit %d, want 0", code)
+			}
+			if !strings.Contains(stdout, tc.wantClause) {
+				t.Fatalf("success line does not carry %q: %q", tc.wantClause, stdout)
+			}
+			if first := firstFindingsLine(t, dir); !strings.HasPrefix(first, tc.wantFirstLine) {
+				t.Fatalf("first line of findings.jsonl = %q, want it to start %q", first, tc.wantFirstLine)
+			}
+		})
+	}
+}
+
+// TestAnalyzeIngestWithoutBackendAnnouncesUnrecorded is AC4. The flags are
+// optional so no existing invocation breaks, but an implicit choice must be
+// visible in the output of the run that made it — resolveSession's
+// inferred-session notice, applied to the other implicit choice this command
+// makes. The notice belongs on stderr so a caller piping analyze is unaffected.
+func TestAnalyzeIngestWithoutBackendAnnouncesUnrecorded(t *testing.T) {
+	dir := miniSession(t)
+	answer := miniAnswer(t, dir)
+
+	var code int
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			code = Run([]string{"analyze", "-session", dir, "-ingest", answer})
+		})
+	})
+	if code != 0 {
+		t.Fatalf("exit %d, want 0 — the provenance flags are optional", code)
+	}
+	const want = `analyze: no -backend given; the provenance will record "backend not recorded"`
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("stderr does not carry the notice %q: %q", want, stderr)
+	}
+	if strings.Contains(stdout, "no -backend given") {
+		t.Fatalf("the notice leaked onto stdout: %q", stdout)
+	}
+	if !strings.Contains(stdout, "(all unverified; backend not recorded, model not recorded)") {
+		t.Fatalf("success line does not report the unrecorded backend: %q", stdout)
+	}
+	first := firstFindingsLine(t, dir)
+	if !strings.Contains(first, `"backend":"unrecorded"`) {
+		t.Fatalf("first line does not record an unrecorded backend: %q", first)
+	}
+	if strings.Contains(first, `"model"`) {
+		t.Fatalf("first line carries a model key when none was given: %q", first)
+	}
+}
+
+// TestAnalyzeProvenanceFlagsAreUsageErrors extends the exit-2 family: an
+// explicitly-empty flag is an unset shell variable spliced into the invocation,
+// and a flag that does nothing in the mode you are in is refused rather than
+// silently ignored (the draft-tests -window precedent). The empty-flag guards
+// matter most of all: without them an empty -backend would fall through to the
+// "not given" branch and record the opposite of what the operator meant.
+func TestAnalyzeProvenanceFlagsAreUsageErrors(t *testing.T) {
+	dir := miniSession(t)
+	answer := miniAnswer(t, dir)
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"empty backend", []string{"-ingest", answer, "-backend", ""}, "analyze: -backend must not be empty"},
+		{"empty model", []string{"-ingest", answer, "-model", ""}, "analyze: -model must not be empty"},
+		{"unknown backend", []string{"-ingest", answer, "-backend", "loocal"}, `analyze: invalid -backend "loocal" (want local or cloud)`},
+		{"unrecorded is not claimable", []string{"-ingest", answer, "-backend", "unrecorded"}, `analyze: invalid -backend "unrecorded" (want local or cloud)`},
+		{"model without backend", []string{"-ingest", answer, "-model", "llama"}, "analyze: -backend is required with -model"},
+		// A model of backticks alone renders as nothing in report's code span, so
+		// accepting it here would have the success line and the report disagree.
+		{"model of backticks only", []string{"-ingest", answer, "-backend", "local", "-model", "```"}, "analyze: -model must not be blank"},
+		{"backend in emit mode", []string{"-backend", "local"}, "analyze: -backend and -model apply to the ingest mode only"},
+		{"model in emit mode", []string{"-model", "llama"}, "analyze: -backend and -model apply to the ingest mode only"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var code int
+			stderr := captureStderr(t, func() {
+				code = Run(append([]string{"analyze", "-session", dir}, tc.args...))
+			})
+			if code != 2 {
+				t.Fatalf("exit %d, want 2 (usage error)", code)
+			}
+			if !strings.Contains(stderr, "testimony: "+tc.want) {
+				t.Fatalf("stderr = %q, want %q", stderr, tc.want)
+			}
+		})
 	}
 }
