@@ -1240,3 +1240,156 @@ func TestUsageListsImport(t *testing.T) {
 		t.Error("usage text offers a -terminal flag; terminal capture is a hand-off, not a record mode")
 	}
 }
+
+// TestDefaultSessionRootIsUnderHome pins the fixed default root itself: the one
+// helper both capture commands register as their -out default resolves
+// ~/Testimony/sessions against the home directory in force at invocation time,
+// never against the working directory.
+func TestDefaultSessionRootIsUnderHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	chdir(t, t.TempDir())
+
+	got, err := defaultSessionRoot()
+	if err != nil {
+		t.Fatalf("defaultSessionRoot: %v", err)
+	}
+	if want := filepath.Join(home, "Testimony", "sessions"); got != want {
+		t.Errorf("default session root = %q, want %q", got, want)
+	}
+}
+
+// TestRecordCreatesUnderTheDefaultRoot is the intent's first criterion for
+// `record`: with no -out, the session is created under the fixed default root,
+// not under the directory the command was run from. The root is made
+// un-creatable (a regular file sits at the exact path) so the attempt names the
+// path it tried and nothing is spawned; session.Create is the first thing
+// record does without -demo, so the failure cannot come from anywhere else.
+func TestRecordCreatesUnderTheDefaultRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := t.TempDir()
+	chdir(t, cwd)
+
+	root := filepath.Join(home, "Testimony", "sessions")
+	if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(root, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	var code int
+	stderr := captureStderr(t, func() { code = Run([]string{"record"}) })
+	if code != 1 {
+		t.Errorf("record with an un-creatable default root: exit %d, want 1 (runtime error)", code)
+	}
+	if !strings.Contains(stderr, root) {
+		t.Errorf("record did not try the default root: want %q on stderr, got %q", root, stderr)
+	}
+	// The old relative default must be gone: nothing is created beside the
+	// operator, wherever they were standing.
+	if entries, err := os.ReadDir(cwd); err != nil || len(entries) != 0 {
+		t.Errorf("record wrote into the working directory (entries=%d, err=%v)", len(entries), err)
+	}
+}
+
+// TestExplicitOutRootIsUnchanged is the intent's second criterion: an explicit
+// -out is used exactly as it always was, including a relative one, and the home
+// directory is not consulted at all — so an operator who wants project-local
+// capture keeps it, and an unresolvable home cannot refuse a run that never
+// needed the default.
+func TestExplicitOutRootIsUnchanged(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := t.TempDir()
+	chdir(t, cwd)
+
+	// The named root is made un-creatable so the run stops at session.Create,
+	// before a recorder is spawned or the command blocks on one; what it names
+	// is the root it used.
+	if err := os.WriteFile(filepath.Join(cwd, "sessions"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var code int
+	stderr := captureStderr(t, func() { code = Run([]string{"record", "-out", "sessions"}) })
+	if code != 1 {
+		t.Errorf("record -out sessions (un-creatable): exit %d, want 1 (runtime error)", code)
+	}
+	if !strings.Contains(stderr, "sessions") || strings.Contains(stderr, home) {
+		t.Errorf("record -out sessions did not use the named root verbatim, got %q", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(home, "Testimony")); !os.IsNotExist(err) {
+		t.Errorf("record -out sessions touched the default root (err=%v)", err)
+	}
+
+	// With no home to resolve, an explicit -out still reaches the command's own
+	// checks rather than the default-root refusal.
+	t.Setenv("HOME", "")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"demo", "-addr", "bogus", "-out", t.TempDir()}, `demo: invalid capture address "bogus"`},
+		{[]string{"record", "-demo", "-addr", "bogus", "-out", t.TempDir()}, `record: invalid capture address "bogus"`},
+		{[]string{"demo", "-out", ""}, `demo: -out must not be empty`},
+		{[]string{"record", "-out", ""}, `record: -out must not be empty`},
+	} {
+		var code int
+		got := captureStderr(t, func() { code = Run(c.args) })
+		if code != 2 {
+			t.Errorf("%v: exit %d, want 2 (usage error)", c.args, code)
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%v: want %q on stderr, got %q", c.args, c.want, got)
+		}
+	}
+}
+
+// TestUnresolvableHomeRefuses pins the refusal: with no -out and no home
+// directory to resolve the default root against, both capture commands exit at
+// the usage status naming the root, the reason, and the flag that gets the
+// operator moving. They must never fall back to a relative root — that is the
+// scattered-session outcome the fixed default exists to end — and must refuse
+// before creating or binding anything.
+func TestUnresolvableHomeRefuses(t *testing.T) {
+	t.Setenv("HOME", "")
+	cwd := t.TempDir()
+	chdir(t, cwd)
+
+	for _, cmd := range []string{"demo", "record"} {
+		var code int
+		stderr := captureStderr(t, func() { code = Run([]string{cmd}) })
+		if code != 2 {
+			t.Errorf("%s with no home: exit %d, want 2 (usage error)", cmd, code)
+		}
+		want := cmd + ": -out is required (the default root ~/Testimony/sessions cannot be resolved: "
+		if !strings.Contains(stderr, want) {
+			t.Errorf("%s with no home: want %q on stderr, got %q", cmd, want, stderr)
+		}
+		if !strings.Contains(stderr, "); pass -out DIR") {
+			t.Errorf("%s with no home: the refusal does not name the flag to pass, got %q", cmd, stderr)
+		}
+	}
+	if entries, err := os.ReadDir(cwd); err != nil || len(entries) != 0 {
+		t.Errorf("a refused capture wrote into the working directory (entries=%d, err=%v)", len(entries), err)
+	}
+}
+
+// TestUsageShowsTheFixedDefaultRoot pins the surface: both capture commands
+// advertise the fixed root in the usage block, the footer states the rule, and
+// the old relative default is gone from it.
+func TestUsageShowsTheFixedDefaultRoot(t *testing.T) {
+	for _, want := range []string{
+		"testimony record      [-out ~/Testimony/sessions]",
+		"testimony demo        [-addr :8737] [-out ~/Testimony/sessions]",
+		"record and demo create a new session under ~/Testimony/sessions unless -out",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage text does not mention %q", want)
+		}
+	}
+	if strings.Contains(usage, "[-out sessions]") {
+		t.Error("usage text still advertises the old relative sessions/ default")
+	}
+}

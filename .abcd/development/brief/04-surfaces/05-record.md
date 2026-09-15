@@ -13,7 +13,7 @@ screen video is opt-in retained evidence, not yet consumed downstream.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-out` | `sessions` | root directory for new session folders |
+| `-out` | `~/Testimony/sessions` | root directory for new session folders, created on demand |
 | `-app` | *(empty)* | application under test (with `-demo`, defaults to the demo app) |
 | `-participant` | `P1` | participant pseudonym |
 | `-commit` | *(empty)* | build/commit hash under test |
@@ -30,6 +30,13 @@ screen video is opt-in retained evidence, not yet consumed downstream.
   `t0_epoch_ms` is set once, from the same instant that names the directory. The
   manifest carries the app under test, participant pseudonym, task list, and the
   commit hash when supplied.
+- `-out` defaults to the fixed root `~/Testimony/sessions`, resolved against the
+  home directory at invocation time through the same `internal/cli` helper
+  [`demo`](01-demo.md) uses, so the two cannot drift and a session lands in the
+  same place whatever directory the command was run from. The root is created on
+  demand. With `-out` omitted and no home directory to resolve, the command
+  refuses at the usage status naming the flag to pass rather than fall back to a
+  relative root. The printed session path is the real one, as it always was.
 - On macOS, captures the default microphone to `audio.wav` — canonical 16 kHz
   mono PCM, the exact input the ASR step expects, so no re-conversion is needed
   downstream. With `-video`, it also captures the screen to `screen.mp4` (H.264).

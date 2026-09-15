@@ -25,7 +25,7 @@ own record plus its **event window** from the timeline. Send it to stdout to rea
 it, or to a file to hand off:
 
 ```sh
-testimony draft-tests -session sessions/<dir> -out request.md
+testimony draft-tests -session ~/Testimony/sessions/<dir> -out request.md
 ```
 
 The event window is the only material the steps may be reconstructed from, so its
@@ -39,7 +39,7 @@ utterance falls outside the window, and a draft made from it has nothing to
 ground "expected" in.
 
 ```sh
-testimony draft-tests -session sessions/<dir> -window 20    # a slower, more deliberate session
+testimony draft-tests -session ~/Testimony/sessions/<dir> -window 20    # a slower, more deliberate session
 ```
 
 Nothing in the session directory changes.
@@ -75,7 +75,7 @@ distinct sequences is two test cases.
 Validate the answer against the draft schema and write `tests.jsonl`:
 
 ```sh
-testimony draft-tests -session sessions/<dir> -ingest tests.json
+testimony draft-tests -session ~/Testimony/sessions/<dir> -ingest tests.json
 ```
 
 Ingest is the validation boundary, and it never trusts the model. It rejects,
@@ -95,7 +95,7 @@ mismatch is the cheapest signal that the draft was linked to the wrong finding.
 You can also pipe the answer straight in with `-ingest -`:
 
 ```sh
-your-assistant < request.md | testimony draft-tests -session sessions/<dir> -ingest -
+your-assistant < request.md | testimony draft-tests -session ~/Testimony/sessions/<dir> -ingest -
 ```
 
 Once a decision exists in `tests.jsonl`, ingest refuses to overwrite the file:
@@ -108,7 +108,7 @@ Each draft is a *proposal* until you judge it. `testimony review -kind tests`
 walks the proposed drafts and records your decision:
 
 ```sh
-testimony review -session sessions/<dir> -kind tests
+testimony review -session ~/Testimony/sessions/<dir> -kind tests
 ```
 
 For each draft it shows its id, the source finding with its type, severity and
@@ -126,9 +126,9 @@ finding or session.
 To record a single decision without the interactive walk (handy in scripts):
 
 ```sh
-testimony review -session sessions/<dir> -kind tests -test T-001 -decision accepted
-testimony review -session sessions/<dir> -kind tests -test T-003 -decision rejected
-testimony review -session sessions/<dir> -kind tests -test T-002 -decision edited -edit edit.json
+testimony review -session ~/Testimony/sessions/<dir> -kind tests -test T-001 -decision accepted
+testimony review -session ~/Testimony/sessions/<dir> -kind tests -test T-003 -decision rejected
+testimony review -session ~/Testimony/sessions/<dir> -kind tests -test T-002 -decision edited -edit edit.json
 ```
 
 `-edit FILE` (or `-edit -` for stdin) holds the replacement fields as a JSON
@@ -149,7 +149,7 @@ both are kept.
 Render the accepted drafts as Markdown test-case blocks:
 
 ```sh
-testimony draft-tests -session sessions/<dir> -render -out tests.md
+testimony draft-tests -session ~/Testimony/sessions/<dir> -render -out tests.md
 ```
 
 Each block names its source finding and session, the decision and its date, the

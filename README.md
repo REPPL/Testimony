@@ -61,7 +61,9 @@ open examples/sample-session/report.md
 ```
 
 Then capture a real one: `testimony record -demo` starts a capture session —
-recording your voice and clicks in one command — and prints every step. Voice
+recording your voice and clicks in one command — and prints every step. The
+session lands in `~/Testimony/sessions`, the same place whatever directory you
+run from; `-out DIR` puts it somewhere else. Voice
 and screen capture need macOS; elsewhere, `record` skips those streams and
 says so, and an external recording joins the session via `transcribe -audio`.
 The [getting-started tutorial](docs/tutorials/getting-started.md) walks the
@@ -91,10 +93,10 @@ The demo app contains at least one intentional usability flaw. Find it by talkin
 
 ## Session directory
 
-Each session is one folder of small, inspectable files:
+Each session is one folder of small, inspectable files, created under `~/Testimony/sessions` unless `-out` names another root:
 
 ```
-sessions/<timestamp>/
+~/Testimony/sessions/<timestamp>/
   manifest.json        # app, participant, tasks, t0_epoch_ms (the shared clock anchor)
   audio.wav            # 16 kHz mono ASR input, captured or converted (local only)
   audio.offset.json    # audio→session offset for an external recording (local only)

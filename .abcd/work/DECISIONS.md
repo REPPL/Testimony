@@ -1677,3 +1677,14 @@ Architecture-shaping decisions graduate to an ADR under
   The 3.x (v3) recorder is not installed, so v3 stays fixture-verified only.
 - 2026-09-15 — PR bodies carry the `Assisted-by:` trailer as their last line, matching the global attribution gate that refuses a body without it; the earlier "no footer in PR bodies" rule contradicted that gate and is replaced. Session links stay out of PR bodies and commits.
 - 2026-09-15 — itd-6 (terminal capture inside `record`) is superseded by itd-11: `import` delivers the same evidence from an operator-recorded cast without touching `record`'s lifecycle. Moved to `intents/superseded/` with a `superseded_by` pointer; abcd has no supersede verb, so the move is by hand (captured as a tooling observation).
+- 2026-09-15 — `record` and `demo` default their `-out` root to the fixed
+  `~/Testimony/sessions` (itd-10), resolved via `os.UserHomeDir()` at
+  invocation time by one helper both commands register as their flag default,
+  in place of the relative `sessions/`. The press release's own path beats an
+  XDG-style `~/.local/share/testimony/sessions`: a session is evidence to open
+  and hand on, not application state, and a hidden directory hides it. `-out
+  DIR` stays the only override — no environment variable, no config file — and
+  an unresolvable home refuses at the usage status naming `-out` rather than
+  falling back to a relative root, which is the scattered-session outcome the
+  fixed default exists to end. A behaviour change, called out in the changelog
+  with `-out sessions` as the one-line migration.

@@ -41,15 +41,15 @@ You need two terminal windows: one for Testimony, one for the work.
 ## Import the cast
 
 ```sh
-testimony import -session sessions/<dir> -cast session.cast
+testimony import -session ~/Testimony/sessions/<dir> -cast session.cast
 ```
 
 `import` copies the cast into the session as `terminal.cast`, normalises its output into `interactions.jsonl`, and prints the clock offset it used and its provenance. Then finish the pipeline as usual:
 
 ```sh
-testimony transcribe -session sessions/<dir>
-testimony merge      -session sessions/<dir>
-testimony report     -session sessions/<dir>
+testimony transcribe -session ~/Testimony/sessions/<dir>
+testimony merge      -session ~/Testimony/sessions/<dir>
+testimony report     -session ~/Testimony/sessions/<dir>
 ```
 
 Each line the terminal displayed becomes one interaction record, which the report renders beside the utterance it falls next to:
@@ -107,7 +107,7 @@ Three provenance forms appear:
 If the report shows terminal output clearly misaligned with the speech, correct it from the spoken marker exactly as [fix a wrong clock offset](transcribe-a-recording.md#fix-a-wrong-clock-offset) describes for audio, then re-import. `-cast` is not needed the second time — the session already holds `terminal.cast`:
 
 ```sh
-testimony import -session sessions/<dir> -offset -12.4
+testimony import -session ~/Testimony/sessions/<dir> -offset -12.4
 ```
 
 Re-run `testimony merge` and `testimony report` afterwards to rebuild the timeline and the report.

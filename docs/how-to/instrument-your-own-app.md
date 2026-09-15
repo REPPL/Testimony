@@ -151,9 +151,9 @@ The capture script then posts to relative URLs, exactly as in the snippets above
 Record your voice, think aloud, then stop both recorders and run:
 
 ```sh
-testimony transcribe -session sessions/<dir> -audio <recording.m4a>
-testimony merge      -session sessions/<dir>
-testimony report     -session sessions/<dir>
+testimony transcribe -session ~/Testimony/sessions/<dir> -audio <recording.m4a>
+testimony merge      -session ~/Testimony/sessions/<dir>
+testimony report     -session ~/Testimony/sessions/<dir>
 ```
 
 The report anchors each utterance to your app's `data-testid` selectors. See the [session directory reference](../reference/session-directory.md) for the exact file schemas.
