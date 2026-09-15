@@ -138,6 +138,14 @@ jobs:
           grep -q "## Findings" examples/sample-session/report.md
           grep -q "### Confirmed (1)" examples/sample-session/report.md
           grep -q "\*\*F-001\*\* bug" examples/sample-session/report.md
+          # The provenance record leading findings.jsonl reaches the report. The
+          # bundled sample declares no backend (its findings were hand-authored
+          # for the repository, not produced by any model), so this asserts the
+          # line is rendered at all rather than a particular backend: it catches
+          # the record being dropped by the reader or the renderer, which would
+          # silently strip the one statement the report makes about its own
+          # origin.
+          grep -q "_Provenance" examples/sample-session/report.md
           # The event half of the pipeline: every assertion above is satisfiable
           # from the transcript and findings alone (verified: deleting
           # interactions.jsonl left them all green) — the header counts assertion

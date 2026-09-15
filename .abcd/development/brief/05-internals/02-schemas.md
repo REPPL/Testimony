@@ -14,7 +14,7 @@ sessions/<timestamp>/
   interactions.jsonl    # normalised interaction events (epoch ms)
   transcript.jsonl      # word-aligned utterances (session-relative seconds)
   timeline.jsonl        # merged, session-relative timeline
-  findings.jsonl        # analysis findings + appended verdicts (written by analyze/review)
+  findings.jsonl        # provenance + analysis findings + appended verdicts (written by analyze/review)
   tests.jsonl           # regression-test drafts + appended decisions (written by draft-tests/review)
   report.md             # human-readable session report
 ```
@@ -93,17 +93,45 @@ file.
 {"t":129.01,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"[data-testid=save-btn]","text":"Save","route":"/settings"}}
 ```
 
-## `findings.jsonl` — findings plus appended verdicts
+## `findings.jsonl` — provenance, findings, plus appended verdicts
 
 The analysis layer's output, written by [`analyze -ingest`](../04-surfaces/06-analyze.md)
-and [`review`](../04-surfaces/07-review.md). Two record kinds share the file, one
-per line. A finding line carries no `kind`; a verdict line is discriminated by
+and [`review`](../04-surfaces/07-review.md). Three record kinds share the file,
+one per line. A provenance line is discriminated by `kind: "provenance"`; a
+finding line carries no `kind`; a verdict line is discriminated by
 `kind: "verdict"`. Verdicts are **appended, never in-place rewrites**, so the
 finding's birth state and full decision history survive as the precision measure
 ([note §2](../../research/2026-07-17-architecture-note.md)). Ingest decodes each
 finding with unknown fields disallowed — the shape is closed — and is the sole
 validation boundary; every field below is checked, and `status` is forced to
 `"unverified"` on ingest whatever the answer JSON claims.
+
+**Provenance record** (`analyze.Provenance`):
+
+The operator's declaration of what answered the analysis request, written by
+ingest as the **first** line of the file, in the same `session.CommitRecords`
+call as the findings. It is a declaration, not a measurement: the CLI never
+calls a model and cannot observe where the request ran. Exactly one per file.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `kind` | string | yes | literal `"provenance"` — the discriminator |
+| `rubric` | string | yes | the rubric version ingest enforced, from the package constant — never the answer's claimed rubric, which may be absent entirely (a bare-array answer) |
+| `backend` | string | yes | one of `local \| cloud \| unrecorded`; `unrecorded` is written when no `-backend` is given and is not claimable from the flag |
+| `model` | string | no | operator free text, at most `analyze.MaxModelLength` (200) runes, non-blank once `session.SafeText` is applied; omitted when not given |
+| `at` | string | yes | ISO date `YYYY-MM-DD`, supplied by the caller (`NewProvenance`), never `time.Now()` inside the package |
+
+```json
+{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"local","model":"llama3.1:70b","at":"2026-09-15"}
+```
+
+First position is a writer convention, not a reader requirement — `ParseRecords`
+reads the record wherever it sits. A record whose `backend` falls outside the
+closed set is **ignored**, as an out-of-enum verdict is, so an uninterpretable
+claim never reaches the report; two interpretable records is a **hard error**
+naming both lines, as a duplicate finding id is, because an ambiguous
+attribution would have the report state a producer that may not be the one. A
+file carrying no record reads as "not recorded" everywhere.
 
 **Finding record** (`analyze.Finding`):
 

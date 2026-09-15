@@ -75,7 +75,7 @@ func TestNonInteractiveConfirm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	findings, verdicts, err := analyze.Load(dir)
+	_, findings, verdicts, err := analyze.Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestNonInteractiveDuplicate(t *testing.T) {
 	if err := Run(Options{Dir: dir, Finding: "F-002", Verdict: "duplicate-of-F-001", Out: &out, Today: "2026-07-17"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	findings, verdicts, _ := analyze.Load(dir)
+	_, findings, verdicts, _ := analyze.Load(dir)
 	st := analyze.EffectiveStatus(findings, verdicts)["F-002"]
 	if st.Value != "duplicate" || st.Of != "F-001" {
 		t.Fatalf("F-002 status: %+v, want duplicate of F-001", st)
@@ -123,7 +123,7 @@ func TestNonInteractiveConfirmMatchesRenderedID(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	findings, verdicts, err := analyze.Load(dir)
+	_, findings, verdicts, err := analyze.Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestInteractiveGatedWhenNotTTY(t *testing.T) {
 	if !strings.Contains(out.String(), "not a terminal") {
 		t.Fatalf("expected a TTY-gating notice, got %q", out.String())
 	}
-	_, verdicts, _ := analyze.Load(dir)
+	_, _, verdicts, _ := analyze.Load(dir)
 	if len(verdicts) != 0 {
 		t.Fatalf("gated review wrote %d verdicts, want 0", len(verdicts))
 	}
@@ -202,7 +202,7 @@ func TestInteractiveWalk(t *testing.T) {
 	if err := Run(Options{Dir: dir, In: strings.NewReader(script), Out: &out, IsTTY: true, Today: "2026-07-17"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	findings, verdicts, _ := analyze.Load(dir)
+	_, findings, verdicts, _ := analyze.Load(dir)
 	eff := analyze.EffectiveStatus(findings, verdicts)
 	if eff["F-001"].Value != "confirmed" {
 		t.Fatalf("F-001: %+v", eff["F-001"])
@@ -232,7 +232,7 @@ func TestInteractiveDuplicateTargetMustExist(t *testing.T) {
 	if !strings.Contains(out.String(), "duplicate target F-099 not found") {
 		t.Fatalf("expected a not-found notice for F-099, got %q", out.String())
 	}
-	_, verdicts, _ := analyze.Load(dir)
+	_, _, verdicts, _ := analyze.Load(dir)
 	if len(verdicts) != 0 {
 		t.Fatalf("bad duplicate target wrote %d verdicts, want 0", len(verdicts))
 	}
@@ -263,7 +263,7 @@ func TestInteractiveDuplicateRefusesRenderedSelfMatch(t *testing.T) {
 	if !strings.Contains(out.String(), "duplicate of itself") {
 		t.Fatalf("expected a self-duplicate refusal, got %q", out.String())
 	}
-	_, verdicts, _ := analyze.Load(dir)
+	_, _, verdicts, _ := analyze.Load(dir)
 	if len(verdicts) != 0 {
 		t.Fatalf("self-duplicate target wrote %d verdicts, want 0", len(verdicts))
 	}
@@ -275,7 +275,7 @@ func TestInteractiveQuitStops(t *testing.T) {
 	if err := Run(Options{Dir: dir, In: strings.NewReader("q\n"), Out: &out, IsTTY: true, Today: "2026-07-17"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	_, verdicts, _ := analyze.Load(dir)
+	_, _, verdicts, _ := analyze.Load(dir)
 	if len(verdicts) != 0 {
 		t.Fatalf("quit-first wrote %d verdicts, want 0", len(verdicts))
 	}
@@ -533,7 +533,7 @@ func TestAppendVerdictTerminatesAnUnterminatedLastLine(t *testing.T) {
 	}
 
 	// The verdict is still readable through the normal loader.
-	_, verdicts, err := analyze.Load(dir)
+	_, _, verdicts, err := analyze.Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -912,7 +912,7 @@ func TestAppendVerdictAcceptsUnchangedFinding(t *testing.T) {
 	if err := AppendVerdict(dir, rec, &shown); err != nil {
 		t.Fatalf("AppendVerdict on an unchanged finding: %v", err)
 	}
-	_, verdicts, err := analyze.Load(dir)
+	_, _, verdicts, err := analyze.Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -1009,4 +1009,65 @@ func TestRunRefusesCrossFamilyFlags(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReviewIgnoresProvenanceRecord is AC3's review half (itd-8): a
+// findings.jsonl carrying the analysis provenance behaves for review exactly as
+// one without it. The record is not a finding, so it never enters the walk or
+// the queue, and the append-only property extends to it — a verdict lands after
+// it and leaves it byte-unchanged.
+func TestReviewIgnoresProvenanceRecord(t *testing.T) {
+	const provLine = `{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"local","model":"llama3.1:70b","at":"2026-09-15"}`
+
+	withProv := t.TempDir()
+	if err := os.WriteFile(filepath.Join(withProv, session.FindingsFile), []byte(provLine+"\n"+findingsFixture), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	withoutProv := writeSession(t)
+
+	// The interactive walk offers the same findings either way.
+	var a, b bytes.Buffer
+	for _, tc := range []struct {
+		dir string
+		out *bytes.Buffer
+	}{{withProv, &a}, {withoutProv, &b}} {
+		if err := Run(Options{Dir: tc.dir, In: strings.NewReader("q\n"), Out: tc.out, IsTTY: true, Today: "2026-09-15"}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+	if a.String() != b.String() {
+		t.Fatalf("the walk differs with and without a provenance record:\nwith    %q\nwithout %q", a.String(), b.String())
+	}
+
+	// A verdict appends at the end and touches nothing above it.
+	if err := Run(Options{Dir: withProv, Finding: "F-001", Verdict: "confirmed", Out: io.Discard, Today: "2026-09-15"}); err != nil {
+		t.Fatalf("Run verdict: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(readFindingsFile(t, withProv), "\n"), "\n")
+	if lines[0] != provLine {
+		t.Fatalf("the provenance line changed after a verdict:\n%q", lines[0])
+	}
+	if !strings.Contains(lines[len(lines)-1], `"kind":"verdict"`) {
+		t.Fatalf("the verdict did not land last: %q", lines[len(lines)-1])
+	}
+	// And the record is still readable as itself.
+	prov, findings, verdicts, err := analyze.Load(withProv)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if prov == nil || prov.Backend != analyze.BackendLocal {
+		t.Fatalf("provenance = %v after review", prov)
+	}
+	if len(findings) != 3 || len(verdicts) != 1 {
+		t.Fatalf("got %d findings and %d verdicts, want 3 and 1", len(findings), len(verdicts))
+	}
+}
+
+func readFindingsFile(t *testing.T, dir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return string(b)
 }

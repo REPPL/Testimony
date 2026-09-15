@@ -1,3 +1,4 @@
+{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"unrecorded","at":"2026-07-17"}
 {"id":"F-001","t":22,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],"ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
 {"id":"F-002","t":38,"type":"preference","severity":2,"mode":"A","quote":"I like this dark mode toggle","evidence":["utt-006","ev-006"],"ui":{"selector":"[data-testid=theme-toggle]","route":"#appearance"},"status":"unverified"}
 {"id":"F-003","t":38,"type":"inconsistency","severity":2,"mode":"A","quote":"This is how the save button should feel","evidence":["utt-006"],"status":"unverified"}

@@ -1,6 +1,7 @@
 package drafttests
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,7 +68,7 @@ func readEntries(t *testing.T) []timeline.Entry {
 
 func loadFixtureFindings(t *testing.T) ([]analyze.Finding, []analyze.Verdict) {
 	t.Helper()
-	findings, verdicts, err := analyze.Load(writeSession(t))
+	_, findings, verdicts, err := analyze.Load(writeSession(t))
 	if err != nil {
 		t.Fatalf("analyze.Load: %v", err)
 	}
@@ -394,5 +395,52 @@ func TestClockRendersNegativeSessionRelativeTimes(t *testing.T) {
 		if got := clock(tc.in); got != tc.want {
 			t.Fatalf("clock(%g) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestDraftTestsIgnoresProvenanceRecord pins the itd-8 non-goal: the analysis
+// provenance is not carried into the drafting request and not written into
+// tests.jsonl. Which backend coded a finding changes no instruction in a request
+// that asks for reproduction steps, so every mode must produce byte-identical
+// output over a findings.jsonl that carries the record and one that does not.
+func TestDraftTestsIgnoresProvenanceRecord(t *testing.T) {
+	const provLine = `{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"local","model":"llama3.1:70b","at":"2026-09-15"}`
+
+	plain := writeSession(t)
+	withProv := writeSession(t, session.FindingsFile, provLine+"\n"+string(fixture(t, "findings.jsonl")))
+
+	reqA, err := EmitRequest(plain, 10)
+	if err != nil {
+		t.Fatalf("EmitRequest (plain): %v", err)
+	}
+	reqB, err := EmitRequest(withProv, 10)
+	if err != nil {
+		t.Fatalf("EmitRequest (with provenance): %v", err)
+	}
+	if reqA != reqB {
+		t.Fatalf("the drafting request differs with a provenance record present")
+	}
+	if strings.Contains(reqB, "llama3.1:70b") || strings.Contains(reqB, "provenance") {
+		t.Fatalf("the drafting request leaked the analysis provenance:\n%s", reqB)
+	}
+
+	for _, dir := range []string{plain, withProv} {
+		if _, err := Ingest(dir, strings.NewReader(string(fixture(t, "answer.json")))); err != nil {
+			t.Fatalf("Ingest: %v", err)
+		}
+	}
+	a, err := os.ReadFile(filepath.Join(plain, session.TestsFile))
+	if err != nil {
+		t.Fatalf("read tests (plain): %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(withProv, session.TestsFile))
+	if err != nil {
+		t.Fatalf("read tests (with provenance): %v", err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Fatalf("tests.jsonl differs with a provenance record present:\n%s\n%s", a, b)
+	}
+	if bytes.Contains(b, []byte("provenance")) {
+		t.Fatalf("tests.jsonl gained a provenance record: %s", b)
 	}
 }

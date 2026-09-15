@@ -75,7 +75,22 @@ func LoadTimeline(dir string) ([]timeline.Entry, error) {
 // stray fields are all rejected here, transactionally (all errors reported,
 // nothing written on any failure). To protect the retained precision record it
 // refuses to overwrite a findings.jsonl that already holds verdict records.
-func Ingest(dir string, r io.Reader) ([]Finding, error) {
+//
+// prov is the operator's declaration of what answered the request (see
+// NewProvenance, which is the only way to build a valid one). It is written as
+// the first line of the same file, in the same commit, so a re-ingest replaces
+// the provenance record together with the findings it accompanies: a provenance
+// line can never outlive the findings it describes, and findings can never
+// acquire a provenance from a different run.
+func Ingest(dir string, r io.Reader, prov Provenance) ([]Finding, error) {
+	// Checked before anything is read, let alone written: this file's first line
+	// is the caller's to supply, and an unwritable one is a fact about the
+	// argument alone — the same reason AppendRecord pre-flights its record before
+	// the open. Without it a zero-valued Provenance commits a line ParseRecords
+	// refuses, so the very next Load of a file Ingest reported writing fails.
+	if err := prov.Valid(); err != nil {
+		return nil, err
+	}
 	entries, err := LoadTimeline(dir)
 	if err != nil {
 		return nil, err
@@ -137,13 +152,17 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 		findings[i] = p.finding
 		findings[i].Status = "unverified"
 	}
-	errs = append(errs, oversizedFindings(findings, decoded)...)
+	provLine, err := json.Marshal(prov)
+	if err != nil {
+		return nil, fmt.Errorf("write %s: %w", session.FindingsFile, err)
+	}
+	errs = append(errs, oversizedFindings(findings, decoded, len(provLine)+1)...)
 
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
 
-	if err := commitFindings(dir, findings); err != nil {
+	if err := commitFindings(dir, provLine, findings); err != nil {
 		return nil, err
 	}
 	return findings, nil
@@ -163,9 +182,15 @@ func Ingest(dir string, r io.Reader) ([]Finding, error) {
 // Each finding is encoded with json.Marshal, the same encoder (HTML escaping on,
 // Go's default) oversizedFindings measures with, so the bytes written are exactly
 // the bytes that passed the size check.
-func commitFindings(dir string, findings []Finding) error {
+func commitFindings(dir string, provLine []byte, findings []Finding) error {
 	path := filepath.Join(dir, session.FindingsFile)
-	records := make([][]byte, 0, len(findings))
+	// The provenance record leads, ahead of every finding: the file then reads in
+	// the order it was decided — the producer, what it produced, then the human
+	// verdicts review appends to the end — and `head -1` is the answer to "what
+	// wrote this?". Riding in this same Records slice is also what makes a
+	// re-ingest replace the declaration together with the findings it describes.
+	records := make([][]byte, 0, len(findings)+1)
+	records = append(records, provLine)
 	for _, f := range findings {
 		b, err := json.Marshal(f)
 		if err != nil {
@@ -211,9 +236,15 @@ func commitFindings(dir string, findings []Finding) error {
 // each finding's answer position for the same reason validate's do; a line
 // already flagged as over-long is excluded from the total so one oversized
 // finding cannot also trigger a redundant total-size error.
-func oversizedFindings(findings []Finding, decoded []positioned) []error {
+func oversizedFindings(findings []Finding, decoded []positioned, provBytes int) []error {
 	var errs []error
-	var total int64
+	// The provenance line is written into the same file by the same commit, so the
+	// total-size pre-flight must measure it too: CommitRecords delegates that
+	// pre-flight to its callers, and omitting these bytes would let a file land one
+	// record past the cap every reader then refuses. It needs no per-line check —
+	// NewProvenance bounds the model to MaxModelLength runes and the backend to a
+	// closed set, so the encoded record cannot approach MaxJSONLLine.
+	total := int64(provBytes)
 	var counted int
 	for i, f := range findings {
 		label := findingLabel(f, decoded[i].at)
@@ -231,7 +262,7 @@ func oversizedFindings(findings []Finding, decoded []positioned) []error {
 		counted++
 	}
 	if total > session.MaxJSONLBytes {
-		errs = append(errs, fmt.Errorf("findings encode to %d bytes across %d findings, exceeding the %d-byte %s file limit ParseRecords enforces; refusing to write a file report and review could not read back", total, counted, session.MaxJSONLBytes, session.FindingsFile))
+		errs = append(errs, fmt.Errorf("%d findings and the provenance record encode to %d bytes, exceeding the %d-byte %s file limit ParseRecords enforces; refusing to write a file report and review could not read back", counted, total, session.MaxJSONLBytes, session.FindingsFile))
 	}
 	return errs
 }

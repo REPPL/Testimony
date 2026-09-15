@@ -18,9 +18,15 @@ page ([`../05-internals/02-schemas.md`](../05-internals/02-schemas.md)).
 | `-session` | (required) | session directory |
 | `-out` | *(stdout)* | write the emitted request to `FILE` instead of stdout (emit mode) |
 | `-ingest` | *(off)* | validate the answer JSON at `FILE` (or `-` for stdin) into `findings.jsonl` (ingest mode) |
+| `-backend` | *(unrecorded)* | record which backend answered the request: `local` or `cloud` (ingest mode) |
+| `-model` | *(not recorded)* | record the model that answered the request; free text, at most 200 characters, refused when it renders as nothing under `session.CodeRendersEmpty` (ingest mode) |
 
 `analyze` runs in exactly one mode: emit (no `-ingest`) or ingest (`-ingest`).
-`-out` and `-ingest` together is an error. Emit reads `manifest.json` and
+`-out` and `-ingest` together is an error. `-backend` and `-model` belong to
+ingest alone — emit mutates nothing, so there is nothing to record against — and
+either in emit mode is a usage error; so is `-model` without `-backend`, and so
+is `-backend unrecorded`, which is what the flag's absence records rather than a
+value an operator states. Emit reads `manifest.json` and
 `timeline.jsonl`; ingest reads `timeline.jsonl` only. Both hint to run `merge`
 first when the timeline is missing (matching [`report`](04-report.md)).
 
@@ -70,6 +76,28 @@ first when the timeline is missing (matching [`report`](04-report.md)).
 - An answer with no findings (a bare `[]`, `{"findings":[]}`, or a truncated
   file) is refused rather than written: the write truncates, so an empty answer
   would otherwise erase a prior good `findings.jsonl` and report success.
+- Every ingest writes one **provenance record** (`kind:"provenance"`) as the
+  FIRST line of `findings.jsonl`, in the same `session.CommitRecords` call as the
+  findings: the rubric version (from the package constant, not the answer's
+  claim), the backend, the model when given, and the date. First position because
+  ingest replaces the whole file while `review` appends verdicts to its end, so a
+  last-position record would be overtaken by the first verdict; riding in the
+  same commit is what makes a re-ingest replace the declaration together with the
+  findings it describes. The verdict-overwrite guard is untouched and outranks
+  it — a file holding verdicts refuses a re-ingest whatever the flags say.
+- The record is the operator's **declaration**, not a measurement: the CLI never
+  calls a model and cannot observe where the request ran. With no `-backend` the
+  record states `unrecorded` and the run announces the intention on stderr, so
+  the choice is visible in the output of the run that made it rather than
+  silently absent; the notice says "will record" because it prints before
+  validation, and a run that then fails writes nothing.
+- `Ingest` refuses a `Provenance` that is not one (`Provenance.Valid`: the kind
+  literal, a backend in the closed set, a non-empty rubric and date) before it
+  reads a byte, so the package cannot write a first line its own `ParseRecords`
+  would refuse. The only way to satisfy the check is to have built the record
+  through `NewProvenance`.
+  A `findings.jsonl` written before the record existed carries none and reads as
+  "not recorded" everywhere.
 
 ## Deferred
 

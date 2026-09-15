@@ -122,7 +122,10 @@ func Run(opts Options) error {
 		}
 		return fmt.Errorf("session directory: %w", err)
 	}
-	findings, verdicts, err := analyze.Load(opts.Dir)
+	// The provenance record is discarded here: review judges findings, and the
+	// declaration of what produced them changes nothing about the walk or the
+	// verdicts it appends.
+	_, findings, verdicts, err := analyze.Load(opts.Dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("no %s (run `testimony analyze -ingest` first)", session.FindingsFile)
@@ -405,7 +408,7 @@ func AppendVerdict(dir string, v analyze.Verdict, expect *analyze.Finding) error
 // now names a different finding, and for a duplicate verdict if the "of" target
 // has vanished.
 func verifyTarget(current io.Reader, v analyze.Verdict, expect analyze.Finding) error {
-	findings, _, err := analyze.ParseRecords(current, session.FindingsFile)
+	_, findings, _, err := analyze.ParseRecords(current, session.FindingsFile)
 	if err != nil {
 		return err
 	}

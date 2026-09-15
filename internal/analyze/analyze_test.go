@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,20 @@ import (
 	"github.com/REPPL/Testimony/internal/session"
 )
 
+// testProv is the declaration most ingest fixtures are written with: the
+// "no -backend given" default, so the provenance line every written
+// findings.jsonl now carries is the same one in every test that does not care
+// about it.
+var testProv = mustProvenance("", "", "2026-09-15")
+
+func mustProvenance(backend, model, at string) Provenance {
+	p, err := NewProvenance(backend, model, at)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
 // TestIngestRejectsQuoteThatSanitisesToEmpty is the verbatim-bypass regression. A
 // quote of only stripped characters (a lone U+202E) is raw-non-empty but SafeText
 // reduces it to "", and strings.Contains(text, "") is always true, so pre-fix the
@@ -22,7 +37,7 @@ import (
 func TestIngestRejectsQuoteThatSanitisesToEmpty(t *testing.T) {
 	dir := writeSession(t, timelineFixture)
 	answer := "{\"findings\":[{\"id\":\"F-001\",\"t\":22,\"type\":\"bug\",\"severity\":3,\"quote\":\"‮\",\"evidence\":[\"utt-004\"]}]}"
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil || !strings.Contains(err.Error(), "quote must be non-empty") {
 		t.Fatalf("expected a sanitised-empty quote refusal, got %v", err)
 	}
@@ -40,7 +55,7 @@ func TestIngestRejectsQuoteThatSanitisesToEmpty(t *testing.T) {
 func TestIngestRejectsQuoteThatSanitisesToWhitespace(t *testing.T) {
 	dir := writeSession(t, timelineFixture)
 	answer := "{\"findings\":[{\"id\":\"F-001\",\"t\":22,\"type\":\"bug\",\"severity\":3,\"quote\":\"\\t\",\"evidence\":[\"utt-004\"]}]}"
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil || !strings.Contains(err.Error(), "quote must be non-empty") {
 		t.Fatalf("expected a whitespace-only quote refusal, got %v", err)
 	}
@@ -84,7 +99,7 @@ func writeSession(t *testing.T, timeline string) string {
 
 func TestIngestGood(t *testing.T) {
 	dir := writeSession(t, timelineFixture)
-	findings, err := Ingest(dir, strings.NewReader(goodAnswer))
+	findings, err := Ingest(dir, strings.NewReader(goodAnswer), testProv)
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
@@ -96,7 +111,7 @@ func TestIngestGood(t *testing.T) {
 		t.Fatalf("status: got %q, want unverified", findings[0].Status)
 	}
 	// findings.jsonl is written and reloads as unverified.
-	got, _, err := Load(dir)
+	_, got, _, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -128,7 +143,7 @@ func TestIngestValidationFailures(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := writeSession(t, timelineFixture)
-			_, err := Ingest(dir, strings.NewReader(`{"findings":[`+tc.finding+`]}`))
+			_, err := Ingest(dir, strings.NewReader(`{"findings":[`+tc.finding+`]}`), testProv)
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tc.want)
 			}
@@ -153,7 +168,7 @@ func TestIngestRejectsEmptyEvidenceID(t *testing.T) {
 	tl := timelineFixture + `{"t":30,"src":"event","id":"","payload":{"kind":"click"}}` + "\n"
 	dir := writeSession(t, tl)
 	answer := `{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004",""]}]}`
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil || !strings.Contains(err.Error(), `evidence id "" not found in the timeline`) {
 		t.Fatalf("expected an empty-evidence-id refusal, got %v", err)
 	}
@@ -185,7 +200,7 @@ func TestIngestRejectsInvisibleOnlySelectorAndRoute(t *testing.T) {
 	answer := fmt.Sprintf(
 		`{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"ui":{"selector":%q}}]}`,
 		zeroWidthNoBreak)
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil || !strings.Contains(err.Error(), "not present on any timeline event") {
 		t.Fatalf("expected an invisible-only ui.selector refusal, got %v", err)
 	}
@@ -194,7 +209,7 @@ func TestIngestRejectsInvisibleOnlySelectorAndRoute(t *testing.T) {
 	routeAnswer := fmt.Sprintf(
 		`{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"],"ui":{"route":%q}}]}`,
 		softHyphen)
-	_, err = Ingest(dir, strings.NewReader(routeAnswer))
+	_, err = Ingest(dir, strings.NewReader(routeAnswer), testProv)
 	if err == nil || !strings.Contains(err.Error(), "not present on any timeline event") {
 		t.Fatalf("expected an invisible-only ui.route refusal, got %v", err)
 	}
@@ -219,7 +234,7 @@ func TestIngestQuoteValidatesAgainstSanitisedUtterance(t *testing.T) {
 	// The agent's quote is the SafeText'd span — no RLM, because the request never
 	// showed it one.
 	answer := `{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"the save button and nothing happened","evidence":["utt-004"]}]}`
-	findings, err := Ingest(dir, strings.NewReader(answer))
+	findings, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err != nil {
 		t.Fatalf("an honest quote copied from the sanitised request was rejected: %v", err)
 	}
@@ -234,7 +249,7 @@ func TestIngestDuplicateID(t *testing.T) {
 	 {"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"]},
 	 {"id":"F-001","t":22,"type":"friction","severity":2,"quote":"No message","evidence":["utt-004"]}
 	]}`
-	_, err := Ingest(dir, strings.NewReader(dup))
+	_, err := Ingest(dir, strings.NewReader(dup), testProv)
 	if err == nil || !strings.Contains(err.Error(), "duplicate id") {
 		t.Fatalf("expected duplicate id error, got %v", err)
 	}
@@ -253,7 +268,7 @@ func TestLoadRejectsDuplicateFindingID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(dup), 0o644); err != nil {
 		t.Fatalf("write findings: %v", err)
 	}
-	_, _, err := Load(dir)
+	_, _, _, err := Load(dir)
 	if err == nil || !strings.Contains(err.Error(), "duplicate finding id") {
 		t.Fatalf("expected a duplicate-finding-id refusal naming line 2, got %v", err)
 	}
@@ -275,7 +290,7 @@ func TestLoadRejectsDuplicateFindingIDBySafeText(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(dup), 0o644); err != nil {
 		t.Fatalf("write findings: %v", err)
 	}
-	_, _, err := Load(dir)
+	_, _, _, err := Load(dir)
 	if err == nil || !strings.Contains(err.Error(), "duplicate finding id") {
 		t.Fatalf("expected a duplicate-finding-id refusal naming line 2, got %v", err)
 	}
@@ -298,7 +313,7 @@ func TestLoadRejectsEmptyFindingID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(noID), 0o644); err != nil {
 		t.Fatalf("write findings: %v", err)
 	}
-	_, _, err := Load(dir)
+	_, _, _, err := Load(dir)
 	if err == nil || !strings.Contains(err.Error(), "no id") {
 		t.Fatalf("expected a no-id refusal naming line 1, got %v", err)
 	}
@@ -325,7 +340,7 @@ func TestLoadRejectsWhitespaceOnlyFindingID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(blankID), 0o644); err != nil {
 		t.Fatalf("write findings: %v", err)
 	}
-	_, _, err := Load(dir)
+	_, _, _, err := Load(dir)
 	if err == nil || !strings.Contains(err.Error(), "no id") {
 		t.Fatalf("expected a no-id refusal naming line 1, got %v", err)
 	}
@@ -349,7 +364,7 @@ func TestLoadRejectsNullLine(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(lines), 0o644); err != nil {
 		t.Fatalf("write findings: %v", err)
 	}
-	_, _, err := Load(dir)
+	_, _, _, err := Load(dir)
 	if err == nil || !strings.Contains(err.Error(), "missing t") {
 		t.Fatalf("expected a missing-t refusal for the null line, got %v", err)
 	}
@@ -378,7 +393,7 @@ func TestLoadRejectsOversizedTotal(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), buf.Bytes(), 0o644); err != nil {
 		t.Fatalf("write findings: %v", err)
 	}
-	_, _, err := Load(dir)
+	_, _, _, err := Load(dir)
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("expected an oversize-total refusal, got %v", err)
 	}
@@ -386,7 +401,7 @@ func TestLoadRejectsOversizedTotal(t *testing.T) {
 
 func TestIngestUnknownRubric(t *testing.T) {
 	dir := writeSession(t, timelineFixture)
-	_, err := Ingest(dir, strings.NewReader(`{"rubric":"testimony-analysis/v99","findings":[]}`))
+	_, err := Ingest(dir, strings.NewReader(`{"rubric":"testimony-analysis/v99","findings":[]}`), testProv)
 	if err == nil || !strings.Contains(err.Error(), "unknown rubric") {
 		t.Fatalf("expected unknown rubric error, got %v", err)
 	}
@@ -395,7 +410,7 @@ func TestIngestUnknownRubric(t *testing.T) {
 func TestIngestBareArrayAccepted(t *testing.T) {
 	dir := writeSession(t, timelineFixture)
 	bare := `[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"]}]`
-	findings, err := Ingest(dir, strings.NewReader(bare))
+	findings, err := Ingest(dir, strings.NewReader(bare), testProv)
 	if err != nil {
 		t.Fatalf("Ingest bare array: %v", err)
 	}
@@ -406,7 +421,7 @@ func TestIngestBareArrayAccepted(t *testing.T) {
 
 func TestIngestRefusesOverwriteWithVerdicts(t *testing.T) {
 	dir := writeSession(t, timelineFixture)
-	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err != nil {
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer), testProv); err != nil {
 		t.Fatalf("first Ingest: %v", err)
 	}
 	// Append a verdict, then a re-ingest must be refused.
@@ -419,7 +434,7 @@ func TestIngestRefusesOverwriteWithVerdicts(t *testing.T) {
 	f.Close()
 
 	before, _ := os.ReadFile(path)
-	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer), testProv); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
 		t.Fatalf("expected overwrite refusal, got %v", err)
 	}
 	after, _ := os.ReadFile(path)
@@ -445,7 +460,7 @@ func TestIngestAcceptsNegativeAnchoredFinding(t *testing.T) {
 	 {"id":"F-001","t":-3.0,"type":"bug","severity":3,"quote":"I clicked save and nothing happened",
 	  "evidence":["utt-004","ev-003"],"status":"unverified"}
 	]}`
-	findings, err := Ingest(dir, strings.NewReader(answer))
+	findings, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err != nil {
 		t.Fatalf("Ingest of a negative-anchored finding: %v", err)
 	}
@@ -468,7 +483,7 @@ func TestIngestRejectsFindingAfterNegativeSessionEnd(t *testing.T) {
 	 {"id":"F-001","t":-0.5,"type":"bug","severity":3,"quote":"I clicked save and nothing happened",
 	  "evidence":["utt-004","ev-003"],"status":"unverified"}
 	]}`
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil || !strings.Contains(err.Error(), "outside the session") {
 		t.Fatalf("expected an out-of-range refusal for t after the negative session end, got %v", err)
 	}
@@ -479,14 +494,14 @@ func TestIngestRejectsFindingAfterNegativeSessionEnd(t *testing.T) {
 // empty slice with O_TRUNC and reported success.
 func TestIngestRefusesEmptyFindings(t *testing.T) {
 	dir := writeSession(t, timelineFixture)
-	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err != nil {
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer), testProv); err != nil {
 		t.Fatalf("first Ingest: %v", err)
 	}
 	path := filepath.Join(dir, session.FindingsFile)
 	before, _ := os.ReadFile(path)
 
 	for _, empty := range []string{`{"findings":[]}`, `[]`} {
-		if _, err := Ingest(dir, strings.NewReader(empty)); err == nil || !strings.Contains(err.Error(), "no findings") {
+		if _, err := Ingest(dir, strings.NewReader(empty), testProv); err == nil || !strings.Contains(err.Error(), "no findings") {
 			t.Fatalf("empty answer %q: expected a no-findings refusal, got %v", empty, err)
 		}
 		after, _ := os.ReadFile(path)
@@ -503,7 +518,7 @@ func TestIngestRefusesEmptyFindings(t *testing.T) {
 // so the guard saw none and the human-decision record was overwritten.
 func TestIngestRefusesOverwriteWithForeignVerdict(t *testing.T) {
 	dir := writeSession(t, timelineFixture)
-	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err != nil {
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer), testProv); err != nil {
 		t.Fatalf("first Ingest: %v", err)
 	}
 	path := filepath.Join(dir, session.FindingsFile)
@@ -516,7 +531,7 @@ func TestIngestRefusesOverwriteWithForeignVerdict(t *testing.T) {
 	f.Close()
 
 	before, _ := os.ReadFile(path)
-	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer), testProv); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
 		t.Fatalf("expected overwrite refusal for a foreign-verdict file, got %v", err)
 	}
 	after, _ := os.ReadFile(path)
@@ -734,7 +749,7 @@ func TestIngestReportsFindingPositionInAnswer(t *testing.T) {
 	 {"id":"F-002","t":22,"type":"bug","severity":3,"quote":"No message","evidence":["utt-004"],"code_refs":["x"]},
 	 {"id":"F-001","t":22,"type":"friction","severity":2,"quote":"No message","evidence":["utt-004"]}
 	]}`
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil {
 		t.Fatalf("expected a duplicate-id error, got nil")
 	}
@@ -760,7 +775,7 @@ func TestIngestLabelsUndecodableNeighbourByAnswerPosition(t *testing.T) {
 	 {"id":"F-003","t":22,"type":"bug","severity":3,"quote":"No message","evidence":["utt-004"]},
 	 {"id":"F-4","t":22,"type":"bug","severity":3,"quote":"No message","evidence":["utt-004"]}
 	]}`
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil {
 		t.Fatalf("expected an id-format error, got nil")
 	}
@@ -788,7 +803,7 @@ func (e *endlessReader) Read(p []byte) (int, error) {
 func TestIngestRejectsOversizedAnswer(t *testing.T) {
 	dir := writeSession(t, timelineFixture)
 	r := &endlessReader{}
-	_, err := Ingest(dir, r)
+	_, err := Ingest(dir, r, testProv)
 	if err == nil || !strings.Contains(err.Error(), "refusing to ingest") {
 		t.Fatalf("expected an over-size refusal, got %v", err)
 	}
@@ -810,7 +825,7 @@ func TestIngestRejectsOversizedEvidence(t *testing.T) {
 	}
 	finding := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":[` +
 		strings.Join(ev, ",") + `]}`
-	_, err := Ingest(dir, strings.NewReader(`{"findings":[`+finding+`]}`))
+	_, err := Ingest(dir, strings.NewReader(`{"findings":[`+finding+`]}`), testProv)
 	if err == nil || !strings.Contains(err.Error(), "exceeding the limit") {
 		t.Fatalf("expected an evidence-cardinality refusal, got %v", err)
 	}
@@ -832,7 +847,7 @@ func TestIngestRejectsFindingWithoutT(t *testing.T) {
 	 {"id":"F-001","type":"bug","severity":3,"quote":"I clicked save and nothing happened",
 	  "evidence":["utt-004","ev-003"]}
 	]}`
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil || !strings.Contains(err.Error(), "missing t") {
 		t.Fatalf("expected a missing-t refusal, got %v", err)
 	}
@@ -854,7 +869,7 @@ func TestIngestAcceptsFindingAtZero(t *testing.T) {
 	 {"id":"F-001","t":0,"type":"bug","severity":3,"quote":"I clicked save and nothing happened",
 	  "evidence":["utt-004"]}
 	]}`
-	findings, err := Ingest(dir, strings.NewReader(answer))
+	findings, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err != nil {
 		t.Fatalf("Ingest of a finding anchored at t=0: %v", err)
 	}
@@ -891,7 +906,7 @@ func TestIngestRejectsOversizedFindingLine(t *testing.T) {
 	answer := fmt.Sprintf(
 		`{"findings":[{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":[%q,%q,%q]}]}`,
 		longID, longID, longID)
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil || !strings.Contains(err.Error(), "exceeding the") {
 		t.Fatalf("expected an over-long line refusal, got %v", err)
 	}
@@ -911,7 +926,7 @@ func TestIngestOversizedFindingLeavesPriorFileIntact(t *testing.T) {
 	longID := "utt-" + strings.Repeat("x", 2<<20)
 	dir := writeSession(t, timelineFixture+longIDTimeline(23, longID))
 
-	if _, err := Ingest(dir, strings.NewReader(goodAnswer)); err != nil {
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer), testProv); err != nil {
 		t.Fatalf("first Ingest: %v", err)
 	}
 	path := filepath.Join(dir, session.FindingsFile)
@@ -921,7 +936,7 @@ func TestIngestOversizedFindingLeavesPriorFileIntact(t *testing.T) {
 	 {"id":"F-001","t":22,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-004"]},
 	 {"id":"F-002","t":23,"type":"friction","severity":2,"quote":"No message","evidence":[%q,%q,%q]}
 	]}`, longID, longID, longID)
-	if _, err := Ingest(dir, strings.NewReader(answer)); err == nil || !strings.Contains(err.Error(), "F-002") {
+	if _, err := Ingest(dir, strings.NewReader(answer), testProv); err == nil || !strings.Contains(err.Error(), "F-002") {
 		t.Fatalf("expected an over-long line refusal naming F-002, got %v", err)
 	}
 	after, _ := os.ReadFile(path)
@@ -964,7 +979,7 @@ func TestOversizedFindingsRejectsOversizedTotal(t *testing.T) {
 		decoded = append(decoded, positioned{finding: f, at: i})
 	}
 
-	errs := oversizedFindings(findings, decoded)
+	errs := oversizedFindings(findings, decoded, 0)
 	joined := errors.Join(errs...)
 	if joined == nil || !strings.Contains(joined.Error(), "file limit") {
 		t.Fatalf("expected a total-size refusal naming the file limit, got %v", joined)
@@ -1004,7 +1019,7 @@ func TestIngestRejectsOversizedFindingsTotal(t *testing.T) {
 		t.Fatalf("test setup: answer is %d bytes, at or over session.MaxAnswerBytes (%d); the read-side cap would refuse it before this test's own check runs", len(answer), session.MaxAnswerBytes)
 	}
 
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil || !strings.Contains(err.Error(), "file limit") {
 		t.Fatalf("expected a total-size refusal naming the file limit, got %v", err)
 	}
@@ -1044,7 +1059,7 @@ func TestIngestGuardAndWriteAreOneLockedStep(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := Ingest(dir, strings.NewReader(goodAnswer))
+		_, err := Ingest(dir, strings.NewReader(goodAnswer), testProv)
 		done <- err
 	}()
 
@@ -1120,7 +1135,7 @@ func TestIngestRefusesDuplicateTimelineIDs(t *testing.T) {
   "evidence":["utt-001","ev-003"]}
 ]}`
 	dir := writeSession(t, dupTimeline)
-	_, err := Ingest(dir, strings.NewReader(answer))
+	_, err := Ingest(dir, strings.NewReader(answer), testProv)
 	if err == nil {
 		t.Fatal("Ingest accepted a timeline with duplicate utterance ids")
 	}
@@ -1141,7 +1156,7 @@ func TestIngestRefusesUnknownTimelineSrc(t *testing.T) {
 {"t":100,"src":"Event","id":"ev-009","payload":{"kind":"click","selector":"[data-testid=save-btn]"}}
 `
 	dir := writeSession(t, badSrc)
-	_, err := Ingest(dir, strings.NewReader(goodAnswer))
+	_, err := Ingest(dir, strings.NewReader(goodAnswer), testProv)
 	if err == nil {
 		t.Fatal("Ingest accepted a timeline entry with unknown src")
 	}
@@ -1174,5 +1189,392 @@ func TestEmitRequestOrdersTimelineByTime(t *testing.T) {
 	}
 	if first > second {
 		t.Fatalf("emitted request lists utt-002 (t=50) before utt-001 (t=10); timeline not sorted by time:\n%s", got)
+	}
+}
+
+// --- provenance (itd-8 / spc-2609150759135349) ---
+
+// TestNewProvenanceRules pins every rule of the declaration in one table. The
+// rules live in this package rather than in the CLI (the ParseVerdictFlag
+// precedent), so this is where they are held: the command only wraps whatever
+// comes back into its usage-error path.
+func TestNewProvenanceRules(t *testing.T) {
+	long := strings.Repeat("m", MaxModelLength+1)
+	for _, tc := range []struct{ name, backend, model, at, want string }{
+		{"unknown backend", "loocal", "", "2026-09-15", `invalid -backend "loocal" (want local or cloud)`},
+		// "unrecorded" is what the ABSENCE of a declaration records, not a
+		// declaration an operator states, so it must not be claimable from the flag.
+		{"unrecorded is not claimable", BackendUnrecorded, "", "2026-09-15", `invalid -backend "unrecorded" (want local or cloud)`},
+		{"model without backend", "", "llama3.1:70b", "2026-09-15", "-backend is required with -model"},
+		{"model of invisible-only Unicode", BackendLocal, "​⁠", "2026-09-15", "-model must not be blank"},
+		{"model of whitespace only", BackendLocal, "  \t ", "2026-09-15", "-model must not be blank"},
+		{"over-long model", BackendLocal, long, "2026-09-15", fmt.Sprintf("-model is %d characters, exceeding the limit of %d", MaxModelLength+1, MaxModelLength)},
+		{"malformed date", BackendLocal, "", "15-09-2026", `invalid date "15-09-2026" (want YYYY-MM-DD)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewProvenance(tc.backend, tc.model, tc.at)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("NewProvenance(%q, %q, %q) = %v, want an error containing %q", tc.backend, tc.model, tc.at, err, tc.want)
+			}
+		})
+	}
+
+	// The accepting cases, including the one the absent flag takes.
+	for _, tc := range []struct {
+		name, backend, model string
+		wantBackend          string
+	}{
+		{"local with a model", BackendLocal, "llama3.1:70b", BackendLocal},
+		{"cloud without a model", BackendCloud, "", BackendCloud},
+		{"no flag records unrecorded", "", "", BackendUnrecorded},
+		{"model at exactly the limit", BackendLocal, strings.Repeat("m", MaxModelLength), BackendLocal},
+		// Inline-Markdown triggers are stored raw and neutralised at each sink, so
+		// the record never quietly disagrees with what the operator typed.
+		{"inline-markdown model stored raw", BackendLocal, "![x](http://h/b.png)", BackendLocal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := NewProvenance(tc.backend, tc.model, "2026-09-15")
+			if err != nil {
+				t.Fatalf("NewProvenance: %v", err)
+			}
+			if p.Kind != "provenance" || p.Rubric != RubricVersion || p.Backend != tc.wantBackend || p.Model != tc.model || p.At != "2026-09-15" {
+				t.Fatalf("NewProvenance = %+v, want kind provenance, rubric %s, backend %s, model %q", p, RubricVersion, tc.wantBackend, tc.model)
+			}
+		})
+	}
+}
+
+// TestIngestWritesProvenanceAsFirstLine is AC1: the declaration leads the file,
+// and the findings under it are byte-for-byte the lines a run without the flags
+// would have written — the provenance record adds a line, it does not alter one.
+func TestIngestWritesProvenanceAsFirstLine(t *testing.T) {
+	withFlags := writeSession(t, timelineFixture)
+	if _, err := Ingest(withFlags, strings.NewReader(goodAnswer), mustProvenance(BackendLocal, "llama3.1:70b", "2026-09-15")); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	lines := readLines(t, withFlags)
+	if len(lines) < 2 {
+		t.Fatalf("findings.jsonl has %d lines, want a provenance line plus findings", len(lines))
+	}
+	var got Provenance
+	if err := json.Unmarshal([]byte(lines[0]), &got); err != nil {
+		t.Fatalf("first line is not a provenance record: %v (%q)", err, lines[0])
+	}
+	want := Provenance{Kind: "provenance", Rubric: RubricVersion, Backend: BackendLocal, Model: "llama3.1:70b", At: "2026-09-15"}
+	if got != want {
+		t.Fatalf("first line = %+v, want %+v", got, want)
+	}
+
+	// The parity assertion: the same answer ingested without the flags yields
+	// identical finding lines.
+	withoutFlags := writeSession(t, timelineFixture)
+	if _, err := Ingest(withoutFlags, strings.NewReader(goodAnswer), testProv); err != nil {
+		t.Fatalf("Ingest (no flags): %v", err)
+	}
+	a, b := readLines(t, withFlags)[1:], readLines(t, withoutFlags)[1:]
+	if strings.Join(a, "\n") != strings.Join(b, "\n") {
+		t.Fatalf("finding lines differ with and without the provenance flags:\nwith    %q\nwithout %q", a, b)
+	}
+}
+
+// TestIngestOmitsModelWhenNotGiven pins the omitempty contract: an unrecorded
+// model is an absent key, not an empty string, so the written record carries no
+// field the operator never filled in.
+func TestIngestOmitsModelWhenNotGiven(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer), testProv); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	first := readLines(t, dir)[0]
+	if strings.Contains(first, `"model"`) {
+		t.Fatalf("provenance line carries a model key when none was given: %q", first)
+	}
+	if !strings.Contains(first, `"backend":"`+BackendUnrecorded+`"`) {
+		t.Fatalf("provenance line does not record an unrecorded backend: %q", first)
+	}
+}
+
+// TestIngestCountsProvenanceInTotalSize is the pre-flight regression:
+// session.CommitRecords leaves the total-size check to its callers, so the
+// provenance line's bytes must be counted or a file can land one record past
+// the cap every reader then refuses.
+func TestIngestCountsProvenanceInTotalSize(t *testing.T) {
+	var findings []Finding
+	var decoded []positioned
+	f := Finding{
+		ID: "F-001", T: 22, Type: "bug", Severity: 3,
+		Quote: "I clicked save and nothing happened", Evidence: []string{"utt-004"}, Status: "unverified",
+	}
+	// One finding, and a provenance budget large enough on its own to blow the
+	// file cap: the check must be reached through the provBytes argument alone.
+	findings = append(findings, f)
+	decoded = append(decoded, positioned{finding: f, at: 1})
+
+	if errs := oversizedFindings(findings, decoded, 0); len(errs) != 0 {
+		t.Fatalf("one small finding was refused with no provenance budget: %v", errors.Join(errs...))
+	}
+	errs := oversizedFindings(findings, decoded, int(session.MaxJSONLBytes))
+	joined := errors.Join(errs...)
+	if joined == nil || !strings.Contains(joined.Error(), "file limit") {
+		t.Fatalf("the provenance line's bytes were not counted into the total: %v", joined)
+	}
+	if !strings.Contains(joined.Error(), "provenance record") {
+		t.Fatalf("the total-size refusal does not say the provenance record is included: %v", joined)
+	}
+}
+
+// TestIngestRefusesVerdictFileWithProvenanceFlags is AC5: the verdict guard
+// outranks a correctable declaration. A file holding human decisions refuses a
+// re-ingest whatever the provenance flags say, and nothing in it moves.
+func TestIngestRefusesVerdictFileWithProvenanceFlags(t *testing.T) {
+	dir := writeSession(t, timelineFixture)
+	if _, err := Ingest(dir, strings.NewReader(goodAnswer), mustProvenance(BackendLocal, "llama3.1:70b", "2026-09-15")); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	path := filepath.Join(dir, session.FindingsFile)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := f.WriteString(`{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-09-15"}` + "\n"); err != nil {
+		t.Fatalf("append verdict: %v", err)
+	}
+	f.Close()
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	_, err = Ingest(dir, strings.NewReader(goodAnswer), mustProvenance(BackendCloud, "a-different-model", "2026-09-16"))
+	if err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("re-ingest over a verdict-bearing file = %v, want the existing overwrite refusal", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("the refused re-ingest changed the file:\nbefore %q\nafter  %q", before, after)
+	}
+}
+
+// TestParseRecordsExposesProvenance is the reader half of AC1/AC2.
+func TestParseRecordsExposesProvenance(t *testing.T) {
+	in := `{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"local","model":"llama3.1:70b","at":"2026-09-15"}
+{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"q","evidence":["utt-004"],"status":"unverified"}
+{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-09-15"}
+`
+	prov, findings, verdicts, err := ParseRecords(strings.NewReader(in), session.FindingsFile)
+	if err != nil {
+		t.Fatalf("ParseRecords: %v", err)
+	}
+	if prov == nil {
+		t.Fatalf("provenance record was not exposed")
+	}
+	if prov.Backend != BackendLocal || prov.Model != "llama3.1:70b" || prov.Rubric != RubricVersion || prov.At != "2026-09-15" {
+		t.Fatalf("provenance = %+v", *prov)
+	}
+	if len(findings) != 1 || len(verdicts) != 1 {
+		t.Fatalf("got %d findings and %d verdicts, want 1 and 1", len(findings), len(verdicts))
+	}
+}
+
+// TestParseRecordsToleratesMissingProvenance is AC3: a findings.jsonl written
+// before the record existed still loads, and says so by returning nil.
+func TestParseRecordsToleratesMissingProvenance(t *testing.T) {
+	in := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"q","evidence":["utt-004"],"status":"unverified"}
+{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-09-15"}
+`
+	prov, findings, verdicts, err := ParseRecords(strings.NewReader(in), session.FindingsFile)
+	if err != nil {
+		t.Fatalf("ParseRecords: %v", err)
+	}
+	if prov != nil {
+		t.Fatalf("provenance = %+v, want nil for a file that carries none", *prov)
+	}
+	if len(findings) != 1 || len(verdicts) != 1 {
+		t.Fatalf("got %d findings and %d verdicts, want 1 and 1", len(findings), len(verdicts))
+	}
+}
+
+// TestParseRecordsIgnoresUnknownBackend mirrors the out-of-enum verdict rule: a
+// claim no reader can interpret must not reach the shareable report, so the
+// record is dropped and the file reads as "not recorded" — the truthful
+// fallback — rather than failing to load at all.
+func TestParseRecordsIgnoresUnknownBackend(t *testing.T) {
+	for _, backend := range []string{"loocal", "", "on-prem"} {
+		in := fmt.Sprintf(`{"kind":"provenance","rubric":"testimony-analysis/v1","backend":%q,"at":"2026-09-15"}`, backend) + "\n" +
+			`{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"q","evidence":["utt-004"],"status":"unverified"}` + "\n"
+		prov, findings, _, err := ParseRecords(strings.NewReader(in), session.FindingsFile)
+		if err != nil {
+			t.Fatalf("backend %q: ParseRecords: %v", backend, err)
+		}
+		if prov != nil {
+			t.Fatalf("backend %q: an uninterpretable backend was surfaced as %+v", backend, *prov)
+		}
+		if len(findings) != 1 {
+			t.Fatalf("backend %q: the findings stopped loading (%d)", backend, len(findings))
+		}
+	}
+}
+
+// TestParseRecordsRefusesDuplicateProvenance mirrors the duplicate-finding-id
+// refusal: two readable but conflicting claims would make a single-valued
+// consumer pick one silently, and picking wrong prints a false privacy claim
+// into the artefact people share.
+func TestParseRecordsRefusesDuplicateProvenance(t *testing.T) {
+	in := `{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"local","at":"2026-09-15"}
+{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"q","evidence":["utt-004"],"status":"unverified"}
+{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"cloud","at":"2026-09-16"}
+`
+	_, _, _, err := ParseRecords(strings.NewReader(in), session.FindingsFile)
+	if err == nil || !strings.Contains(err.Error(), "duplicate provenance record (first seen at line 1)") {
+		t.Fatalf("ParseRecords = %v, want a duplicate-provenance refusal naming both lines", err)
+	}
+	if !strings.Contains(err.Error(), ":3:") {
+		t.Fatalf("the refusal does not name the offending line: %v", err)
+	}
+
+	// An ignored (out-of-enum) record is not a first sighting, so it cannot make
+	// a single legitimate record look like a duplicate.
+	ok := `{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"nonsense","at":"2026-09-15"}
+{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"local","at":"2026-09-16"}
+`
+	prov, _, _, err := ParseRecords(strings.NewReader(ok), session.FindingsFile)
+	if err != nil {
+		t.Fatalf("an ignored record was counted as a duplicate: %v", err)
+	}
+	if prov == nil || prov.Backend != BackendLocal {
+		t.Fatalf("provenance = %v, want the one interpretable record", prov)
+	}
+}
+
+// TestParseRecordsProvenanceAnywhereInFile pins that first-line position is a
+// writer convention, not a reader requirement: a hand-edited file that puts the
+// record last still has it read.
+func TestParseRecordsProvenanceAnywhereInFile(t *testing.T) {
+	in := `{"id":"F-001","t":22,"type":"bug","severity":3,"quote":"q","evidence":["utt-004"],"status":"unverified"}
+{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-09-15"}
+{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"cloud","at":"2026-09-15"}
+`
+	prov, findings, verdicts, err := ParseRecords(strings.NewReader(in), session.FindingsFile)
+	if err != nil {
+		t.Fatalf("ParseRecords: %v", err)
+	}
+	if prov == nil || prov.Backend != BackendCloud {
+		t.Fatalf("a trailing provenance record was not read: %v", prov)
+	}
+	if len(findings) != 1 || len(verdicts) != 1 {
+		t.Fatalf("got %d findings and %d verdicts, want 1 and 1", len(findings), len(verdicts))
+	}
+}
+
+// TestParseRecordsProvenanceCountsTowardTotalCap: the new record is not exempt
+// from the read-side total-size invariant every other line obeys.
+func TestParseRecordsProvenanceCountsTowardTotalCap(t *testing.T) {
+	var b strings.Builder
+	line := `{"kind":"provenance","rubric":"testimony-analysis/v1","backend":"nonsense","model":"` + strings.Repeat("m", 4096) + `","at":"2026-09-15"}` + "\n"
+	for b.Len() <= int(session.MaxJSONLBytes) {
+		b.WriteString(line)
+	}
+	_, _, _, err := ParseRecords(strings.NewReader(b.String()), session.FindingsFile)
+	if err == nil || !strings.Contains(err.Error(), "refusing to read") {
+		t.Fatalf("ParseRecords = %v, want the total-size refusal", err)
+	}
+}
+
+// readLines returns the non-blank lines of the session's findings.jsonl.
+func readLines(t *testing.T, dir string) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, session.FindingsFile))
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	var out []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// TestIngestRefusesInvalidProvenance is the writer-reader agreement regression:
+// Ingest takes a Provenance by value, so nothing but its own guard stood between
+// a zero-valued struct and a findings.jsonl whose first line ParseRecords
+// refuses. Pre-fix, Ingest(dir, r, Provenance{}) committed
+// {"kind":"","rubric":"","backend":"","at":""} and reported success, and the
+// very next Load of that file failed with "missing t" — a writer producing a
+// file no reader accepts.
+func TestIngestRefusesInvalidProvenance(t *testing.T) {
+	good := mustProvenance(BackendLocal, "llama3.1:70b", "2026-09-15")
+	for _, tc := range []struct {
+		name string
+		prov Provenance
+		want string
+	}{
+		{"zero value", Provenance{}, `kind "", want "provenance"`},
+		{"wrong kind", func() Provenance { p := good; p.Kind = "verdict"; return p }(), `kind "verdict"`},
+		{"backend outside the set", func() Provenance { p := good; p.Backend = "on-prem"; return p }(), `backend "on-prem"`},
+		{"no rubric", func() Provenance { p := good; p.Rubric = ""; return p }(), "has no rubric"},
+		{"no date", func() Provenance { p := good; p.At = ""; return p }(), "has no date"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeSession(t, timelineFixture)
+			_, err := Ingest(dir, strings.NewReader(goodAnswer), tc.prov)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Ingest = %v, want an error containing %q", err, tc.want)
+			}
+			if !strings.Contains(err.Error(), "analyze.NewProvenance") {
+				t.Fatalf("the refusal does not name the constructor to use: %v", err)
+			}
+			// Refused before anything is read or written.
+			if _, statErr := os.Stat(filepath.Join(dir, session.FindingsFile)); statErr == nil {
+				t.Fatalf("findings.jsonl was written despite an unwritable provenance record")
+			}
+		})
+	}
+
+	// And the positive control: every record NewProvenance builds is writable,
+	// and the file it lands in reads back.
+	for _, p := range []Provenance{
+		mustProvenance(BackendLocal, "llama3.1:70b", "2026-09-15"),
+		mustProvenance(BackendCloud, "", "2026-09-15"),
+		mustProvenance("", "", "2026-09-15"),
+	} {
+		dir := writeSession(t, timelineFixture)
+		if _, err := Ingest(dir, strings.NewReader(goodAnswer), p); err != nil {
+			t.Fatalf("Ingest(%+v): %v", p, err)
+		}
+		got, findings, _, err := Load(dir)
+		if err != nil {
+			t.Fatalf("Load after Ingest(%+v): %v", p, err)
+		}
+		if got == nil || *got != p {
+			t.Fatalf("Load returned %v, want %+v", got, p)
+		}
+		if len(findings) != 1 {
+			t.Fatalf("got %d findings, want 1", len(findings))
+		}
+	}
+}
+
+// TestNewProvenanceRefusesBacktickOnlyModel pins the one-predicate rule: report
+// renders the model inside a code span, which strips backticks, so a model of
+// backticks alone renders as nothing there. Pre-fix NewProvenance judged
+// emptiness with SafeText only, so `-model '```'` was accepted, echoed on the
+// success line, and then reported as "model not recorded" — the tool
+// contradicting itself about what it had just stored.
+func TestNewProvenanceRefusesBacktickOnlyModel(t *testing.T) {
+	for _, model := range []string{"`", "```", " `` \t"} {
+		_, err := NewProvenance(BackendLocal, model, "2026-09-15")
+		if err == nil || !strings.Contains(err.Error(), "-model must not be blank") {
+			t.Fatalf("NewProvenance(model %q) = %v, want the blank-model refusal", model, err)
+		}
+	}
+	// A model that merely contains a backtick is still real content and stays
+	// accepted — the refusal is about rendering as nothing, not about the byte.
+	if _, err := NewProvenance(BackendLocal, "x`y", "2026-09-15"); err != nil {
+		t.Fatalf("NewProvenance(model \"x`y\") = %v, want it accepted", err)
 	}
 }

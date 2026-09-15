@@ -69,7 +69,7 @@ func Review(opts ReviewOptions) error {
 // absent findings.jsonl degrades to placeholders rather than blocking a human
 // decision that is already overdue.
 func findingsFor(dir string) []analyze.Finding {
-	findings, _, err := analyze.Load(dir)
+	_, findings, _, err := analyze.Load(dir)
 	if err != nil {
 		return nil
 	}

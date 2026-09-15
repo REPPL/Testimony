@@ -1688,3 +1688,23 @@ Architecture-shaping decisions graduate to an ADR under
   falling back to a relative root, which is the scattered-session outcome the
   fixed default exists to end. A behaviour change, called out in the changelog
   with `-out sessions` as the one-line migration.
+- 2026-09-15 — itd-8 ("local analysis") rebuilt as provenance rather than a
+  backend flag: the draft promised a flag pointing the rubric at a locally
+  hosted model, which the host-delegated architecture cannot honour — the CLI
+  never calls a model, so there is no backend for a flag to select. What ships
+  instead is the operator's declaration, recorded: `analyze -ingest` takes
+  `-backend local|cloud` and a free-text `-model NAME` and writes one
+  `kind:"provenance"` record as the FIRST line of `findings.jsonl`, in the same
+  `session.CommitRecords` call as the findings (so a re-ingest replaces the
+  declaration together with what it describes, and the verdict-overwrite guard
+  is untouched and still outranks it); `report` prints it under the Findings
+  heading. Both flags are OPTIONAL with an announced `unrecorded` default rather
+  than required-when-ingesting: required would break every existing invocation
+  at exit 2, could not make a declaration true, and would do nothing for the
+  files already on disk, whereas optional makes every findings file written from
+  now on say something true about its own origin — and the stderr notice (the
+  `resolveSession` precedent) keeps the choice from being silent. No `-host`
+  field: a field named for a host invites an address, and a session directory is
+  an exchange unit. The quality-floor question the draft raised is deferred to
+  the retained verdicts, which now become a per-backend comparison, rather than
+  built as an unmeasured number the CLI could not enforce anyway.

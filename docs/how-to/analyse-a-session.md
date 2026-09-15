@@ -50,8 +50,16 @@ accepted):
 Validate the answer against the findings schema and write `findings.jsonl`:
 
 ```sh
-testimony analyze -session ~/Testimony/sessions/<dir> -ingest answer.json
+testimony analyze -session ~/Testimony/sessions/<dir> -ingest answer.json -backend cloud -model <name>
 ```
+
+`-backend local|cloud` and `-model NAME` record what answered the request. Ingest
+writes that declaration as the first line of `findings.jsonl` and `report` shows
+it, so a findings file always says what produced it. Both flags are optional —
+leave them off and the record states that the backend was not recorded, and the
+run says so on stderr. Testimony records what you state and cannot verify it:
+`analyze` never calls a model. To keep the whole analysis on this machine, see
+[Analyse a session locally](analyse-locally.md).
 
 Ingest is the validation boundary, and it never trusts the model. It rejects, with
 a precise message, any finding whose evidence id is not in the timeline, whose
@@ -103,7 +111,9 @@ testimony report -session ~/Testimony/sessions/<dir>
 open ~/Testimony/sessions/<dir>/report.md
 ```
 
-The Findings section lists findings under **Confirmed**, **Unverified**,
+The Findings section opens with the provenance line — what you declared at
+ingest, or `Provenance: not recorded` for a findings file written before the
+record existed — then lists findings under **Confirmed**, **Unverified**,
 **Duplicate**, and **Rejected**, each with its quote, anchor, and — where you
 recorded one — the verdict and its date. Change a verdict at any time with
 `testimony review -session ~/Testimony/sessions/<dir> -finding F-NNN -verdict <verdict>`
