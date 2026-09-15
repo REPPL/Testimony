@@ -1675,3 +1675,4 @@ Architecture-shaping decisions graduate to an ADR under
   `report` rendered them under the utterance. Coloured `ls` output rendered as
   CSI residue, as designed and documented — logged as `iss-2609120520334220`.
   The 3.x (v3) recorder is not installed, so v3 stays fixture-verified only.
+- 2026-09-15 — PR bodies carry the `Assisted-by:` trailer as their last line, matching the global attribution gate that refuses a body without it; the earlier "no footer in PR bodies" rule contradicted that gate and is replaced. Session links stay out of PR bodies and commits.

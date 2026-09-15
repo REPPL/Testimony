@@ -8,7 +8,7 @@
         "Substantive work goes on a branch + PR; never force-push, never --no-verify.",
         "Never commit or push unless asked.",
         "PRs merge by squash: one PR, one purpose, one commit on main.",
-        "PR bodies, like commits, carry no AI footers or session links; disclosure is the Assisted-by commit trailer, nothing else."
+        "PR bodies end with the same Assisted-by trailer as commits (the global attribution gate requires it, and refuses a body without one); no other AI footers and never a session link."
       ]
     }
   },
