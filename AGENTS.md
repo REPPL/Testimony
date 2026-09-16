@@ -50,14 +50,15 @@ Testimony captures usability evidence, on the record.
 
 ## Current state
 
-v0.4.0. A Go CLI (`testimony`, standard library only) whose nine pipeline
+v0.4.0. A Go CLI (`testimony`, standard library only) whose ten pipeline
 commands are all implemented and dispatched from `internal/cli` behind the
 `cmd/testimony` entry point: `record` and `demo`
 (capture), `transcribe` and `import` (hand-off of a recording the CLI never
 made — a voice recording, or an operator-recorded asciinema terminal session),
-`merge`, `report`, the analysis layer `analyze` and `review`, and the
+`merge`, `report`, the analysis layer `analyze` and `review`, the
 regression-test drafting layer `draft-tests` (with `review -kind tests` for its
-human pass) — plus `version` and `help`. The model work is host-delegated —
+human pass), and the codebase-mapping layer `map` (with `review -kind refs`
+for its human pass) — plus `version` and `help`. The model work is host-delegated —
 the CLI never calls a model, holds no keys, and adds no network dependency. The user-facing documentation
 is [`docs/README.md`](docs/README.md); the exact command and file contracts are
 [`docs/reference/cli.md`](docs/reference/cli.md) and
@@ -80,6 +81,8 @@ go test -run TestEventsNearWindow ./internal/timeline/   # a single test
 ./testimony merge  -session examples/sample-session   # pipeline smoke:
 ./testimony report -session examples/sample-session   #   writes timeline.jsonl + report.md
 ./testimony draft-tests -session examples/sample-session   # emit the drafting request (after merge)
+./testimony map -render -session examples/sample-session   # issue drafts from the bundled refs.jsonl (after merge)
+./testimony map -session examples/sample-session -repo internal/coderefs/testdata/repo   # emit the mapping request (after merge)
 S=$(mktemp -d) && cp examples/sample-session/manifest.json "$S" \
   && ./testimony import -session "$S" -cast internal/cast/testdata/v2.cast   # terminal hand-off smoke
 sh -n install.sh && bash -n install.sh  # installer syntax

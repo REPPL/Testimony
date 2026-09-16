@@ -59,6 +59,7 @@ const (
 	TimelineFile     = "timeline.jsonl"
 	FindingsFile     = "findings.jsonl"
 	TestsFile        = "tests.jsonl"
+	RefsFile         = "refs.jsonl"
 	ReportFile       = "report.md"
 )
 

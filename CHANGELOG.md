@@ -12,6 +12,36 @@ break an existing invocation is called out in the entry that records it.
 
 ### Added
 
+- `testimony map` maps a **confirmed** finding to the code that owns its
+  on-screen anchor, and `testimony review -kind refs` records the human accept /
+  reject pass over each reference. The resolution stays host-delegated, exactly
+  as for `analyze` and `draft-tests`: `map -session DIR -repo DIR` emits one
+  self-contained mapping request — a versioned rubric, the repository path, and,
+  for each confirmed finding whose `ui` carries a selector or route, that
+  finding's record and its event window — and `map -session DIR -repo DIR
+  -ingest FILE` is the validation boundary, forcing every reference to
+  `status: proposed`, refusing any reference to a finding that is not currently
+  confirmed or carries no anchor, and checking every `path` against the
+  repository: repo-relative, no `.` or `..` segment, inside the repository even
+  through a symlinked directory, an existing regular file (a symlink or
+  directory is refused), with any `line` within the file's length. The CLI
+  opens the repository read-only for those checks and never writes into it; it
+  never greps or interprets the source, and a model-asserted `confidence` field
+  is refused as unknown, so the human decision is the only quality signal. An
+  answer is bounded to 1000 references before any is checked, and the recorded
+  path is the checked form. The emitted request is the one artefact that names
+  an absolute local path, the repository's, so `map` refuses an `-out` inside
+  the session directory.
+  References and decisions live in a new `refs.jsonl` session artefact,
+  append-only in both directions with no edit path: a wrong path is rejected
+  and a corrected one ingested. `map -session DIR -render` renders one Markdown
+  issue draft per mapped finding — a title and reproduction steps derived by
+  the CLI from the finding and its event window, the participant's quote, and
+  every reference with its current status — so a draft rendered before review
+  is visibly unreviewed. Nothing is filed anywhere. A session with no confirmed
+  anchored finding is staged loudly with the counts by status, including how
+  many confirmed findings carry an anchor, nothing written, exit 1. Terminal
+  findings carry no anchor and are the subject of their own intent.
 - `testimony analyze -ingest` records what answered the analysis request.
   `-backend local|cloud` and a free-text `-model NAME` write one provenance
   record — `{"kind":"provenance","rubric":…,"backend":…,"model":…,"at":…}` — as

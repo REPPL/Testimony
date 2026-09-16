@@ -982,6 +982,41 @@ func TestRunDispatchesKindTests(t *testing.T) {
 	}
 }
 
+const refFixture = `{"id":"R-001","finding":"F-001","session":"s","path":"src/a.ts","line":1,"role":"owner","status":"proposed"}
+`
+
+// TestRunDispatchesKindRefs: the third record family reaches the mapping
+// layer's decision path and appends its record to refs.jsonl, leaving both
+// other files untouched.
+func TestRunDispatchesKindRefs(t *testing.T) {
+	dir := writeSession(t)
+	if err := os.WriteFile(filepath.Join(dir, session.RefsFile), []byte(refFixture), 0o644); err != nil {
+		t.Fatalf("write refs: %v", err)
+	}
+	before := findingLines(t, dir)
+	var out bytes.Buffer
+	err := Run(Options{Dir: dir, Kind: KindRefs, Ref: "R-001", Decision: "rejected", Out: &out, Today: "2026-09-16"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := out.String(); got != "recorded: R-001 rejected (2026-09-16)\n" {
+		t.Fatalf("echo = %q", got)
+	}
+	b, rerr := os.ReadFile(filepath.Join(dir, session.RefsFile))
+	if rerr != nil {
+		t.Fatalf("read refs: %v", rerr)
+	}
+	if !strings.HasPrefix(string(b), refFixture) || !strings.HasSuffix(string(b), `{"kind":"decision","ref":"R-001","decision":"rejected","at":"2026-09-16"}`+"\n") {
+		t.Fatalf("refs.jsonl = %q", b)
+	}
+	if strings.Join(before, "\n") != strings.Join(findingLines(t, dir), "\n") {
+		t.Fatal("a refs-side decision modified findings.jsonl")
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.TestsFile)); !os.IsNotExist(err) {
+		t.Fatal("a refs-side decision created tests.jsonl")
+	}
+}
+
 // TestRunRefusesCrossFamilyFlags: a flag belonging to the other record family is
 // a wrong invocation, not a silently ignored one — recording nothing while
 // exiting 0 would let a script believe the decision landed.
@@ -995,6 +1030,11 @@ func TestRunRefusesCrossFamilyFlags(t *testing.T) {
 		{"test with kind findings", Options{Test: "T-001", Decision: "accepted"}, "-test, -decision and -edit apply to -kind tests"},
 		{"edit with kind findings", Options{EditIn: strings.NewReader("{}")}, "-test, -decision and -edit apply to -kind tests"},
 		{"unknown kind", Options{Kind: "verdicts"}, "invalid kind"},
+		{"verdict with kind refs", Options{Kind: KindRefs, Finding: "F-001", Verdict: "confirmed"}, "-finding and -verdict apply to -kind findings, not -kind refs"},
+		{"test with kind refs", Options{Kind: KindRefs, Test: "T-001", Decision: "accepted"}, "-test and -edit apply to -kind tests, not -kind refs"},
+		{"edit with kind refs", Options{Kind: KindRefs, EditIn: strings.NewReader("{}")}, "-test and -edit apply to -kind tests, not -kind refs"},
+		{"ref with kind findings", Options{Ref: "R-001", Decision: "accepted"}, "-ref and -repo apply to -kind refs, not -kind findings"},
+		{"repo with kind tests", Options{Kind: KindTests, Repo: "."}, "-ref and -repo apply to -kind refs, not -kind tests"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

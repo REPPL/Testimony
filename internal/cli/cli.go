@@ -13,6 +13,7 @@ import (
 
 	"github.com/REPPL/Testimony/internal/analyze"
 	"github.com/REPPL/Testimony/internal/cast"
+	"github.com/REPPL/Testimony/internal/coderefs"
 	"github.com/REPPL/Testimony/internal/demo"
 	"github.com/REPPL/Testimony/internal/drafttests"
 	"github.com/REPPL/Testimony/internal/record"
@@ -45,16 +46,21 @@ Usage:
   testimony draft-tests [-session DIR] [-window 10] [-out FILE]   emit the regression-test drafting request (rubric + confirmed findings + event windows)
   testimony draft-tests [-session DIR] -ingest FILE     validate answer JSON (FILE or "-") → tests.jsonl (all drafts proposed)
   testimony draft-tests [-session DIR] -render [-out FILE]        render the accepted drafts as Markdown test cases
-  testimony review      [-session DIR] [-kind findings|tests]     interactively record verdicts on unverified findings, or decisions on proposed test drafts (stdin must be a character device)
+  testimony map         [-session DIR] -repo DIR [-window 10] [-out FILE]   emit the code-mapping request (rubric + confirmed anchored findings + event windows + repository path)
+  testimony map         [-session DIR] -repo DIR -ingest FILE     validate answer JSON (FILE or "-") → refs.jsonl (all references proposed; paths and lines checked against -repo)
+  testimony map         [-session DIR] -render [-out FILE]        render an issue draft per mapped finding as Markdown
+  testimony review      [-session DIR] [-kind findings|tests|refs]   interactively record verdicts on unverified findings, decisions on proposed test drafts, or decisions on proposed code references (stdin must be a character device)
   testimony review      [-session DIR] -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
   testimony review      [-session DIR] -kind tests -test T-NNN -decision accepted|rejected
   testimony review      [-session DIR] -kind tests -test T-NNN -decision edited -edit FILE
+  testimony review      [-session DIR] -kind refs [-repo DIR]   interactively decide proposed code references, showing the source around each when -repo is given
+  testimony review      [-session DIR] -kind refs -ref R-NNN -decision accepted|rejected
   testimony version
   testimony help
 
 A session directory is described in docs/reference/session-directory.md.
-Omitting -session on transcribe, import, merge, report, analyze, draft-tests, or
-review uses the current directory when it holds a Testimony session
+Omitting -session on transcribe, import, merge, report, analyze, draft-tests,
+map, or review uses the current directory when it holds a Testimony session
 manifest.json (one with a session field), and names the inferred session on
 stderr.
 record and demo create a new session under ~/Testimony/sessions unless -out
@@ -666,23 +672,157 @@ func Run(args []string) int {
 		fmt.Print(doc)
 		return 0
 
+	case "map":
+		fs := flag.NewFlagSet("map", flag.ExitOnError)
+		dir := fs.String("session", "", "session directory")
+		repo := fs.String("repo", "", "emit/ingest mode: the application's repository root (read only)")
+		window := fs.Float64("window", coderefs.DefaultWindow, "emit mode: event-window half-width around a finding's evidence, seconds")
+		out := fs.String("out", "", "emit/render mode: write to FILE instead of stdout")
+		ingest := fs.String("ingest", "", "validate answer JSON at FILE (or \"-\" for stdin) into refs.jsonl")
+		render := fs.Bool("render", false, "render an issue draft per mapped finding as Markdown")
+		fs.Parse(rest)
+		if err := rejectArgs(fs); err != nil {
+			return usageErr(err)
+		}
+		outSet, ingestSet, windowSet, repoSet := false, false, false, false
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "out":
+				outSet = true
+			case "ingest":
+				ingestSet = true
+			case "window":
+				windowSet = true
+			case "repo":
+				repoSet = true
+			}
+		})
+		// An explicitly-empty path flag is a wrong invocation (an unset shell
+		// variable spliced into the flag, say), not a valid path — the draft-tests
+		// guard, applied to -repo as well.
+		if ingestSet && *ingest == "" {
+			return usageErr(fmt.Errorf("map: -ingest must not be empty"))
+		}
+		if outSet && *out == "" {
+			return usageErr(fmt.Errorf("map: -out must not be empty"))
+		}
+		if repoSet && *repo == "" {
+			return usageErr(fmt.Errorf("map: -repo must not be empty"))
+		}
+		// map runs in exactly one mode, following draft-tests' rule: emit (neither
+		// -ingest nor -render), ingest (-ingest), or render (-render).
+		if *ingest != "" {
+			if *out != "" {
+				return usageErr(fmt.Errorf("map: -out and -ingest cannot be combined"))
+			}
+			if *render {
+				return usageErr(fmt.Errorf("map: -render and -ingest cannot be combined"))
+			}
+		}
+		if windowSet && (*ingest != "" || *render) {
+			return usageErr(fmt.Errorf("map: -window applies to the emit mode only"))
+		}
+		if math.IsNaN(*window) || math.IsInf(*window, 0) {
+			return usageErr(fmt.Errorf("map: -window must be a finite number of seconds, got %v", *window))
+		}
+		// -repo is what emit hands the host and what ingest checks paths against;
+		// render reads only what is on disk in the session and never opens the
+		// repository, so a -repo alongside it is a flag from another mode, refused
+		// rather than silently ignored. Required in the other two modes: there is
+		// no default repository, and a request without one cannot be answered.
+		if *render {
+			if repoSet {
+				return usageErr(fmt.Errorf("map: -repo applies to the emit and ingest modes only"))
+			}
+		} else {
+			if *repo == "" {
+				return usageErr(fmt.Errorf("map: -repo is required (the application's repository root)"))
+			}
+			// Refused from the flags alone, at the usage status: a -repo that is not
+			// a directory is a wrong invocation, not a session that cannot be read.
+			if fi, err := os.Stat(*repo); err != nil || !fi.IsDir() {
+				if err == nil {
+					err = fmt.Errorf("%s is not a directory", *repo)
+				}
+				return usageErr(fmt.Errorf("map: -repo: %v", err))
+			}
+		}
+		sess, err := resolveSession(fs, *dir)
+		if err != nil {
+			return usageErr(err)
+		}
+		// The emitted request carries the repository's absolute path, the one
+		// place an absolute local path appears in any artefact this tool writes,
+		// and a session directory is an exchange unit. So in emit mode -out may
+		// not land inside the session: an operator who inferred the session from
+		// the current directory and wrote `-out request.md` would otherwise ship
+		// their machine's layout with the session. Refused from the paths alone,
+		// before any file is read.
+		if *ingest == "" && !*render && *out != "" {
+			if inside, err := insideDir(sess, *out); err != nil {
+				return usageErr(fmt.Errorf("map: -out: %v", err))
+			} else if inside {
+				return usageErr(fmt.Errorf("map: -out must not be inside the session directory (the request names the repository's absolute path, and a session directory is an exchange unit)"))
+			}
+		}
+		if *ingest != "" {
+			in := os.Stdin
+			if *ingest != "-" {
+				f, err := session.OpenFileNoFollowRead(*ingest)
+				if err != nil {
+					return fail(err)
+				}
+				defer f.Close()
+				in = f
+			}
+			refs, err := coderefs.Ingest(sess, *repo, in)
+			if err != nil {
+				return fail(err)
+			}
+			fmt.Printf("validated %d references → %s (all proposed)\n",
+				len(refs), filepath.Join(sess, session.RefsFile))
+			return 0
+		}
+		var doc string
+		if *render {
+			doc, err = coderefs.Render(sess)
+		} else {
+			doc, err = coderefs.EmitRequest(sess, *repo, *window)
+		}
+		if err != nil {
+			return fail(err)
+		}
+		if *out != "" {
+			if err := session.WriteFileNoFollow(*out, []byte(doc), 0o644); err != nil {
+				return fail(err)
+			}
+			fmt.Printf("wrote %s\n", *out)
+			return 0
+		}
+		fmt.Print(doc)
+		return 0
+
 	case "review":
 		fs := flag.NewFlagSet("review", flag.ExitOnError)
 		dir := fs.String("session", "", "session directory")
-		kind := fs.String("kind", review.KindFindings, "which record family to review: findings | tests")
+		kind := fs.String("kind", review.KindFindings, "which record family to review: findings | tests | refs")
 		finding := fs.String("finding", "", "non-interactive: the finding to judge (F-NNN)")
 		verdict := fs.String("verdict", "", "non-interactive: confirmed | rejected | duplicate-of-F-NNN")
 		test := fs.String("test", "", "non-interactive (-kind tests): the test draft to decide (T-NNN)")
-		decision := fs.String("decision", "", "non-interactive (-kind tests): accepted | edited | rejected")
+		decision := fs.String("decision", "", "non-interactive (-kind tests or refs): accepted | edited | rejected (edited is -kind tests only)")
 		edit := fs.String("edit", "", "with -decision edited: the replacement fields as a JSON object at FILE (or \"-\" for stdin)")
+		ref := fs.String("ref", "", "non-interactive (-kind refs): the reference to decide (R-NNN)")
+		repo := fs.String("repo", "", "-kind refs: the application's repository root, read only, to show the source around each reference")
 		fs.Parse(rest)
 		if err := rejectArgs(fs); err != nil {
 			return usageErr(err)
 		}
 		f, v := strings.TrimSpace(*finding), strings.TrimSpace(*verdict)
 		tst, dec := strings.TrimSpace(*test), strings.TrimSpace(*decision)
+		rf := strings.TrimSpace(*ref)
 		findingSet, verdictSet := false, false
 		kindSet, testSet, decisionSet, editSet := false, false, false, false
+		refSet, repoSet := false, false
 		fs.Visit(func(fl *flag.Flag) {
 			switch fl.Name {
 			case "finding":
@@ -697,6 +837,10 @@ func Run(args []string) int {
 				decisionSet = true
 			case "edit":
 				editSet = true
+			case "ref":
+				refSet = true
+			case "repo":
+				repoSet = true
 			}
 		})
 		// An explicitly-empty -finding or -verdict is a wrong invocation (an
@@ -728,6 +872,12 @@ func Run(args []string) int {
 		if editSet && *edit == "" {
 			return usageErr(fmt.Errorf("review: -edit must not be empty"))
 		}
+		if refSet && rf == "" {
+			return usageErr(fmt.Errorf("review: -ref must not be empty"))
+		}
+		if repoSet && *repo == "" {
+			return usageErr(fmt.Errorf("review: -repo must not be empty"))
+		}
 		// The record family is a closed set, so an unknown one is a wrong invocation
 		// rather than a silently-ignored value that would run the findings walk under
 		// a name the caller did not mean.
@@ -741,28 +891,84 @@ func Run(args []string) int {
 		// would let a script believe it landed. review.Run refuses the same pairings,
 		// so the rule holds for any caller; refusing here gives it the usage status
 		// and does so before the session is resolved or any file is read.
-		if recordKind == review.KindTests {
+		switch recordKind {
+		case review.KindTests:
 			if f != "" || v != "" {
 				return usageErr(fmt.Errorf("review: -finding and -verdict apply to -kind findings, not -kind tests"))
 			}
-		} else if tst != "" || dec != "" || *edit != "" {
-			return usageErr(fmt.Errorf("review: -test, -decision and -edit apply to -kind tests, not -kind findings"))
+			if rf != "" || *repo != "" {
+				return usageErr(fmt.Errorf("review: -ref and -repo apply to -kind refs, not -kind tests"))
+			}
+		case review.KindRefs:
+			if f != "" || v != "" {
+				return usageErr(fmt.Errorf("review: -finding and -verdict apply to -kind findings, not -kind refs"))
+			}
+			if tst != "" || *edit != "" {
+				return usageErr(fmt.Errorf("review: -test and -edit apply to -kind tests, not -kind refs"))
+			}
+		default:
+			// The refs family is checked first so that -ref alongside -decision is
+			// named for the flag that identifies the family, not for the one the
+			// two families share.
+			if rf != "" || *repo != "" {
+				return usageErr(fmt.Errorf("review: -ref and -repo apply to -kind refs, not -kind findings"))
+			}
+			if tst != "" || dec != "" || *edit != "" {
+				return usageErr(fmt.Errorf("review: -test, -decision and -edit apply to -kind tests, not -kind findings"))
+			}
+		}
+		// The -ref/-decision pairing, the reference id's syntax, and the decision
+		// enum (no "edited": a wrong path is rejected and a corrected one is
+		// ingested, never patched) are invocation facts, refused at the usage
+		// status. A -repo that is not a directory is refused the same way, as map
+		// refuses it; the walk opens it read-only for the source snippet.
+		if recordKind == review.KindRefs {
+			if rf != "" && dec == "" {
+				return usageErr(fmt.Errorf("review: -decision is required with -ref"))
+			}
+			if dec != "" && rf == "" {
+				return usageErr(fmt.Errorf("review: -ref is required with -decision"))
+			}
+			if rf != "" && !coderefs.IsRefID(rf) {
+				return usageErr(fmt.Errorf("review: invalid -ref %q (want R-NNN)", rf))
+			}
+			if dec != "" {
+				if _, err := coderefs.ParseDecisionFlag(dec); err != nil {
+					return usageErr(fmt.Errorf("review: %w", err))
+				}
+			}
+			if *repo != "" {
+				// The snippet is shown only by the interactive walk, so -repo beside
+				// a single decision would be silently ignored; refused instead, as
+				// map refuses -window outside emit.
+				if rf != "" {
+					return usageErr(fmt.Errorf("review: -repo applies to the interactive walk, not to -ref/-decision"))
+				}
+				if fi, err := os.Stat(*repo); err != nil || !fi.IsDir() {
+					if err == nil {
+						err = fmt.Errorf("%s is not a directory", *repo)
+					}
+					return usageErr(fmt.Errorf("review: -repo: %v", err))
+				}
+			}
 		}
 		// The -test/-decision pairing, the draft id's syntax, the decision enum, and
 		// -edit's pairing are all invocation facts, so they are refused here at the
 		// usage status rather than from inside the package after the drafts load.
-		if tst != "" && dec == "" {
-			return usageErr(fmt.Errorf("review: -decision is required with -test"))
-		}
-		if dec != "" && tst == "" {
-			return usageErr(fmt.Errorf("review: -test is required with -decision"))
-		}
-		if tst != "" && !drafttests.IsDraftID(tst) {
-			return usageErr(fmt.Errorf("review: invalid -test %q (want T-NNN)", tst))
-		}
-		if dec != "" {
-			if _, err := drafttests.ParseDecisionFlag(dec); err != nil {
-				return usageErr(fmt.Errorf("review: %w", err))
+		if recordKind == review.KindTests {
+			if tst != "" && dec == "" {
+				return usageErr(fmt.Errorf("review: -decision is required with -test"))
+			}
+			if dec != "" && tst == "" {
+				return usageErr(fmt.Errorf("review: -test is required with -decision"))
+			}
+			if tst != "" && !drafttests.IsDraftID(tst) {
+				return usageErr(fmt.Errorf("review: invalid -test %q (want T-NNN)", tst))
+			}
+			if dec != "" {
+				if _, err := drafttests.ParseDecisionFlag(dec); err != nil {
+					return usageErr(fmt.Errorf("review: %w", err))
+				}
 			}
 		}
 		// An "edited" decision with no replacement fields is not representable, and
@@ -834,6 +1040,8 @@ func Run(args []string) int {
 			Test:     tst,
 			Decision: dec,
 			EditIn:   editIn,
+			Ref:      rf,
+			Repo:     *repo,
 			In:       os.Stdin,
 			Out:      os.Stdout,
 			IsTTY:    isCharDevice(os.Stdin),
@@ -894,6 +1102,49 @@ func describeProvenance(p analyze.Provenance) string {
 	return backend + ", model " + session.SafeText(p.Model)
 }
 
+// insideDir reports whether path lies inside dir (or is dir itself), comparing
+// absolute, symlink-resolved forms so a session reached through a symlinked
+// temp root and an -out written through the real one still compare equal. The
+// output file need not exist yet, so its parent is what is resolved.
+func insideDir(dir, path string) (bool, error) {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return false, err
+	}
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		root = r
+	}
+	target, err := filepath.Abs(path)
+	if err != nil {
+		return false, err
+	}
+	target = resolveExisting(target)
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false, nil
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))), nil
+}
+
+// resolveExisting resolves the symlinks in the deepest existing ancestor of an
+// absolute path and rejoins the rest, so a path whose file or parent does not
+// exist yet still compares against a resolved root on equal terms.
+func resolveExisting(abs string) string {
+	rest := ""
+	dir := abs
+	for {
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return abs
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+	}
+}
+
 // rejectArgs refuses leftover positional arguments after flag parsing. Flag
 // parsing stops at the first non-flag argument, so a stray positional silently
 // discarded every flag that followed it and the command ran with defaults at
@@ -949,8 +1200,8 @@ func unresolvedRootErr(err error) error {
 // resolveSession returns the session directory a pipeline command operates on:
 // the explicit -session flag when it is given, otherwise the current directory
 // when that directory itself holds a manifest.json. It is the single resolution
-// point for transcribe, merge, report, analyze, draft-tests, and review, so the
-// six commands cannot drift in what they accept.
+// point for transcribe, import, merge, report, analyze, draft-tests, map, and
+// review, so the eight commands cannot drift in what they accept.
 //
 // Inference covers the exact current directory only — never a parent, the way
 // git searches upward for .git — because a command that operated on an ancestor

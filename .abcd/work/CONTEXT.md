@@ -18,12 +18,17 @@ request, then validate the answer into `findings.jsonl`) and `review`
 regression-test drafting layer, `draft-tests` (emit a drafting request
 carrying each confirmed finding and its event window, validate the answer
 into `tests.jsonl`, render the accepted drafts as a Markdown test plan)
-with `review -kind tests` for the accept / edit / reject pass. The oracle is
-host-delegated: the CLI never calls a model, holds no keys, and adds no
-network dependency; every finding is born `unverified`, every drafted test is
-born `proposed`, and each ingest is the sole validation boundary for its own
-answer. Next is codebase mapping (itd-3), then Mode B / the
-pattern library (itd-4). Command and file contracts in
+with `review -kind tests` for the accept / edit / reject pass, and the
+codebase-mapping layer, `map` (emit a mapping request carrying each
+confirmed anchored finding and the application's repository path, validate
+the answer's source references against that repository into `refs.jsonl`,
+render an issue draft per mapped finding) with `review -kind refs` for the
+accept / reject pass. The oracle is host-delegated: the CLI never calls a
+model, holds no keys, and adds no network dependency; every finding is born
+`unverified`, every drafted test and every code reference is born
+`proposed`, and each ingest is the sole validation boundary for its own
+answer. Next is terminal-session anchoring (itd-2609152113364815), then
+Mode B / the pattern library (itd-4). Command and file contracts in
 [`../../docs/reference/cli.md`](../../docs/reference/cli.md) and
 [`../../docs/reference/session-directory.md`](../../docs/reference/session-directory.md).
 

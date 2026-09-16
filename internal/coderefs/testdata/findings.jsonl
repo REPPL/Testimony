@@ -1,0 +1,13 @@
+{"id":"F-001","t":22,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-004","ev-003","ev-004"],"ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}
+{"id":"F-002","t":38,"type":"preference","severity":2,"mode":"A","quote":"I like this dark mode toggle","evidence":["utt-006","ev-006"],"ui":{"selector":"[data-testid=theme-toggle]","route":"#appearance"},"status":"unverified"}
+{"id":"F-003","t":48,"type":"friction","severity":2,"mode":"A","quote":"The label just says dark mode","evidence":["utt-007"],"status":"unverified"}
+{"id":"F-004","t":16,"type":"preference","severity":1,"mode":"B","quote":"Now I expect this save button to confirm somehow","evidence":["utt-003"],"ui":{"selector":"[data-testid=save-btn]"},"status":"unverified"}
+{"id":"F-005","t":31,"type":"idea","severity":3,"mode":"A","quote":"The tab switch is instant","evidence":["utt-005"],"status":"unverified"}
+{"id":"F-006","t":57,"type":"idea","severity":2,"mode":"A","quote":"A toast would do","evidence":["utt-008"],"status":"unverified"}
+{"id":"F-007","t":32,"type":"friction","severity":1,"mode":"A","quote":"Where did the appearance tab go","evidence":["utt-005","ev-005"],"ui":{"route":"#appearance"},"status":"unverified"}
+{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-09-12"}
+{"kind":"verdict","finding":"F-003","verdict":"rejected","at":"2026-09-12"}
+{"kind":"verdict","finding":"F-004","verdict":"confirmed","at":"2026-09-12"}
+{"kind":"verdict","finding":"F-005","verdict":"duplicate","of":"F-001","at":"2026-09-12"}
+{"kind":"verdict","finding":"F-006","verdict":"confirmed","at":"2026-09-12"}
+{"kind":"verdict","finding":"F-007","verdict":"confirmed","at":"2026-09-12"}

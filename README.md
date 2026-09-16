@@ -108,6 +108,7 @@ Each session is one folder of small, inspectable files, created under `~/Testimo
   timeline.jsonl       # merged, session-relative timeline
   findings.jsonl       # analysis findings + verdicts
   tests.jsonl          # regression-test drafts + decisions
+  refs.jsonl           # code references + decisions
   report.md            # human-readable aligned record
 ```
 
@@ -121,14 +122,19 @@ or whisper.cpp), `import` (an asciinema terminal recording joins the session's
 interaction stream on the shared clock), `merge`, `report`, the first-pass
 analysis layer — `analyze` (emit an analysis request, then validate the answer
 into findings, recording the backend and model you declare answered it) and
-`review` (record human verdicts) — and the regression-test
+`review` (record human verdicts) — the regression-test
 drafting layer, `draft-tests` (turn a confirmed finding into a proposed test
 case, then render the accepted ones as a Markdown test plan) with
-`review -kind tests` for the accept / edit / reject pass. `record` captures the
+`review -kind tests` for the accept / edit / reject pass, and the
+codebase-mapping layer, `map` (hand a confirmed finding's selector or route to
+your assistant with the application's repository, validate the source
+references it returns, and render an issue draft per mapped finding) with
+`review -kind refs` for the accept / reject pass. `record` captures the
 microphone by default; screen video is opt-in with `-video`. The model work is
 host-delegated — the CLI never calls a model, holds no keys, and adds no network
 dependency — every finding is *unverified* until you confirm or reject it, and
-every drafted test is a *proposal* until you accept it. Run the analysis request
+every drafted test and every code reference is a *proposal* until you accept
+it. Run the analysis request
 against a model on your own machine and no session content leaves it at any
 step; `findings.jsonl` and `report.md` carry your declaration that it did
 ([analyse a session locally](docs/how-to/analyse-locally.md)).

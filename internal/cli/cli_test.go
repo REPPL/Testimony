@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -305,7 +306,7 @@ func TestUsageListsEveryFlagAndCommand(t *testing.T) {
 	for _, want := range []string{"-commit HASH", "testimony help",
 		"testimony draft-tests", "-window 10", "-kind findings|tests", "-decision edited -edit FILE",
 		"-backend local|cloud", "-model NAME",
-		"transcribe, import, merge, report, analyze, draft-tests, or"} {
+		"transcribe, import, merge, report, analyze, draft-tests,\nmap, or"} {
 		if !strings.Contains(usage, want) {
 			t.Errorf("usage text does not mention %q", want)
 		}
@@ -1231,7 +1232,7 @@ func TestUsageListsImport(t *testing.T) {
 		"testimony import      [-session DIR] [-cast FILE]",
 		"[-offset SECONDS]",
 		"import an asciinema recording's output into interactions.jsonl",
-		"Omitting -session on transcribe, import, merge, report, analyze, draft-tests, or",
+		"Omitting -session on transcribe, import, merge, report, analyze, draft-tests,\nmap, or",
 	} {
 		if !strings.Contains(usage, want) {
 			t.Errorf("usage text does not mention %q", want)
@@ -1535,5 +1536,211 @@ func TestAnalyzeProvenanceFlagsAreUsageErrors(t *testing.T) {
 				t.Fatalf("stderr = %q, want %q", stderr, tc.want)
 			}
 		})
+	}
+}
+
+// --- map --------------------------------------------------------------------
+
+// mappableSession writes a session the mapping layer can work on: a manifest,
+// a two-entry timeline, and a findings.jsonl whose F-001 is confirmed and
+// carries a selector — the one state `map` is allowed to map from — plus a
+// throwaway repository holding the one file a reference can name.
+func mappableSession(t *testing.T) (dir, repo string) {
+	t.Helper()
+	dir = t.TempDir()
+	if err := session.SaveManifest(dir, session.Manifest{Session: "s", App: "app", Participant: "P1"}); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+	tl := `{"t":0,"src":"speech","id":"utt-001","payload":{"speaker":"P1","t1":5,"text":"I clicked save and nothing happened"}}` + "\n" +
+		`{"t":1,"src":"event","id":"ev-001","payload":{"kind":"click","selector":"[data-testid=save-btn]","route":"#general"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.TimelineFile), []byte(tl), 0o644); err != nil {
+		t.Fatalf("write timeline: %v", err)
+	}
+	fnd := `{"id":"F-001","t":2,"type":"bug","severity":3,"mode":"A","quote":"I clicked save and nothing happened","evidence":["utt-001","ev-001"],"ui":{"selector":"[data-testid=save-btn]","route":"#general"},"status":"unverified"}` + "\n" +
+		`{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-09-12"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(fnd), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	repo = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "src", "Save.tsx"), []byte("a\nb\nc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir, repo
+}
+
+const goodMapAnswer = `{"rubric":"testimony-coderefs/v1","refs":[` +
+	`{"id":"R-001","finding":"F-001","session":"s","path":"src/Save.tsx","line":2,"role":"owner","status":"accepted"}]}`
+
+// TestMapFlagGauntletExitsTwo pins every wrong invocation of map and of
+// review -kind refs at the usage status, before any file is read.
+func TestMapFlagGauntletExitsTwo(t *testing.T) {
+	dir, repo := mappableSession(t)
+	file := filepath.Join(repo, "src", "Save.tsx")
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"map", "-session", dir, "-repo", ""}, "map: -repo must not be empty"},
+		{[]string{"map", "-session", dir}, "map: -repo is required"},
+		{[]string{"map", "-session", dir, "-repo", filepath.Join(repo, "missing")}, "map: -repo:"},
+		{[]string{"map", "-session", dir, "-repo", file}, "is not a directory"},
+		{[]string{"map", "-session", dir, "-render", "-repo", repo}, "map: -repo applies to the emit and ingest modes only"},
+		{[]string{"map", "-session", dir, "-repo", repo, "-ingest", ""}, "map: -ingest must not be empty"},
+		{[]string{"map", "-session", dir, "-repo", repo, "-out", ""}, "map: -out must not be empty"},
+		{[]string{"map", "-session", dir, "-repo", repo, "-out", "f.md", "-ingest", "-"}, "map: -out and -ingest cannot be combined"},
+		{[]string{"map", "-session", dir, "-repo", repo, "-render", "-ingest", "-"}, "map: -render and -ingest cannot be combined"},
+		{[]string{"map", "-session", dir, "-repo", repo, "-window", "NaN"}, "map: -window must be a finite number of seconds"},
+		{[]string{"map", "-session", dir, "-repo", repo, "-window", "20", "-ingest", "-"}, "map: -window applies to the emit mode only"},
+		{[]string{"map", "-session", dir, "-window", "20", "-render"}, "map: -window applies to the emit mode only"},
+		{[]string{"map", "-session", dir, "-repo", repo, "junk"}, "unexpected argument"},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-ref", ""}, "review: -ref must not be empty"},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-repo", ""}, "review: -repo must not be empty"},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-ref", "R-001"}, "review: -decision is required with -ref"},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-decision", "accepted"}, "review: -ref is required with -decision"},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-ref", "T-001", "-decision", "accepted"}, `review: invalid -ref "T-001"`},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-ref", "R-001", "-decision", "edited"}, `review: invalid decision "edited" (want accepted|rejected)`},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-test", "T-001", "-decision", "accepted"}, "review: -test and -edit apply to -kind tests, not -kind refs"},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-finding", "F-001", "-verdict", "confirmed"}, "review: -finding and -verdict apply to -kind findings, not -kind refs"},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-repo", file}, "review: -repo: "},
+		{[]string{"review", "-session", dir, "-kind", "refs", "-repo", repo, "-ref", "R-001", "-decision", "accepted"}, "review: -repo applies to the interactive walk, not to -ref/-decision"},
+		{[]string{"map", "-session", dir, "-repo", repo, "-out", filepath.Join(dir, "request.md")}, "map: -out must not be inside the session directory"},
+		{[]string{"map", "-session", dir, "-repo", repo, "-out", filepath.Join(dir, "sub", "request.md")}, "map: -out must not be inside the session directory"},
+		{[]string{"review", "-session", dir, "-kind", "tests", "-ref", "R-001", "-decision", "accepted"}, "review: -ref and -repo apply to -kind refs, not -kind tests"},
+		{[]string{"review", "-session", dir, "-ref", "R-001", "-decision", "accepted"}, "review: -ref and -repo apply to -kind refs, not -kind findings"},
+		{[]string{"review", "-session", dir, "-repo", repo}, "review: -ref and -repo apply to -kind refs, not -kind findings"},
+		{[]string{"review", "-session", dir, "-kind", "nope"}, `review: invalid kind "nope" (want findings|tests|refs)`},
+	}
+	for _, c := range cases {
+		var code int
+		stderr := captureStderr(t, func() { code = Run(c.args) })
+		if code != 2 {
+			t.Errorf("%v: exit %d, want 2 (stderr %q)", c.args, code, stderr)
+		}
+		if !strings.Contains(stderr, c.want) {
+			t.Errorf("%v: stderr %q lacks %q", c.args, stderr, c.want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.RefsFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a refused invocation wrote refs.jsonl")
+	}
+}
+
+// TestMapLoudStagingExitsOne pins the no-mappable-finding refusal at exit 1
+// with the tally, including the anchored count, and nothing written.
+func TestMapLoudStagingExitsOne(t *testing.T) {
+	dir, repo := mappableSession(t)
+	fnd := `{"id":"F-001","t":2,"type":"bug","severity":3,"quote":"I clicked save and nothing happened","evidence":["utt-001"],"status":"unverified"}` + "\n" +
+		`{"kind":"verdict","finding":"F-001","verdict":"confirmed","at":"2026-09-12"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, session.FindingsFile), []byte(fnd), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"map", "-session", dir, "-repo", repo},
+		{"map", "-session", dir, "-repo", repo, "-ingest", "-"},
+	} {
+		var code int
+		stderr := captureStderr(t, func() { code = Run(args) })
+		if code != 1 {
+			t.Errorf("%v: exit %d, want 1", args, code)
+		}
+		if !strings.Contains(stderr, "no mappable finding in 1 findings: 1 confirmed (0 with a selector or route), 0 unverified, 0 duplicate, 0 rejected") {
+			t.Errorf("%v: stderr %q lacks the tally", args, stderr)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, session.RefsFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a refused map wrote refs.jsonl")
+	}
+}
+
+// TestMapRoundTripThroughTheCLI drives emit → ingest → review -kind refs →
+// render through Run, asserting the hand-offs between them: the request names
+// the repository, ingest forces proposed, the decision appends, and the render
+// lists the reference with its status.
+func TestMapRoundTripThroughTheCLI(t *testing.T) {
+	dir, repo := mappableSession(t)
+	reqPath := filepath.Join(t.TempDir(), "request.md")
+	if code := Run([]string{"map", "-session", dir, "-repo", repo, "-out", reqPath}); code != 0 {
+		t.Fatalf("emit: exit %d", code)
+	}
+	req, err := os.ReadFile(reqPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absRepo, _ := filepath.Abs(repo)
+	if !strings.Contains(string(req), session.SafeInline(absRepo)) || !strings.Contains(string(req), "Finding F-001") {
+		t.Fatalf("request lacks the repository path or the finding:\n%s", req)
+	}
+	answerPath := filepath.Join(t.TempDir(), "refs.json")
+	if err := os.WriteFile(answerPath, []byte(goodMapAnswer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout := captureStdout(t, func() {
+		if code := Run([]string{"map", "-session", dir, "-repo", repo, "-ingest", answerPath}); code != 0 {
+			t.Errorf("ingest: exit %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "validated 1 references → ") || !strings.Contains(stdout, "(all proposed)") {
+		t.Fatalf("ingest stdout = %q", stdout)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, session.RefsFile))
+	if !strings.Contains(string(b), `"status":"proposed"`) {
+		t.Fatalf("refs.jsonl = %q", b)
+	}
+	stdout = captureStdout(t, func() {
+		if code := Run([]string{"review", "-session", dir, "-kind", "refs", "-ref", "R-001", "-decision", "accepted"}); code != 0 {
+			t.Errorf("review: exit %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "recorded: R-001 accepted (") {
+		t.Fatalf("review stdout = %q", stdout)
+	}
+	stdout = captureStdout(t, func() {
+		if code := Run([]string{"map", "-session", dir, "-render"}); code != 0 {
+			t.Errorf("render: exit %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "## F-001 — bug: I clicked save and nothing happened") || !strings.Contains(stdout, "`src/Save.tsx:2` (owner) — accepted ") {
+		t.Fatalf("render stdout = %q", stdout)
+	}
+	// A re-ingest is refused once the decision exists, at exit 1.
+	if code := Run([]string{"map", "-session", dir, "-repo", repo, "-ingest", answerPath}); code != 1 {
+		t.Fatalf("re-ingest over a decision: exit %d, want 1", code)
+	}
+}
+
+func TestMapHintsMissingArtefacts(t *testing.T) {
+	dir, repo := mappableSession(t)
+	for _, c := range []struct {
+		remove string
+		args   []string
+		want   string
+	}{
+		{session.RefsFile, []string{"map", "-session", dir, "-render"}, "no refs.jsonl (run `testimony map -ingest` first)"},
+		{session.RefsFile, []string{"review", "-session", dir, "-kind", "refs", "-ref", "R-001", "-decision", "accepted"}, "no refs.jsonl (run `testimony map -ingest` first)"},
+		{session.TimelineFile, []string{"map", "-session", dir, "-repo", repo}, "run `testimony merge` first"},
+		{session.FindingsFile, []string{"map", "-session", dir, "-repo", repo}, "no findings.jsonl (run `testimony analyze -ingest` first)"},
+	} {
+		os.Remove(filepath.Join(dir, c.remove))
+		var code int
+		stderr := captureStderr(t, func() { code = Run(c.args) })
+		if code != 1 || !strings.Contains(stderr, c.want) {
+			t.Errorf("%v: exit %d, stderr %q, want exit 1 containing %q", c.args, code, stderr, c.want)
+		}
+	}
+}
+
+func TestUsageListsMap(t *testing.T) {
+	for _, want := range []string{
+		"testimony map         [-session DIR] -repo DIR",
+		"-kind findings|tests|refs",
+		"-kind refs [-repo DIR]   interactively decide proposed code references",
+		"-kind refs -ref R-NNN -decision accepted|rejected",
+	} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage text does not mention %q", want)
+		}
 	}
 }

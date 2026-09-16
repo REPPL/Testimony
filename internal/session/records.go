@@ -11,13 +11,14 @@ import (
 
 // Append is one record appended to a session JSONL file.
 //
-// Two session artefacts hold a machine record plus appended human records —
-// findings.jsonl (findings plus verdicts) and tests.jsonl (test drafts plus
-// decisions) — and both are appended to under the same hazards: a planted
+// Three session artefacts hold a machine record plus appended human records —
+// findings.jsonl (findings plus verdicts), tests.jsonl (test drafts plus
+// decisions), and refs.jsonl (code references plus decisions) — and all are
+// appended to under the same hazards: a planted
 // symlink or FIFO at the path, a concurrent writer racing the measure-then-write
 // sequence, an unterminated last line that a blind append would fuse onto, a
 // short write leaving a newline-less fragment, and the read-side size invariants
-// every reader scans to. AppendRecord holds that logic once so the two callers
+// every reader scans to. AppendRecord holds that logic once so the callers
 // cannot drift apart; the vocabulary of each record family stays with its own
 // package.
 type Append struct {
