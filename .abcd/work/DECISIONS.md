@@ -1708,3 +1708,15 @@ Architecture-shaping decisions graduate to an ADR under
   an exchange unit. The quality-floor question the draft raised is deferred to
   the retained verdicts, which now become a per-backend comparison, rather than
   built as an unmeasured number the CLI could not enforce anyway.
+- 2026-09-15 — itd-3 (codebase mapping) planned as a SPLIT: web anchors only
+  (a confirmed finding whose `ui` carries a selector or route), with terminal
+  anchoring spun off as its own draft (itd-2609152113364815) rather than
+  deferred silently. References land in a separate `refs.jsonl` record family
+  through the ADR 0001 primitives, never on the finding, because the finding
+  schema is closed and `analyze -ingest` protects a verdict-bearing file. No
+  confidence field: ingest cannot validate a model-asserted word, so the human
+  accept / reject decision is the only quality signal. Resolution is the host's
+  job; the CLI reads the application repository only for existence and
+  line-count checks and never writes into it. The issue draft renders from any
+  mapped finding, listing every reference with its current status, so review
+  does not gate the render. Spec: spc-2609152218094570.
