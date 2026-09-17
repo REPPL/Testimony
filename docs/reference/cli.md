@@ -16,7 +16,7 @@ Running `testimony` with no command, or with an unknown command, prints the usag
 
 ## Session directory inference
 
-The seven pipeline commands — `transcribe`, `import`, `merge`, `report`, `analyze`, `draft-tests`, and `review` — take their session directory from `-session DIR`. When `-session` is omitted and the current directory itself holds a Testimony session `manifest.json`, that directory is the session: the command operates on it exactly as `-session .` does, and prints one line to stderr naming what it inferred (`merge: using session . (inferred from the current directory)`) before it starts work, so the implicit choice is visible in the output of the run. The line goes to stderr, never stdout, so `analyze`'s emitted request stays a clean pipe. An explicit `-session` always wins, is used verbatim, and prints no such line — the current directory is not consulted at all.
+The eight pipeline commands — `transcribe`, `import`, `merge`, `report`, `analyze`, `draft-tests`, `map`, and `review` — take their session directory from `-session DIR`. When `-session` is omitted and the current directory itself holds a Testimony session `manifest.json`, that directory is the session: the command operates on it exactly as `-session .` does, and prints one line to stderr naming what it inferred (`merge: using session . (inferred from the current directory)`) before it starts work, so the implicit choice is visible in the output of the run. The line goes to stderr, never stdout, so `analyze`'s emitted request stays a clean pipe. An explicit `-session` always wins, is used verbatim, and prints no such line — the current directory is not consulted at all.
 
 The marker is a session manifest, not merely the file name. `manifest.json` is one of the most common file names in software, so the file must be a regular file (a directory or a symlink at that name is not a marker) and, when it parses, must carry the `session` field every `testimony` session has (see [`manifest.json`](session-directory.md#manifestjson)). A `manifest.json` that belongs to something else leaves the command refusing rather than writing into a directory that is not a session:
 
@@ -294,28 +294,75 @@ testimony: no accepted test drafts to render (3 drafts: 0 accepted, 0 edited, 2 
 
 The first applies to emit and to ingest, and on ingest it fires before a byte of the answer is read: with no eligible finding, every draft in the answer would fail the same rule. The second keeps `-out FILE` from truncating an existing test plan into an empty document.
 
-## `testimony review`
+## `testimony map`
 
-The one human-decision verb, across both record families. With `-kind findings` (the default) it records a verdict on each candidate finding; with `-kind tests` it records an accept / edit / reject decision on each drafted regression test. Either way the decision is *appended* — to `findings.jsonl` or to `tests.jsonl` — without ever rewriting the machine record in place, so the record's birth state and the full decision history are retained as the precision measure.
+The codebase-mapping layer. Like `analyze` and `draft-tests`, `map` never calls a model, holds no keys, and adds no network dependency: it *emits* a self-contained mapping request that any assistant (or a human) resolves against the application's repository, then *ingests* and validates the JSON answer into `refs.jsonl`. A third mode *renders* an issue draft per mapped finding as Markdown. The step sits downstream of verification, so only a finding a person already confirmed, and only one that carries a selector or route anchor, can be mapped. Resolution is the host's job: the CLI hands over the anchor and the repository path, never greps or reads a router table, and opens the repository only to verify at ingest that a returned path exists and a line is in range. It never writes into the repository.
 
 ```
-testimony review [-session DIR] [-kind findings|tests]
-testimony review [-session DIR] -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
-testimony review [-session DIR] -kind tests -test T-NNN -decision accepted|rejected
-testimony review [-session DIR] -kind tests -test T-NNN -decision edited -edit FILE
+testimony map [-session DIR] -repo DIR [-window 10] [-out FILE]   # emit the request
+testimony map [-session DIR] -repo DIR -ingest FILE               # validate the answer → refs.jsonl
+testimony map [-session DIR] -render [-out FILE]                  # render an issue draft per mapped finding
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
-| `-kind` | `findings` | which record family to review: `findings` or `tests` |
+| `-repo` | *(required for emit and ingest)* | the application's repository root, an existing directory; read only |
+| `-window` | `10` | emit mode: the event-window half-width in seconds around each finding's cited evidence |
+| `-out` | *(stdout)* | emit or render mode: write the document to `FILE` instead of stdout |
+| `-ingest` | *(off)* | ingest mode: validate the answer JSON at `FILE` (or `-` for stdin) into `refs.jsonl` |
+| `-render` | *(off)* | render mode: write an issue draft per mapped finding as Markdown |
+
+`map` runs in exactly one mode: emit (neither `-ingest` nor `-render`), ingest (`-ingest`), or render (`-render`). `-ingest` combines with neither `-out` nor `-render`; `-out` pairs with emit or render. `-window` belongs to emit alone, so passing it with `-ingest` or `-render` is a usage error, and a non-finite `-window` is a usage error too; a negative one is legitimate and narrows the window. `-repo` is required for emit and ingest and refused with `-render`, which reads only what is on disk in the session. A `-repo` that is not an existing directory, or an explicitly empty value, is refused at exit 2. In emit mode an `-out` that resolves inside the session directory is refused at exit 2 as well: the request names the repository's absolute path, and a session directory is an exchange unit, so the request must live outside it.
+
+Emit reads `manifest.json`, `findings.jsonl`, and `timeline.jsonl`; ingest reads `manifest.json`, `findings.jsonl`, and the repository (existence and line counts only); render reads `manifest.json`, `timeline.jsonl`, `findings.jsonl`, and `refs.jsonl`. Emit and render hint to run `merge` first when the timeline is missing; every mode hints to run `analyze -ingest` first when there is no `findings.jsonl`; render and `review -kind refs` hint to run `map -ingest` first when there is no `refs.jsonl`.
+
+**Eligibility.** A finding may be mapped when its effective status is `confirmed`, its `mode` is not `B`, and its `ui` carries a non-empty `selector` or `route`. Effective status is the same computation `review`, `report`, and `draft-tests` use, so a later verdict overriding an earlier one is honoured. `unverified`, `rejected`, and `duplicate` findings are never eligible, and neither is a confirmed finding with no anchor: a terminal-session finding carries no `ui`, so a session of terminal findings has nothing `map` can hand over.
+
+Emit behaviour: writes a single self-contained prompt: the rubric version header (`testimony-coderefs/v1`), the proposal stance, the per-field instructions, the rubric body (field definitions, how to read each finding record, and the hard constraints ingest enforces), the repository path as the host will open it, the session context (session, app, participant, tasks), then, per eligible finding in id order, a prose header naming its id, type, severity, clock, selector and route, and the date of the verdict that confirmed it, its own record verbatim in a ```jsonl fence, and its event window in a second fence, followed by the required output shape with a worked example. The repository path is the one place an absolute local path appears in an emitted request; it is written to stdout or to an `-out` outside the session directory, and the command refuses an `-out` inside it. Nothing in the session directory is mutated. With `-out FILE` the prompt goes to a file and the command prints `wrote <path>`; otherwise it prints to stdout.
+
+The **event window** is the same one `draft-tests` emits, computed by the same helper: every timeline entry between the earliest cited evidence entry's start minus `-window` and the latest cited entry's end plus `-window`, in time order.
+
+Ingest behaviour: reads the answer from `FILE` (or stdin when `-`), accepting a top-level object with a `refs` array (optionally a `rubric`, which must be a known version) or a bare array. Ingest is the sole validation boundary and never trusts the model. Each reference is decoded with unknown fields disallowed (a `confidence` field is refused, because ingest cannot validate a model-asserted word), then checked against every schema rule (see [session directory reference](session-directory.md#refsjsonl)): id format and uniqueness, a `finding` that is currently confirmed and carries an anchor, a `session` equal to the manifest's, a `role` in the closed set, a `path` that is repo-relative and names an existing regular file under `-repo`, and, when a `line` is given, a line within that file's length. Validation is transactional: all errors are reported at once and nothing is written on any failure. On success every reference is forced to `status: proposed`, `refs.jsonl` is written, and the command prints `validated N references → <path> (all proposed)`. An answer with no references (a bare `[]`, `{"refs":[]}`, or a truncated file) is refused rather than written, so it cannot erase a prior `refs.jsonl`; so is an answer carrying more than 1000 references, refused before any is checked because each check reads the repository, and an answer whose references would together push `refs.jsonl` past the session's 16 MiB total-size limit. The `path` written to `refs.jsonl` is the checked form: control and invisible characters stripped and surrounding whitespace trimmed, so the record names the file the boundary opened. Ingest refuses to overwrite a `refs.jsonl` that already holds decision records, counting any `kind:"decision"` line, even one whose value is outside the closed enum.
+
+**The path rule.** A model answer is untrusted input naming a filesystem path the CLI will open, so the check is a containment check rather than a string check. The path must be non-empty, at most 512 bytes, use forward slashes, carry no leading `/` or drive letter, and contain no empty, `.`, or `..` segment. It is then joined to `-repo` and must still lie inside it; the parent directory is resolved through any symlinks and must still lie inside the resolved repository, so a path through a symlinked directory pointing outside is refused; and the final component is inspected without following symlinks, so a symlink there is refused as not a regular file, as is a directory or a missing file. When `line` is given the file is read, up to 16 MiB, and its lines counted (`\n`-terminated lines plus an unterminated last line); a file over that bound is refused for a line check and can be referenced without a line.
+
+Render behaviour: writes one Markdown block per mapped finding (a finding that at least one reference names), in finding-id order: a heading derived from the finding's id, type, and the first clause of its quote; its severity, anchor, and clock; the participant's quote; the reproduction steps derived from the event window (one orientation line from the first event's route, then one imperative line per interaction event at or before the finding's `t`, naming the selector where the event carries one); and every reference for the finding with its role and current status, so a draft rendered before review is visibly unreviewed. Review does not gate the render. The title and steps are derived by the CLI, not the model, so the render works from the records alone and cannot invent a step. With `-out FILE` the drafts go to a file and the command prints `wrote <path>`; otherwise they print to stdout, which is the default because Testimony never files an issue and never writes into the application's repository.
+
+**Loud staging.** Two states are refused at exit 1, a well-formed invocation whose work cannot be done, with the counts by status and nothing written:
+
+```
+testimony: no mappable finding in 5 findings: 1 confirmed (0 with a selector or route), 3 unverified, 0 duplicate, 1 rejected; a finding is mappable when its verdict is confirmed and it carries a selector or route (confirm one with `testimony review -session ~/Testimony/sessions/x` first)
+testimony: no mapped finding to render (1 references: 0 accepted, 1 proposed, 0 rejected, none naming a finding in findings.jsonl); ingest a mapping answer with `testimony map -session ~/Testimony/sessions/x -repo DIR -ingest FILE` first
+```
+
+The first applies to emit and to ingest, and on ingest it fires before a byte of the answer is read. The anchored count beside the confirmed count tells a session with no confirmed finding from one whose confirmed findings carry no selector or route. The second keeps `-out FILE` from truncating an existing file into an empty document.
+
+## `testimony review`
+
+The one human-decision verb, across all three record families. With `-kind findings` (the default) it records a verdict on each candidate finding; with `-kind tests` it records an accept / edit / reject decision on each drafted regression test; with `-kind refs` it records an accept / reject decision on each proposed code reference. Either way the decision is *appended*, to `findings.jsonl`, `tests.jsonl`, or `refs.jsonl`, without ever rewriting the machine record in place, so the record's birth state and the full decision history are retained as the precision measure.
+
+```
+testimony review [-session DIR] [-kind findings|tests|refs]
+testimony review [-session DIR] -finding F-NNN -verdict confirmed|rejected|duplicate-of-F-NNN
+testimony review [-session DIR] -kind tests -test T-NNN -decision accepted|rejected
+testimony review [-session DIR] -kind tests -test T-NNN -decision edited -edit FILE
+testimony review [-session DIR] -kind refs [-repo DIR] -ref R-NNN -decision accepted|rejected
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-session` | *(inferred)* | session directory; when omitted, the current directory if it holds a Testimony session `manifest.json` (see [session directory inference](#session-directory-inference)) |
+| `-kind` | `findings` | which record family to review: `findings`, `tests`, or `refs` |
 | `-finding` | *(interactive)* | non-interactive: the finding to judge (`F-NNN`), `-kind findings` only |
 | `-verdict` | *(interactive)* | non-interactive: `confirmed`, `rejected`, or `duplicate-of-F-NNN`, `-kind findings` only |
 | `-test` | *(interactive)* | non-interactive: the test draft to decide (`T-NNN`), `-kind tests` only |
-| `-decision` | *(interactive)* | non-interactive: `accepted`, `edited`, or `rejected`, `-kind tests` only |
-| `-edit` | *(off)* | with `-decision edited`: the replacement fields as a JSON object at `FILE` (or `-` for stdin) |
+| `-decision` | *(interactive)* | non-interactive: `accepted`, `edited`, or `rejected` with `-kind tests`; `accepted` or `rejected` with `-kind refs` |
+| `-edit` | *(off)* | with `-decision edited`: the replacement fields as a JSON object at `FILE` (or `-` for stdin), `-kind tests` only |
+| `-ref` | *(interactive)* | non-interactive: the reference to decide (`R-NNN`), `-kind refs` only |
+| `-repo` | *(off)* | `-kind refs`, interactive walk only: the application's repository root, read only, so the walk can show the source around each reference's line; refused alongside `-ref`, which shows no source |
 
-A flag belonging to the other record family is a usage error, not a silently ignored value: `-finding` or `-verdict` with `-kind tests`, and `-test`, `-decision` or `-edit` with `-kind findings`, each exit 2. So do an unknown `-kind`, a `-test` that is not `T-NNN`, a `-decision` outside the enum, `-decision edited` without `-edit`, and `-edit` alongside any other decision.
+A flag belonging to another record family is a usage error, not a silently ignored value: `-finding` or `-verdict` with `-kind tests` or `-kind refs`; `-test`, `-decision` or `-edit` with `-kind findings`; `-test` or `-edit` with `-kind refs`; and `-ref` or `-repo` with `-kind findings` or `-kind tests`, each exit 2. So do an unknown `-kind`, a `-test` that is not `T-NNN`, a `-ref` that is not `R-NNN`, a `-decision` outside the kind's enum (`edited` is refused with `-kind refs`), `-decision edited` without `-edit`, `-edit` alongside any other decision, a `-repo` that is not an existing directory, and `-repo` alongside `-ref`.
 
 ### `-kind findings` (the default)
 
@@ -338,6 +385,14 @@ Non-interactive (`-kind tests -test T-001 -decision accepted`): validates that t
 ```
 
 The `edit` object is closed: one naming `id`, `finding`, `session`, `severity`, or `rationale_quote` is an error rather than a silently dropped key, so no edit can re-point a draft at different evidence. The only way to change the link is to reject the draft and ingest a new one. A decision may be appended even when one already exists (append-only correction; the latest wins), and the accepted and edited drafts are what [`draft-tests -render`](#testimony-draft-tests) puts in the test plan.
+
+### `-kind refs`
+
+Behaviour: loads the references and existing decisions (hinting to run `map -ingest` first when there is no `refs.jsonl`) and computes each reference's effective status: every reference starts `proposed`, decision records apply in file order, and the last one for a reference wins. A decision naming an unknown reference, or carrying a value outside the closed enum, is ignored rather than applied.
+
+Interactive (`review -session DIR -kind refs [-repo DIR]`): walks the `proposed` references in id order, printing each reference's id, path, line and role, the finding it resolves, that finding's quote, anchor and clock, and, when `-repo` is given, the numbered source lines around the reference's line (two either side, the referenced line marked `>`), then prompting `[a]ccept [r]eject [s]kip [q]uit`. The source is read through the same containment rule ingest applies and never written; a path that fails it, or a file too large to show, prints a one-line note in place of the snippet and the walk continues. The character-device gate is the same as the findings walk's.
+
+Non-interactive (`-kind refs -ref R-001 -decision accepted`): validates that the reference exists and the decision parses, appends one decision record, and prints `recorded: R-001 accepted (<date>)`. There is no `edited`: a wrong path is rejected and a corrected one is ingested, never patched, so a reference's `finding`, `session`, and `path` are unreachable by any later write. A decision may be appended even when one already exists (append-only correction; the latest wins), and every reference, whatever its status, is what [`map -render`](#testimony-map) lists under the finding's suspected files.
 
 ## `testimony version`
 

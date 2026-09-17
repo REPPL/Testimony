@@ -160,6 +160,16 @@ jobs:
           # sample still has a confirmed finding to draft from.
           ./testimony draft-tests -session examples/sample-session > /tmp/tests-request.md
           grep -q "testimony-testdraft/v1" /tmp/tests-request.md
+          # The mapping layer over the same merged timeline: render proves the
+          # bundled refs.jsonl still renders an issue draft for F-001 with its
+          # accepted reference, and emit proves the sample still has a confirmed
+          # anchored finding to map and carries the repository path handed to it.
+          ./testimony map -render -session examples/sample-session | tee /tmp/issues.md
+          grep -q "## F-001" /tmp/issues.md
+          grep -q "ProfileForm.tsx:46\` (owner) — accepted" /tmp/issues.md
+          ./testimony map -session examples/sample-session -repo internal/coderefs/testdata/repo > /tmp/map-request.md
+          grep -q "testimony-coderefs/v1" /tmp/map-request.md
+          grep -q "internal/coderefs/testdata/repo" /tmp/map-request.md
           # The counts line above catches events going missing from the merge,
           # but not a windowing/attachment regression: report's header counts are
           # raw entry counts, computed before the join, so they stay "10 · 10"

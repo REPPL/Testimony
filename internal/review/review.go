@@ -1,13 +1,15 @@
-// Package review is the pipeline's one human-decision surface, across both
-// record families. Its own half records verdicts on candidate findings: a
+// Package review is the pipeline's one human-decision surface, across all
+// three record families. Its own half records verdicts on candidate findings: a
 // verdict is appended to findings.jsonl as a separate, non-destructive record
 // (never an in-place rewrite of the finding), so the finding's birth state and
 // the full verdict history survive as the precision measure the method stands on
 // (architecture note §2; itd-2 press release). Options.Kind dispatches the tests
 // half to internal/drafttests, which records an accept / edit / reject decision
-// on each drafted regression test the same appended way — one verb for the whole
-// pipeline, with the vocabularies kept per-kind because "edited" carries a
-// payload no verdict ever does (ADR 0001). Interactive review is gated on stdin
+// on each drafted regression test the same appended way, and the refs half to
+// internal/coderefs, which records an accept / reject decision on each proposed
+// code reference — one verb for the whole pipeline, with the vocabularies kept
+// per-kind because "edited" carries a payload no verdict or reference decision
+// ever does (ADR 0001). Interactive review is gated on stdin
 // being a character device so a redirected or piped run (CI) never blocks; a
 // single decision can also be recorded non-interactively on either side.
 package review
@@ -26,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/REPPL/Testimony/internal/analyze"
+	"github.com/REPPL/Testimony/internal/coderefs"
 	"github.com/REPPL/Testimony/internal/drafttests"
 	"github.com/REPPL/Testimony/internal/session"
 )
@@ -41,6 +44,7 @@ const maxClockSeconds = 1e9
 const (
 	KindFindings = "findings"
 	KindTests    = "tests"
+	KindRefs     = "refs"
 )
 
 // ParseKindFlag validates a -kind flag value against the closed set, so the CLI
@@ -53,22 +57,28 @@ func ParseKindFlag(s string) (string, error) {
 		return KindFindings, nil
 	case KindTests:
 		return KindTests, nil
+	case KindRefs:
+		return KindRefs, nil
 	}
-	return "", fmt.Errorf("invalid kind %q (want findings|tests)", s)
+	return "", fmt.Errorf("invalid kind %q (want findings|tests|refs)", s)
 }
 
 // Options configures a review run. The Finding/Verdict pair belongs to
-// KindFindings and the Test/Decision/EditIn set to KindTests; the CLI refuses a
-// flag from the other family at the usage status, and Run refuses it too, so the
-// pairing is a property of this API rather than of one caller's invariants.
+// KindFindings, the Test/Decision/EditIn set to KindTests, and the
+// Ref/Decision/Repo set to KindRefs (Decision is shared by the two kinds that
+// take one); the CLI refuses a flag from another family at the usage status, and
+// Run refuses it too, so the pairing is a property of this API rather than of
+// one caller's invariants.
 type Options struct {
 	Dir      string    // session directory
-	Kind     string    // record family: "findings" (the default) or "tests"
+	Kind     string    // record family: "findings" (the default), "tests", or "refs"
 	Finding  string    // non-interactive: the finding to judge (F-NNN)
 	Verdict  string    // non-interactive: confirmed | rejected | duplicate-of-F-NNN
 	Test     string    // non-interactive, -kind tests: the draft to decide (T-NNN)
-	Decision string    // non-interactive, -kind tests: accepted | edited | rejected
+	Decision string    // non-interactive, -kind tests or refs: accepted | edited | rejected (edited is tests only)
 	EditIn   io.Reader // -kind tests, with Decision "edited": the replacement fields as a JSON object
+	Ref      string    // non-interactive, -kind refs: the reference to decide (R-NNN)
+	Repo     string    // -kind refs, optional: the application's repository, read only, for the source snippet
 	In       io.Reader // interactive input
 	Out      io.Writer // status and prompts
 	IsTTY    bool      // whether In is an interactive terminal
@@ -76,18 +86,40 @@ type Options struct {
 }
 
 // Run records human decisions for the session. With -kind tests it delegates to
-// the drafting layer's walk; otherwise, with -finding/-verdict it records one
-// verdict non-interactively, and with neither it walks the unverified findings
-// interactively (skipping cleanly when stdin is not a terminal).
+// the drafting layer's walk and with -kind refs to the mapping layer's;
+// otherwise, with -finding/-verdict it records one verdict non-interactively,
+// and with neither it walks the unverified findings interactively (skipping
+// cleanly when stdin is not a terminal).
 func Run(opts Options) error {
 	kind, err := ParseKindFlag(opts.Kind)
 	if err != nil {
 		return err
 	}
-	// A flag belonging to the other record family is a wrong invocation, not a
+	// A flag belonging to another record family is a wrong invocation, not a
 	// silently ignored one: a caller who typed -verdict against -kind tests meant
 	// something this walk cannot do, and recording nothing while exiting 0 would
 	// let a script believe the decision landed.
+	if kind == KindRefs {
+		if opts.Finding != "" || opts.Verdict != "" {
+			return fmt.Errorf("-finding and -verdict apply to -kind findings, not -kind refs")
+		}
+		if opts.Test != "" || opts.EditIn != nil {
+			return fmt.Errorf("-test and -edit apply to -kind tests, not -kind refs")
+		}
+		return coderefs.Review(coderefs.ReviewOptions{
+			Dir:      opts.Dir,
+			Repo:     opts.Repo,
+			Ref:      opts.Ref,
+			Decision: opts.Decision,
+			In:       opts.In,
+			Out:      opts.Out,
+			IsTTY:    opts.IsTTY,
+			Today:    opts.Today,
+		})
+	}
+	if opts.Ref != "" || opts.Repo != "" {
+		return fmt.Errorf("-ref and -repo apply to -kind refs, not -kind %s", kind)
+	}
 	if kind == KindTests {
 		if opts.Finding != "" || opts.Verdict != "" {
 			return fmt.Errorf("-finding and -verdict apply to -kind findings, not -kind tests")

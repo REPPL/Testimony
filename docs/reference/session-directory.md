@@ -15,10 +15,11 @@ Every capture session lives in one directory. `record` and `demo` create it unde
   timeline.jsonl       # merged, session-relative timeline (written by merge)
   findings.jsonl       # analysis findings + appended verdicts (written by analyze/review)
   tests.jsonl          # regression-test drafts + appended decisions (written by draft-tests/review)
+  refs.jsonl           # code references + appended decisions (written by map/review)
   report.md            # human-readable aligned record (written by report)
 ```
 
-All `.jsonl` files are JSON Lines: one JSON value per line, blank lines ignored. `timeline.jsonl`, `transcript.jsonl`, `interactions.jsonl`, `findings.jsonl`, and `tests.jsonl` each carry a 16 MiB total-size limit: a write that would push one over the cap is refused, and a load of one already over it is refused, so a session that reaches it needs a fresh session directory to continue in. `events.rrweb.jsonl` is archival and carries no such limit, and `terminal.cast` is not a JSON Lines file at all — it carries its own read bound, described below.
+All `.jsonl` files are JSON Lines: one JSON value per line, blank lines ignored. `timeline.jsonl`, `transcript.jsonl`, `interactions.jsonl`, `findings.jsonl`, `tests.jsonl`, and `refs.jsonl` each carry a 16 MiB total-size limit: a write that would push one over the cap is refused, and a load of one already over it is refused, so a session that reaches it needs a fresh session directory to continue in. `events.rrweb.jsonl` is archival and carries no such limit, and `terminal.cast` is not a JSON Lines file at all — it carries its own read bound, described below.
 
 ## `manifest.json`
 
@@ -234,6 +235,43 @@ Ingest validates every draft against `findings.jsonl` and is the sole validation
 The `edit` object is a **closed** four-field subset: an `edit` naming `id`, `finding`, `session`, `severity`, or `rationale_quote` is a hard error, not a silently dropped key. A human edit therefore cannot re-point a draft at a different finding or session; the only way to change the link is to reject the draft and ingest a new one.
 
 A draft's effective status starts `proposed`; decision records apply in file order and the last one for that draft wins. An `edited` draft's rendered fields are the last `edited` decision's `edit` applied over the draft, computed when the plan is rendered — the draft line itself is never rewritten. `testimony draft-tests -render` renders the drafts whose effective status is `accepted` or `edited`.
+
+## `refs.jsonl`
+
+The codebase-mapping layer's output, written by `testimony map -ingest` and appended to by `testimony review -kind refs`. Two record kinds share the file, one per line: a **reference** line (no `kind` field) and a **decision** line (`kind: "decision"`). Decisions are appended, never written in place, so a reference's original state and the full decision history are retained. Blank lines are ignored.
+
+Ingest validates every reference against `findings.jsonl` and the application's repository, and is the sole validation boundary. Each reference object is closed: an unknown field is rejected rather than dropped, which is how a model-asserted `confidence` is kept out of the record. The top-level answer container is not closed (a key beside `rubric` and `refs` is tolerated, mirroring `analyze`), so strictness lands on the records themselves. `status` is forced to `"proposed"` on ingest regardless of the answer JSON. A reference may only ever name a finding whose effective status is `confirmed` and whose `ui` carries a selector or route. The repository path the references were checked against is not recorded: a session directory is an exchange unit, and the reference is repo-relative so it survives the repository moving.
+
+**Reference record**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string | yes | `R-NNN`, zero-padded (`^R-\d{3}$`); unique within the file |
+| `finding` | string | yes | an existing finding id in `findings.jsonl` whose effective status is `confirmed`, whose `mode` is not `B`, and whose `ui` carries a non-empty `selector` or `route` |
+| `session` | string | yes | equal to the manifest's `session`, so the link survives the line being copied out of the session directory |
+| `path` | string | yes | repo-relative: forward slashes, no leading `/` or drive letter, no empty, `.`, or `..` segment, at most 512 bytes; names an existing regular file under the repository given at ingest (a directory, a symlink, or a path through a symlinked directory out of the repository is refused) |
+| `line` | integer | no | 1-based; when present, at most the file's line count (`\n`-terminated lines plus an unterminated last line, counted up to 16 MiB); absent when the reference names the file alone |
+| `role` | string | yes | why the path is relevant, one of `owner` (the file that renders the element), `handler` (the code that handles its interaction), `route` (the router entry for the route), `test` (a test that exercises it); validated as a member of the set, never for truth |
+| `status` | string | yes | always `"proposed"` on ingest, whatever the answer claims (the answer may omit it; the written record always carries it) |
+
+```json
+{"id":"R-001","finding":"F-001","session":"sample-session","path":"src/settings/ProfileForm.tsx","line":46,"role":"owner","status":"proposed"}
+```
+
+**Decision record**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `kind` | string | yes | literal `"decision"` (the discriminator) |
+| `ref` | string | yes | an existing reference id in the file |
+| `decision` | string | yes | one of `accepted`, `rejected` |
+| `at` | string | yes | decision date, ISO `YYYY-MM-DD` |
+
+```json
+{"kind":"decision","ref":"R-001","decision":"accepted","at":"2026-09-16"}
+```
+
+There is no `edited` decision and no edit payload: a wrong path is rejected and a corrected one is ingested, never patched, so a reference's `finding`, `session`, and `path` are unreachable by any later write. A reference's effective status starts `proposed`; decision records apply in file order and the last one for that reference wins. `testimony map -render` lists every reference for a finding with its current status; review does not gate the render.
 
 ## `report.md`
 

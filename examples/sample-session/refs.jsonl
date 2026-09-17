@@ -1,0 +1,3 @@
+{"id":"R-001","finding":"F-001","session":"sample-session","path":"src/settings/ProfileForm.tsx","line":46,"role":"owner","status":"proposed"}
+{"id":"R-002","finding":"F-001","session":"sample-session","path":"src/settings/saveProfile.ts","line":12,"role":"handler","status":"proposed"}
+{"kind":"decision","ref":"R-001","decision":"accepted","at":"2026-09-16"}
